@@ -1,0 +1,63 @@
+{
+  "name": "heretix-api",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Vulnerability Management API - Simple PostgreSQL-only backend",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:studio": "prisma studio",
+    "db:erd": "prisma generate && echo \"ER diagram generated at docs/erd.md\"",
+    "import:osv": "tsx src/scripts/import-osv.ts",
+    "import:nvd": "tsx src/scripts/import-nvd.ts",
+    "import:kev": "tsx src/scripts/import-kev.ts",
+    "import:epss": "tsx src/scripts/import-epss.ts",
+    "import:fortinet": "tsx src/scripts/import-fortinet.ts",
+    "import:pan": "tsx src/scripts/import-pan.ts",
+    "import:cisco": "tsx src/scripts/import-cisco.ts",
+    "validate:nginx": "tsx src/scripts/validate-nginx.ts",
+    "validate:tomcat": "tsx src/scripts/validate-tomcat.ts",
+    "validate:apache": "tsx src/scripts/validate-apache.ts"
+  },
+  "keywords": [
+    "vulnerability",
+    "osv",
+    "security",
+    "api"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@prisma/adapter-pg": "^7.2.0",
+    "@prisma/client": "^7.2.0",
+    "adm-zip": "^0.5.16",
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.3",
+    "fast-xml-parser": "^5.5.5",
+    "fastify": "^5.6.2",
+    "node-cron": "^4.2.1",
+    "pg": "^8.17.0",
+    "pino": "^10.1.1",
+    "pino-pretty": "^13.1.3",
+    "prisma": "^7.2.0",
+    "zod": "^4.3.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@prisma/engines", "esbuild", "prisma", "puppeteer"]
+  },
+  "devDependencies": {
+    "@mermaid-js/mermaid-cli": "^11.12.0",
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^25.0.8",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.16.0",
+    "prisma-erd-generator": "^2.4.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

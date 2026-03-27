@@ -1,0 +1,312 @@
+// Vulnerability Management System - Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+generator erd {
+  provider = "prisma-erd-generator"
+  output   = "../docs/erd.md"
+  theme    = "forest"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── マスター（正規化・重複排除） ────────────────────────────
+
+model Vulnerability {
+  id          String   @id @default(cuid())
+
+  // 重複排除キー（いずれか一つが必ず設定される）
+  // 優先度: cveId > osvId > advisoryId
+  cveId       String?  @unique   // "CVE-YYYY-NNNNN"
+  osvId       String?  @unique   // OSV ID（GHSA-xxx, PYSEC-xxx 等、CVE なしの場合のみ）
+  advisoryId  String?  @unique   // ベンダーアドバイザリ ID（FG-IR-xx-xxx 等、CVE/OSV なしの場合のみ）
+
+  // 最良品質フィールド（NVD > OSV の優先度でマージ）
+  severity    String?            // "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+  cvssScore   Float?
+  cvssVector  String?
+  summary     String?
+  publishedAt DateTime?
+  modifiedAt  DateTime?
+
+  // CISA KEV（Known Exploited Vulnerabilities）
+  isKev             Boolean  @default(false)
+  kevDateAdded      DateTime?
+  kevDueDate        DateTime?
+  kevProduct        String?
+  kevVendor         String?
+  kevShortDesc      String?
+  kevRequiredAction String?
+
+  // EPSS（Exploit Prediction Scoring System）
+  epssScore      Float?     // 0.0–1.0 悪用確率
+  epssPercentile Float?     // 0.0–1.0 パーセンタイル
+  epssUpdatedAt  DateTime?
+
+  fetchedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // ソーステーブルへのバックリレーション（FK はソース側が保持）
+  osvVulnerabilities     OSVVulnerability[]
+  nvdVulnerability       NVDVulnerability?
+  advisoryVulnerabilities AdvisoryVulnerability[]
+
+  @@index([severity])
+  @@index([cvssScore])
+  @@index([isKev])
+  @@index([epssScore])
+  @@index([publishedAt])
+}
+
+// ─── OSV ─────────────────────────────────────────────────────
+
+model OSVVulnerability {
+  id            String   @id @default(cuid())
+
+  // 識別子
+  osvId         String   @unique
+  cveId         String?                   // aliases から抽出した CVE ID（参照用）
+  aliases       Json?                     // 全エイリアス配列
+  source        String   @default("osv")
+  ecosystem     String?
+
+  // 生データ（JSONB）
+  rawData       Json
+
+  // 検索用の正規化フィールド
+  packageName   String?
+  severity      String?
+  cvssScore     Float?
+  summary       String?
+
+  // タイムスタンプ
+  publishedAt   DateTime?
+  modifiedAt    DateTime?
+  fetchedAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // マスターテーブルへの参照（FK）
+  masterVulnId  String?
+  masterVuln    Vulnerability? @relation(fields: [masterVulnId], references: [id])
+
+  // リレーション
+  affectedPackages OSVAffectedPackage[]
+
+  @@index([osvId])
+  @@index([cveId])
+  @@index([source, ecosystem])
+  @@index([packageName])
+  @@index([severity])
+  @@index([publishedAt])
+  @@index([masterVulnId])
+}
+
+model OSVAffectedPackage {
+  id              String   @id @default(cuid())
+
+  vulnerabilityId String
+  vulnerability   OSVVulnerability @relation(fields: [vulnerabilityId], references: [id], onDelete: Cascade)
+
+  // パッケージ情報
+  ecosystem       String
+  packageName     String
+
+  // バージョン範囲（正規化済み）
+  versionType     String   @default("semver")
+
+  // 範囲表現（文字列）
+  introducedVersion   String?
+  fixedVersion        String?
+  lastAffectedVersion String?
+
+  // 数値化されたバージョン（高速検索用）
+  introducedInt   BigInt?
+  fixedInt        BigInt?
+  lastAffectedInt BigInt?
+
+  // OSV rawData の versions フィールド（distro ecosystem 向け exact match 検索用）
+  affectedVersions String[]
+
+  createdAt       DateTime @default(now())
+
+  @@index([ecosystem, packageName])
+  @@index([packageName, introducedInt, fixedInt])
+  @@index([vulnerabilityId])
+}
+
+// ─── NVD ─────────────────────────────────────────────────────
+
+model NVDVulnerability {
+  id          String   @id @default(cuid())
+
+  // 識別子
+  cveId       String   @unique          // "CVE-2024-XXXX"
+  source      String   @default("nvd")
+
+  // 生データ（JSONB）
+  rawData     Json
+
+  // 検索用の正規化フィールド
+  severity    String?                   // "CRITICAL", "HIGH", "MEDIUM", "LOW"
+  cvssScore   Float?
+  cvssVector  String?                   // 完全な CVSS ベクター文字列
+  summary     String?
+
+  // タイムスタンプ
+  publishedAt DateTime?
+  modifiedAt  DateTime?
+  fetchedAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // マスターテーブルへの参照（FK、1対1）
+  masterVulnId  String?  @unique
+  masterVuln    Vulnerability? @relation(fields: [masterVulnId], references: [id])
+
+  // リレーション
+  affectedPackages NVDAffectedPackage[]
+
+  @@index([cveId])
+  @@index([severity])
+  @@index([publishedAt])
+}
+
+model NVDAffectedPackage {
+  id              String   @id @default(cuid())
+
+  vulnerabilityId String
+  vulnerability   NVDVulnerability @relation(fields: [vulnerabilityId], references: [id], onDelete: Cascade)
+
+  // CPE 由来フィールド（ベストエフォート）
+  cpe             String?           // 元の CPE 文字列
+  vendor          String?           // cpe の <vendor> 部分
+  packageName     String            // cpe の <product> 部分
+  ecosystem       String?           // vendor から推定
+
+  // バージョン範囲（NVD 形式）
+  versionStartIncluding String?
+  versionStartExcluding String?
+  versionEndIncluding   String?
+  versionEndExcluding   String?
+
+  // 正規化 BigInt（ベストエフォート）
+  introducedInt   BigInt?
+  fixedInt        BigInt?
+  lastAffectedInt BigInt?
+
+  createdAt       DateTime @default(now())
+
+  @@index([ecosystem, packageName])
+  @@index([packageName, introducedInt, fixedInt])
+  @@index([vulnerabilityId])
+  @@index([vendor, packageName])
+  @@index([cpe])
+}
+
+// ─── ベンダーセキュリティアドバイザリ ────────────────────────
+
+model AdvisoryVulnerability {
+  id          String   @id @default(cuid())
+
+  // 識別子
+  source      String                    // "fortinet" | "f5" | "cisco" | "paloalto" | ...
+  externalId  String                    // ベンダー固有のアドバイザリID（例: "FG-IR-24-001"）
+  cveId       String?                   // 関連する CVE ID（あれば）
+
+  // 生データ（JSONB）
+  rawData     Json
+
+  // 検索用の正規化フィールド
+  severity    String?                   // "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+  cvssScore   Float?
+  cvssVector  String?
+  summary     String?
+  description String?
+
+  // アドバイザリ固有フィールド
+  url         String?                   // 元のアドバイザリURL
+  workaround  String?                   // 緩和策
+  solution    String?                   // 修正方法
+
+  // タイムスタンプ
+  publishedAt DateTime?
+  fetchedAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // マスターテーブルへの参照（FK）
+  masterVulnId  String?
+  masterVuln    Vulnerability? @relation(fields: [masterVulnId], references: [id])
+
+  // リレーション
+  affectedProducts AdvisoryAffectedProduct[]
+
+  @@unique([source, externalId])
+  @@index([cveId])
+  @@index([source])
+  @@index([severity])
+  @@index([publishedAt])
+  @@index([masterVulnId])
+}
+
+model AdvisoryAffectedProduct {
+  id         String   @id @default(cuid())
+
+  advisoryId String
+  advisory   AdvisoryVulnerability @relation(fields: [advisoryId], references: [id], onDelete: Cascade)
+
+  // プロダクト情報
+  vendor     String                    // "fortinet", "f5", "cisco" 等
+  product    String                    // "FortiOS", "BIG-IP" 等
+
+  // バージョン範囲（文字列）
+  versionStart  String?               // 影響開始バージョン（inclusive）
+  versionEnd    String?               // 影響終了バージョン（exclusive）
+  versionFixed  String?               // 修正済みバージョン
+
+  // 数値化されたバージョン（semver 互換の場合のみ、高速検索用）
+  versionStartInt BigInt?
+  versionEndInt   BigInt?
+  lastAffectedInt BigInt?
+
+  // 非semver対応: 個別バージョンのリスト（例: ["7.0.1", "7.0.2", "7.2.0"]）
+  affectedVersions String[]
+
+  patchAvailable Boolean?
+
+  createdAt  DateTime @default(now())
+
+  @@index([vendor, product])
+  @@index([product, versionStartInt, versionEndInt])
+  @@index([advisoryId])
+}
+
+// ─── ジョブ管理 ───────────────────────────────────────────────
+
+model CollectionJob {
+  id          String   @id @default(cuid())
+  source      String
+  status      String   @default("pending")
+  priority    Int      @default(0)
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  duration    Int?
+
+  totalFetched    Int    @default(0)
+  totalInserted   Int    @default(0)
+  totalUpdated    Int    @default(0)
+  totalFailed     Int    @default(0)
+
+  errorMessage    String?
+  errorStack      String?
+  metadata        Json?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([source, status])
+  @@index([status, priority, createdAt])
+  @@index([completedAt])
+}
