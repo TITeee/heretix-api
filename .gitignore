@@ -32,8 +32,6 @@ Thumbs.db
 *.swo
 *~
 
-# Prisma
-prisma/migrations/
 
 # Internal docs (not for public release)
 SPEC.md

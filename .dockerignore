@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+*.pem
+.env
+.env.*
+!.env.example
+logs
+SPEC.md
+.claude/
+tmpclaude-*

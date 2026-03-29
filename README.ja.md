@@ -629,12 +629,28 @@ WHERE ecosystem = 'npm'
 
 ## 開発・デプロイガイド
 
-### ビルド
+### Docker（推奨）
+
+```bash
+# 環境変数ファイルを作成・編集
+cp .env.example .env
+
+# 起動（イメージビルド・マイグレーション・API + PostgreSQL を一括起動）
+API_KEY=your-api-key docker compose up --build -d
+```
+
+API は `http://localhost:5000` で起動します。
+
+停止は `docker compose down`。`-v` を追加するとデータベースボリュームも削除されます。
+
+### 手動
+
+#### ビルド
 ```bash
 pnpm build
 ```
 
-### 本番環境での起動
+#### 本番環境での起動
 ```bash
 pnpm start
 ```

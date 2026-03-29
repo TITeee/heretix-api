@@ -500,13 +500,29 @@ When the server starts, `src/scheduler.ts` registers cron jobs:
 
 ## Development & Deployment
 
-### Build
+### Docker (recommended)
+
+```bash
+# Copy and edit environment variables
+cp .env.example .env
+
+# Start (builds image, runs migrations, starts API + PostgreSQL)
+API_KEY=your-api-key docker compose up --build -d
+```
+
+The API will be available at `http://localhost:5000`.
+
+`docker compose down` to stop. Add `-v` to also remove the database volume.
+
+### Manual
+
+#### Build
 
 ```bash
 pnpm build
 ```
 
-### Start production server
+#### Start production server
 
 ```bash
 pnpm start
