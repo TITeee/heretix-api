@@ -28,6 +28,17 @@ interface NVDCvssMetricV2 {
   baseSeverity?: string;
 }
 
+interface NVDCvssMetricV40 {
+  source: string;
+  type: string;
+  cvssData: {
+    version: string;
+    vectorString: string;
+    baseScore: number;
+    baseSeverity: string;
+  };
+}
+
 interface NVDCpeMatch {
   vulnerable: boolean;
   criteria: string;                    // "cpe:2.3:a:<vendor>:<product>:..."
@@ -53,6 +64,7 @@ export interface NVDCveItem {
   vulnStatus?: string;
   descriptions?: Array<{ lang: string; value: string }>;
   metrics?: {
+    cvssMetricV40?: NVDCvssMetricV40[];
     cvssMetricV31?: NVDCvssMetricV31[];
     cvssMetricV2?: NVDCvssMetricV2[];
   };
@@ -144,6 +156,16 @@ function extractNVDCvss(metrics?: NVDCveItem['metrics']): {
       cvssScore: v31.cvssData.baseScore,
       cvssVector: v31.cvssData.vectorString,
       severity: v31.cvssData.baseSeverity,
+    };
+  }
+
+  // Fall back to CVSS v4.0
+  const v40 = metrics.cvssMetricV40?.[0];
+  if (v40) {
+    return {
+      cvssScore: v40.cvssData.baseScore,
+      cvssVector: v40.cvssData.vectorString,
+      severity: v40.cvssData.baseSeverity,
     };
   }
 

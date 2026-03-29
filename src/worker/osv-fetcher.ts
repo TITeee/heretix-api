@@ -163,7 +163,7 @@ function extractCVSSScore(severity?: Array<{ type: string; score: string }>): nu
   if (!severity || severity.length === 0) return null;
 
   for (const s of severity) {
-    if (s.type === 'CVSS_V3' || s.type === 'CVSS_V2') {
+    if (s.type === 'CVSS_V4' || s.type === 'CVSS_V3' || s.type === 'CVSS_V2') {
       // Extract numeric score from e.g. "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
       const match = s.score.match(/(\d+\.\d+)/);
       if (match) {
