@@ -40,8 +40,7 @@ COPY --from=builder /app/dist             ./dist
 COPY --from=builder /app/package.json     ./package.json
 COPY --from=builder /app/prisma           ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
-
-RUN pnpm exec prisma generate
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh && chown -R heretix:nodejs /app
