@@ -327,7 +327,7 @@ export class PanFetcher implements AdvisoryFetcher {
   private readonly delayMs: number;
   private readonly mode: 'all' | 'latest';
 
-  constructor({ delayMs = 300, mode = 'all' as 'all' | 'latest' }: {
+  constructor({ delayMs = 1000, mode = 'all' as 'all' | 'latest' }: {
     delayMs?: number;
     mode?: 'all' | 'latest';
   } = {}) {
@@ -365,23 +365,40 @@ export class PanFetcher implements AdvisoryFetcher {
       const url = `${CSAF_BASE}/${advisoryId}`;
       logger.debug({ advisoryId, url }, 'Fetching PAN CSAF JSON');
 
-      try {
-        const { data } = await axios.get<CsafDocument>(url, {
-          timeout: 15000,
-          headers: { 'User-Agent': 'heretix-api/1.0' },
-        });
+      const maxRetries = 3;
+      let lastErr: unknown;
+      let fetched = false;
 
-        const advisory = parseCsaf(data, advisoryId, pubDate);
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const { data } = await axios.get<CsafDocument>(url, {
+            timeout: 15000,
+            headers: { 'User-Agent': 'heretix-api/1.0' },
+          });
 
-        if (advisory) {
-          results.push(advisory);
-        } else {
-          logger.warn({ advisoryId }, 'No parseable vulnerability data in PAN CSAF');
-          skipped++;
+          const advisory = parseCsaf(data, advisoryId, pubDate);
+
+          if (advisory) {
+            results.push(advisory);
+          } else {
+            logger.warn({ advisoryId }, 'No parseable vulnerability data in PAN CSAF');
+            skipped++;
+          }
+          fetched = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < maxRetries) {
+            const wait = 3000 * attempt;
+            logger.warn({ advisoryId, attempt, wait }, 'PAN CSAF fetch failed, retrying');
+            await new Promise(r => setTimeout(r, wait));
+          }
         }
-      } catch (err) {
+      }
+
+      if (!fetched) {
         failed++;
-        logger.error({ err, advisoryId, url }, 'Failed to fetch/parse PAN CSAF');
+        logger.error({ err: lastErr, advisoryId, url }, 'Failed to fetch/parse PAN CSAF after retries');
       }
 
       await new Promise(r => setTimeout(r, this.delayMs));
