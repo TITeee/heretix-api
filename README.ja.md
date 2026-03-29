@@ -635,7 +635,10 @@ WHERE ecosystem = 'npm'
 # 環境変数ファイルを作成・編集
 cp .env.example .env
 
-# 起動（イメージビルド・マイグレーション・API + PostgreSQL を一括起動）
+# フォアグラウンドで起動（初回はログを確認しながら起動することを推奨）
+API_KEY=your-api-key docker compose up --build
+
+# バックグラウンドで起動（デタッチモード）
 API_KEY=your-api-key docker compose up --build -d
 ```
 

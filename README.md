@@ -506,7 +506,10 @@ When the server starts, `src/scheduler.ts` registers cron jobs:
 # Copy and edit environment variables
 cp .env.example .env
 
-# Start (builds image, runs migrations, starts API + PostgreSQL)
+# Start in foreground (recommended for first run — shows logs)
+API_KEY=your-api-key docker compose up --build
+
+# Start in background (detached mode)
 API_KEY=your-api-key docker compose up --build -d
 ```
 
