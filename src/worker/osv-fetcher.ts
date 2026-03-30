@@ -157,23 +157,11 @@ export async function queryOSVByPackage(
 }
 
 /**
- * Extract CVSS score from severity array
- * Note: CVSS v4 vectors do not embed the base score; returns null for v4 entries.
- * Callers should supplement from database_specific.cvss_score if available.
+ * OSV severity[].score contains only a CVSS vector string, not a numeric base score.
+ * A regex on the vector would match the version prefix (e.g. "3.1" from "CVSS:3.1/..."),
+ * not the actual score. Numeric scores must come from NVD or database_specific fields.
  */
-function extractCVSSScore(severity?: Array<{ type: string; score: string }>): number | null {
-  if (!severity || severity.length === 0) return null;
-
-  for (const s of severity) {
-    if (s.type === 'CVSS_V3' || s.type === 'CVSS_V2') {
-      // Extract numeric score from e.g. "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
-      const match = s.score.match(/(\d+\.\d+)/);
-      if (match) {
-        return parseFloat(match[1]);
-      }
-    }
-  }
-
+function extractCVSSScore(_severity?: Array<{ type: string; score: string }>): number | null {
   return null;
 }
 
