@@ -157,13 +157,15 @@ export async function queryOSVByPackage(
 }
 
 /**
- * Extract CVSS score
+ * Extract CVSS score from severity array
+ * Note: CVSS v4 vectors do not embed the base score; returns null for v4 entries.
+ * Callers should supplement from database_specific.cvss_score if available.
  */
 function extractCVSSScore(severity?: Array<{ type: string; score: string }>): number | null {
   if (!severity || severity.length === 0) return null;
 
   for (const s of severity) {
-    if (s.type === 'CVSS_V4' || s.type === 'CVSS_V3' || s.type === 'CVSS_V2') {
+    if (s.type === 'CVSS_V3' || s.type === 'CVSS_V2') {
       // Extract numeric score from e.g. "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
       const match = s.score.match(/(\d+\.\d+)/);
       if (match) {
@@ -172,6 +174,16 @@ function extractCVSSScore(severity?: Array<{ type: string; score: string }>): nu
     }
   }
 
+  return null;
+}
+
+/**
+ * Extract human-readable severity level (CRITICAL/HIGH/MEDIUM/LOW) from OSV data.
+ * Prefers database_specific.severity, then derives from CVSS vector type as last resort.
+ */
+function extractOSVSeverity(osvData: OSVVulnerability): string | null {
+  const dbSeverity = (osvData.database_specific as Record<string, unknown> | undefined)?.severity;
+  if (typeof dbSeverity === 'string' && dbSeverity) return dbSeverity;
   return null;
 }
 
@@ -235,7 +247,7 @@ async function upsertMasterFromOSV(
   osvData: OSVVulnerability,
 ): Promise<void> {
   const cvssScore = extractCVSSScore(osvData.severity);
-  const severity = osvData.severity?.[0]?.type ?? null;
+  const severity = extractOSVSeverity(osvData);
   const publishedAt = osvData.published ? new Date(osvData.published) : null;
   const modifiedAt = osvData.modified ? new Date(osvData.modified) : null;
 
@@ -326,7 +338,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<void> {
           ecosystem: osvData.affected?.[0]?.package?.ecosystem,
           rawData: osvData as unknown as Prisma.InputJsonValue,
           packageName: osvData.affected?.[0]?.package?.name,
-          severity: osvData.severity?.[0]?.type,
+          severity: extractOSVSeverity(osvData),
           cvssScore: extractCVSSScore(osvData.severity),
           summary: osvData.summary,
           publishedAt: osvData.published ? new Date(osvData.published) : null,
@@ -337,7 +349,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<void> {
           aliases: osvData.aliases ?? [],
           rawData: osvData as unknown as Prisma.InputJsonValue,
           packageName: osvData.affected?.[0]?.package?.name,
-          severity: osvData.severity?.[0]?.type,
+          severity: extractOSVSeverity(osvData),
           cvssScore: extractCVSSScore(osvData.severity),
           summary: osvData.summary,
           modifiedAt: osvData.modified ? new Date(osvData.modified) : null,
