@@ -8,7 +8,7 @@ PostgreSQLベースのシンプルかつ高速な脆弱性管理APIです。**OS
 - **重複排除**: `Vulnerability` マスターテーブルが CVE ID をキーにソース間の重複を吸収
 - **CPE エイリアス対応**: NVD の CPE product 名変更（ベンダー買収等）に追従する `src/config/product-aliases.ts` で検索精度を維持
 - **リスク評価値**: CISA KEV（悪用実績フラグ）・EPSS（悪用予測スコア）を脆弱性に紐づけ
-- **シンプル**: PostgreSQLのみで動作（Redis不要、Docker不要）
+- **シンプル**: PostgreSQLのみで動作（Redis不要）。Docker Compose によるデプロイにも対応
 - **高速検索**: 正規化されたバージョン番号による整数比較で高速な範囲検索を実現
 - **スケーラブル**: 生データをJSONBで保存し、検索用フィールドを正規化
 - **RESTful API**: Fastifyベースの軽量で高速なAPIサーバー

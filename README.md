@@ -10,7 +10,7 @@ A simple, high-performance vulnerability management API backed by PostgreSQL. It
 - **Deduplication**: A `Vulnerability` master table uses CVE ID as the primary key to merge duplicate entries across sources
 - **CPE alias support**: `src/config/product-aliases.ts` tracks CPE product name changes (e.g., post-acquisition renames) so search accuracy stays high
 - **Risk scoring**: CISA KEV (known-exploited flag) and EPSS (exploitation probability score) are attached to each vulnerability
-- **Simple**: Runs on PostgreSQL only — no Redis, no Docker required
+- **Simple**: Runs on PostgreSQL only — no Redis required. Docker Compose support included for easy deployment
 - **Fast search**: Version numbers are normalized to integers for high-speed range queries
 - **Scalable**: Raw data stored as JSONB, search fields kept normalized
 - **RESTful API**: Lightweight, high-throughput Fastify server
