@@ -23,6 +23,9 @@ importers:
       axios:
         specifier: ^1.13.2
         version: 1.13.2
+      bzip2:
+        specifier: ^0.1.1
+        version: 0.1.1
       dotenv:
         specifier: ^17.2.3
         version: 17.2.3
@@ -884,6 +887,9 @@ packages:
 
   buffer@6.0.3:
     resolution: {integrity: sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==}
+
+  bzip2@0.1.1:
+    resolution: {integrity: sha512-wMvOIQ5jX3ikcCxWO1HjYVOAB+sjKzMTYLQmFPi4d6GBF01cYpnIwQ4RaDX4F3QSJeiB6gFqt5hh9fbebCSspw==}
 
   c12@3.1.0:
     resolution: {integrity: sha512-uWoS8OU1MEIsOv8p/5a82c3H31LsWVR5qiyXVfBNOzfffjUWtPnhAb4BYI2uG2HfGmZmFjCtui5XNWaps+iFuw==}
@@ -3282,6 +3288,8 @@ snapshots:
     dependencies:
       base64-js: 1.5.1
       ieee754: 1.2.1
+
+  bzip2@0.1.1: {}
 
   c12@3.1.0:
     dependencies:

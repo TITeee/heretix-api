@@ -19,6 +19,7 @@
     "import:fortinet": "node dist/scripts/import-fortinet.js",
     "import:pan": "node dist/scripts/import-pan.js",
     "import:cisco": "node dist/scripts/import-cisco.js",
+    "import:oracle-linux": "node dist/scripts/import-oracle-linux.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
     "validate:apache": "node dist/scripts/validate-apache.js"
@@ -37,6 +38,7 @@
     "@prisma/client": "^7.6.0",
     "adm-zip": "^0.5.16",
     "axios": "^1.13.2",
+    "bzip2": "^0.1.1",
     "dotenv": "^17.2.3",
     "fast-xml-parser": "^5.5.5",
     "fastify": "^5.6.2",
@@ -48,7 +50,12 @@
     "zod": "^4.3.5"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@prisma/engines", "esbuild", "prisma", "puppeteer"]
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "esbuild",
+      "prisma",
+      "puppeteer"
+    ]
   },
   "devDependencies": {
     "@mermaid-js/mermaid-cli": "^11.12.0",

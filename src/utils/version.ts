@@ -1,7 +1,7 @@
 /**
  * Convert a semantic version string to a numeric value
- * "1.2.3" -> 1002003
- * major * 1000000 + minor * 1000 + patch
+ * "1.2.3"       -> 1002003000  (major * 1_000_000_000 + minor * 1_000_000 + patch * 1_000 + release)
+ * "1.2.3-6.el9" -> 1002003006  (RPM release number included as 4th component)
  *
  * Returns null for abnormally large values or versions containing timestamps
  */
@@ -13,25 +13,34 @@ export function normalizeVersion(version: string): bigint | null {
   // "1.0.0-beta" -> true, "0.1.15-2.git..." -> false (RPM revision excluded)
   const hasPrerelease = /\d-[a-zA-Z]/.test(withoutEpoch);
 
+  const parts = withoutEpoch.split('-');
+
   // Strip everything after hyphen (release number / pre-release identifier) ("0.1.15-2.git..." -> "0.1.15")
-  const versionOnly = withoutEpoch.split('-')[0];
+  const versionOnly = parts[0];
   const cleaned = versionOnly.replace(/[^0-9.]/g, '').split('.').slice(0, 3);
 
   const major = parseInt(cleaned[0] || '0', 10);
   const minor = parseInt(cleaned[1] || '0', 10);
   const patch = parseInt(cleaned[2] || '0', 10);
 
+  // Extract RPM release number if hyphen is followed by a pure integer (e.g. "6" in "2.9.13-6.el9")
+  // Pre-release identifiers starting with a letter are excluded by hasPrerelease check above
+  const releaseMatch = !hasPrerelease ? parts[1]?.match(/^(\d+)/) : null;
+  const release = releaseMatch ? parseInt(releaseMatch[1], 10) : 0;
+
   // Check for abnormally large values (timestamps, Git hashes, etc.)
   // Normal semantic versioning rarely exceeds 999 per component
-  const MAX_COMPONENT = 999999; // maximum value per component
+  const MAX_COMPONENT = 999999;
 
-  if (major > MAX_COMPONENT || minor > MAX_COMPONENT || patch > MAX_COMPONENT) {
-    // Return null for abnormal values
+  if (major > MAX_COMPONENT || minor > MAX_COMPONENT || patch > MAX_COMPONENT || release > 999999) {
     return null;
   }
 
   // Verify the resulting BigInt is within a safe range
-  let result = BigInt(major * 1000000 + minor * 1000 + patch);
+  let result = BigInt(major) * 1_000_000_000n
+    + BigInt(minor) * 1_000_000n
+    + BigInt(patch) * 1_000n
+    + BigInt(release);
 
   // Pre-release versions should sort lower than the release (e.g., "2.0.0-beta.1" < "2.0.0")
   if (hasPrerelease && result > 0n) {
