@@ -1,12 +1,12 @@
 # Heretix API
 
-A simple, high-performance vulnerability management API backed by PostgreSQL. It collects and normalizes data from **OSV**, **NIST NVD**, **CISA KEV**, **EPSS**, and **vendor security advisories**, then provides fast, deduplicated search through a unified master table.
+A simple, high-performance vulnerability management API backed by PostgreSQL. It collects and normalizes data from **OSV**, **NIST NVD**, **CISA KEV**, **EPSS**, **Oracle Linux ELSA**, and **vendor security advisories**, then provides fast, deduplicated search through a unified master table.
 
 [日本語版 README](README.ja.md)
 
 ## Features
 
-- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, and more)
+- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), Oracle Linux ELSA (OVAL XML), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, and more)
 - **Deduplication**: A `Vulnerability` master table uses CVE ID as the primary key to merge duplicate entries across sources
 - **CPE alias support**: `src/config/product-aliases.ts` tracks CPE product name changes (e.g., post-acquisition renames) so search accuracy stays high
 - **Risk scoring**: CISA KEV (known-exploited flag) and EPSS (exploitation probability score) are attached to each vulnerability
@@ -264,6 +264,7 @@ heretix-api/
 │   │   ├── import-fortinet.ts       # Fortinet PSIRT import CLI
 │   │   ├── import-pan.ts            # Palo Alto Networks PSIRT import CLI
 │   │   ├── import-cisco.ts          # Cisco PSIRT import CLI
+│   │   ├── import-oracle-linux.ts   # Oracle Linux ELSA import CLI
 │   │   ├── validate-tomcat.ts       # Tomcat search accuracy validator
 │   │   ├── validate-apache.ts       # Apache HTTPD search accuracy validator
 │   │   ├── validate-nginx.ts        # nginx search accuracy validator
@@ -276,7 +277,8 @@ heretix-api/
 │   │   ├── advisory-fetcher.ts      # Vendor advisory common interface & import logic
 │   │   ├── fortinet-fetcher.ts      # Fortinet PSIRT CSAF fetch & parse
 │   │   ├── pan-fetcher.ts           # Palo Alto Networks PSIRT CSAF fetch & parse
-│   │   └── cisco-fetcher.ts         # Cisco PSIRT openVuln API fetch & parse
+│   │   ├── cisco-fetcher.ts         # Cisco PSIRT openVuln API fetch & parse
+│   │   └── oracle-linux-fetcher.ts  # Oracle Linux OVAL XML fetch, decompress & parse
 │   ├── config/
 │   │   └── product-aliases.ts       # NVD CPE product name alias mappings
 │   ├── utils/
@@ -323,7 +325,8 @@ Vulnerability (master)
 ### Version normalization ([src/utils/version.ts](src/utils/version.ts))
 
 Semantic versions are converted to integers for fast range queries:
-- `1.2.3` → `1_002_003` (major × 1,000,000 + minor × 1,000 + patch)
+- `1.2.3` → `1_002_003_000` (major × 1,000,000,000 + minor × 1,000,000 + patch × 1,000 + release)
+- RPM release numbers are included as the 4th component: `2.9.13-6.el9` → `2_009_013_006`
 - Stored as PostgreSQL BigInt with index-backed range scans
 
 ### OSV data ([src/worker/osv-fetcher.ts](src/worker/osv-fetcher.ts))
@@ -373,6 +376,14 @@ Semantic versions are converted to integers for fast range queries:
 - OAuth 2.0 via `CISCO_CLIENT_ID` / `CISCO_CLIENT_SECRET` + openVuln API + CSAF JSON
 - Covers Cisco IOS XE, NX-OS, ASA, FTD, and more
 - `pnpm import:cisco latest` fetches the latest 100 advisories only
+
+### Oracle Linux ELSA ([src/worker/oracle-linux-fetcher.ts](src/worker/oracle-linux-fetcher.ts))
+
+- Downloads Oracle's public OVAL XML feed (bzip2-compressed, no authentication required)
+- Parses ELSA advisories: severity, CVE list with CVSS scores, affected package/version pairs
+- Uses `criterion` comment text ("X is earlier than Y") to extract `versionEnd` (exclusive) per package
+- Per-variant feeds supported: `ol9`, `ol8`, `ol7`, etc.
+- RPM release numbers (e.g. `2.9.13-6.el9`) are handled by `normalizeVersion()` for accurate range queries
 
 ## Data Collection
 
@@ -427,6 +438,23 @@ pnpm import:cisco                     # Cisco PSIRT (all, requires credentials)
 pnpm import:cisco latest              # Cisco PSIRT (latest 100 only)
 ```
 
+### Oracle Linux
+
+```bash
+pnpm import:oracle-linux              # Full feed (all OL versions)
+pnpm import:oracle-linux ol9          # Oracle Linux 9 only
+pnpm import:oracle-linux ol8          # Oracle Linux 8 only
+```
+
+```bash
+# Search Oracle Linux packages
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:5000/api/v1/vulnerabilities/search?package=rsync&ecosystem=oracle-linux&version=3.2.4"
+```
+
+> **ecosystem value**: `oracle-linux` (no version suffix). Range queries use RPM version strings.
+> Specify versions as `MAJOR.MINOR.PATCH-RELEASE.dist` (e.g. `3.2.5-3.el9`) or upstream `MAJOR.MINOR.PATCH` (e.g. `3.2.4`).
+
 ### Adding a new vendor
 
 Implement the `AdvisoryFetcher` interface:
@@ -463,14 +491,14 @@ Advisories without a CVE ID are managed as independent master rows via `advisory
 
 ### Fast version search
 
-1. **Normalize versions**: `1.2.3` → `1_002_003` (PostgreSQL BigInt)
+1. **Normalize versions**: `1.2.3` → `1_002_003_000` (PostgreSQL BigInt); RPM `2.9.13-6.el9` → `2_009_013_006`
 2. **Index-backed range scan**: `(ecosystem, packageName)` + `(packageName, introducedInt, fixedInt)`
 
 ```sql
 WHERE ecosystem = 'npm'
   AND packageName = 'lodash'
-  AND introducedInt <= 4017020
-  AND (fixedInt IS NULL OR fixedInt > 4017020)
+  AND introducedInt <= 4017020000
+  AND (fixedInt IS NULL OR fixedInt > 4017020000)
 ```
 
 Vendor advisory search also uses `versionStartInt` / `lastAffectedInt` (inclusive) or `versionEndInt` (exclusive), plus an exact match against `affectedVersions[]` for distro ecosystems.
@@ -614,14 +642,14 @@ pnpm db:migrate             # Re-run migrations
 
 ### Version normalization edge cases
 
-Versions are converted as `major × 1,000,000 + minor × 1,000 + patch`.
+Versions are converted as `major × 1,000,000,000 + minor × 1,000,000 + patch × 1,000 + release`.
 
 | Case | Behavior | Impact |
 |---|---|---|
 | Pre-release (`1.0.0-beta.1`) | Treated as slightly less than the release (`1.0.0 - 1`) | Minor inaccuracy possible |
 | Build metadata (`1.0.0+build.123`) | Stripped and ignored | No impact |
-| 4-part versions (`1.2.3.4`) | 4th component and beyond truncated | Cannot distinguish `1.2.3.x` variants |
-| Component ≥ 1000 (`1.1000.0`) | Integer overflow | Incorrect range evaluation possible |
+| RPM release (`2.9.13-6.el9`) | Release number (6) included as 4th component → `2_009_013_006` | Accurate sub-release range queries |
+| Component ≥ 1,000,000 | Normalization fails (null) | Falls back to approximate match |
 | Non-semver (date-based, etc.) | Normalization fails (null) | Falls back to approximate match |
 
 **Approximate match fallback**: when normalization fails, all vulnerabilities matching the package name and ecosystem are returned with `approximateMatch: true`.
