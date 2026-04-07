@@ -139,10 +139,20 @@ function versionRangeWhere(versionInt: bigint) {
 // Prefixes for distro-specific ecosystems.
 // These use dpkg/apk version strings and require a different matching strategy
 // (exact match against the versions list) instead of upstream semver range comparison.
-const DISTRO_ECOSYSTEM_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:', 'AlmaLinux:', 'Rocky:', 'Red Hat:'];
+const DISTRO_ECOSYSTEM_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:', 'AlmaLinux:', 'Rocky:', 'Red Hat:', 'CentOS:'];
 
 function isDistroEcosystem(eco: string): boolean {
   return DISTRO_ECOSYSTEM_PREFIXES.some(p => eco.startsWith(p));
+}
+
+// Normalize ecosystem names from heretix-cli internal names to OSV ecosystem names
+const ECOSYSTEM_ALIASES: Record<string, string> = {
+  'composer': 'Packagist',
+};
+
+function normalizeEcosystem(eco: string | undefined): string | undefined {
+  if (!eco) return eco;
+  return ECOSYSTEM_ALIASES[eco.toLowerCase()] ?? eco;
 }
 
 /** Search master via OSV table */
@@ -410,6 +420,7 @@ async function searchVulnerabilities(
   limit = 50,
   offset = 0,
 ): Promise<VulnerabilityResult[]> {
+  ecosystem = normalizeEcosystem(ecosystem);
   const versionInt = version ? normalizeVersion(version) : null;
   const isDistro = ecosystem ? isDistroEcosystem(ecosystem) : false;
 

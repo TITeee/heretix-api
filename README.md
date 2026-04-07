@@ -122,7 +122,7 @@ GET /api/v1/vulnerabilities/search
 |---|---|---|
 | `package` | ✅ | Package or product name (e.g. `lodash`, `FortiOS`) |
 | `version` | ✅ | Version string (e.g. `4.17.20`, `7.4.3`) |
-| `ecosystem` | | Ecosystem or vendor (e.g. `npm`, `PyPI`, `fortinet`) |
+| `ecosystem` | | Ecosystem or vendor (e.g. `npm`, `PyPI`, `Go`, `composer`, `fortinet`) |
 | `severity` | | Filter by severity (array) |
 | `limit` | | Max results (default: 500, max: 500) |
 | `offset` | | Pagination offset (default: 0) |
@@ -410,6 +410,8 @@ Get a free API key at [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-
 pnpm import:osv sample                    # Import sample data
 pnpm import:osv package npm lodash        # All vulnerabilities for a package
 pnpm import:osv ecosystem npm             # Entire ecosystem bulk download
+pnpm import:osv ecosystem Go              # Go modules
+pnpm import:osv ecosystem Packagist       # PHP Composer packages
 pnpm import:osv id GHSA-67hx-6x53-jw92   # By OSV ID
 pnpm import:osv id CVE-2021-44228         # By CVE ID
 ```
@@ -602,8 +604,9 @@ pnpm validate:nginx 1.24.0        # vs nginx.org
 Ubuntu/Debian OSV advisories use `introduced: "0"` + `fixed: "<ubuntu_patched_version>"` to indicate that a package update is required — not to express an upstream version range. Comparing upstream semver versions against this range causes false positives.
 
 **Current behavior:**
-- **No `ecosystem` specified**: distro-specific ecosystems (`Ubuntu:*`, `Debian:*`, etc.) are excluded from results
-- **`ecosystem` explicitly specified** (e.g., `ecosystem=Ubuntu:20.04:LTS`): uses `affectedVersions` exact match with dpkg-format versions; upstream versions (e.g., `5.1.1`) do not match Debian-format strings, so no false positives occur
+- **No `ecosystem` specified**: distro-specific ecosystems (`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `Red Hat:*`, `CentOS:*`) are excluded from results
+- **`ecosystem` explicitly specified** (e.g., `ecosystem=Ubuntu:20.04:LTS`): uses `affectedVersions` exact match with dpkg/rpm-format versions; upstream versions (e.g., `5.1.1`) do not match distro-format strings, so no false positives occur
+- **Ecosystem aliases**: `composer` is automatically mapped to `Packagist` (OSV ecosystem name for PHP Composer packages)
 
 ```
 # Correct (Ubuntu 20.04 package version)
