@@ -50,9 +50,6 @@ importers:
       prisma:
         specifier: ^7.6.0
         version: 7.6.0(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3)
-      tsx:
-        specifier: ^4.21.0
-        version: 4.21.0
       zod:
         specifier: ^4.3.5
         version: 4.3.5
@@ -75,6 +72,9 @@ importers:
       prisma-erd-generator:
         specifier: ^2.4.2
         version: 2.4.2(@prisma/client@7.6.0(prisma@7.6.0(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3))(typescript@5.9.3))(@types/react@19.2.8)(puppeteer@23.11.1(typescript@5.9.3))(tsx@4.21.0)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
