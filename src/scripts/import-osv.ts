@@ -7,6 +7,9 @@ import {
   importOSVData,
   batchImportOSV,
   importOSVEcosystemStreaming,
+  importOSVEcosystemDelta,
+  importMALFromGitHub,
+  importMALDelta,
 } from '../worker/osv-fetcher.js';
 
 /**
@@ -78,15 +81,20 @@ async function main() {
     logger.info('Usage:');
     logger.info('  pnpm import:osv sample                     # Import sample vulnerabilities');
     logger.info('  pnpm import:osv package <ecosystem> [name] # Import by package (or entire ecosystem)');
-    logger.info('  pnpm import:osv ecosystem <ecosystem>      # Import entire ecosystem');
+    logger.info('  pnpm import:osv ecosystem <ecosystem>      # Import entire ecosystem (full)');
+    logger.info('  pnpm import:osv update <ecosystem>         # Delta update since last run (e.g. npm, PyPI, malware)');
     logger.info('  pnpm import:osv id <osv-id>                # Import specific vulnerability');
+    logger.info('  pnpm import:osv malware                    # Import all MAL entries from ossf/malicious-packages');
     logger.info('');
     logger.info('Examples:');
     logger.info('  pnpm import:osv sample');
     logger.info('  pnpm import:osv package npm lodash');
     logger.info('  pnpm import:osv package PyPI requests');
-    logger.info('  pnpm import:osv ecosystem npm              # Import all npm vulnerabilities');
+    logger.info('  pnpm import:osv ecosystem npm              # Full import of all npm vulnerabilities');
+    logger.info('  pnpm import:osv update npm                 # Delta update for npm since last run');
+    logger.info('  pnpm import:osv update malware             # Delta update for MAL since last run');
     logger.info('  pnpm import:osv id GHSA-67hx-6x53-jw92');
+    logger.info('  pnpm import:osv malware                    # Full import of MAL entries');
     process.exit(1);
   }
 
@@ -126,6 +134,64 @@ async function main() {
         await importOSVData(osvData);
         logger.info({ osvId: args[1] }, 'Successfully imported vulnerability');
         break;
+
+      case 'malware': {
+        // Full import of all MAL entries from ossf/malicious-packages GitHub repository
+        const malResult = await importMALFromGitHub();
+        console.log(`Done: ${malResult.succeeded} imported, ${malResult.failed} failed (total: ${malResult.total})`);
+        break;
+      }
+
+      case 'update': {
+        if (args.length < 2) {
+          logger.error('Missing argument: ecosystem required (e.g. npm, PyPI, malware)');
+          process.exit(1);
+        }
+        const ecosystem = args[1];
+        const sourceKey = ecosystem === 'malware' ? 'osv-mal' : `osv-${ecosystem}`;
+
+        const lastJob = await prisma.collectionJob.findFirst({
+          where: { source: sourceKey, status: 'completed' },
+          orderBy: { completedAt: 'desc' },
+        });
+        const since = lastJob?.completedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+        logger.info({ ecosystem, since }, 'Starting OSV delta update');
+
+        const job = await prisma.collectionJob.create({
+          data: { source: sourceKey, status: 'running', startedAt: new Date() },
+        });
+
+        try {
+          const result = ecosystem === 'malware'
+            ? await importMALDelta(since)
+            : await importOSVEcosystemDelta(ecosystem, since);
+
+          await prisma.collectionJob.update({
+            where: { id: job.id },
+            data: {
+              status: 'completed',
+              completedAt: new Date(),
+              totalFetched: result.total,
+              totalInserted: result.succeeded,
+              totalFailed: result.failed,
+            },
+          });
+
+          console.log(`Done: ${result.succeeded} imported, ${result.skipped} skipped, ${result.failed} failed (total: ${result.total})`);
+        } catch (err) {
+          await prisma.collectionJob.update({
+            where: { id: job.id },
+            data: {
+              status: 'failed',
+              completedAt: new Date(),
+              errorMessage: err instanceof Error ? err.message : String(err),
+            },
+          });
+          throw err;
+        }
+        break;
+      }
 
       default:
         logger.error({ command }, 'Unknown command');

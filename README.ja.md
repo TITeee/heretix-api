@@ -5,6 +5,7 @@ PostgreSQLベースのシンプルかつ高速な脆弱性管理APIです。**OS
 ## 特徴
 
 - **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・Oracle Linux ELSA (OVAL XML)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT 等）に対応
+- **マルウェア検知**: OSV の `MAL-YYYY-NNNN` エントリ（悪意あるパッケージ）を [ossf/malicious-packages](https://github.com/ossf/malicious-packages) からインポートし、脆弱性検索エンドポイントで検索可能
 - **重複排除**: `Vulnerability` マスターテーブルが CVE ID をキーにソース間の重複を吸収
 - **CPE エイリアス対応**: NVD の CPE product 名変更（ベンダー買収等）に追従する `src/config/product-aliases.ts` で検索精度を維持
 - **リスク評価値**: CISA KEV（悪用実績フラグ）・EPSS（悪用予測スコア）を脆弱性に紐づけ
@@ -13,6 +14,7 @@ PostgreSQLベースのシンプルかつ高速な脆弱性管理APIです。**OS
 - **スケーラブル**: 生データをJSONBで保存し、検索用フィールドを正規化
 - **RESTful API**: Fastifyベースの軽量で高速なAPIサーバー
 - **NVD全件ミラー**: NVD全CVE（約24万件）のローカルミラーに対応（差分更新も可能）
+- **OSV差分更新**: `CollectionJob` で最終実行日時を管理し、変更があったエントリのみを処理する差分更新に対応
 
 ## 技術スタック
 
@@ -370,9 +372,11 @@ Vulnerability (マスター)
 - PostgreSQLのBigInt型で格納し、インデックスによる高速検索が可能
 
 #### OSVデータ取得 ([src/worker/osv-fetcher.ts](src/worker/osv-fetcher.ts))
-- OSV API (`https://api.osv.dev/v1/`) との連携
-- 単一脆弱性の取得、パッケージ別クエリ、バッチインポート機能
+- OSV API (`https://api.osv.dev/v1/`) および GCS エコシステムバケットとの連携
+- 単一脆弱性の取得、パッケージ別クエリ、バッチインポート、差分更新に対応
+- **マルウェア検知**: [ossf/malicious-packages](https://github.com/ossf/malicious-packages) から `MAL-YYYY-NNNN` エントリをインポート。悪意あるパッケージは `/api/v1/vulnerabilities/search` でバージョン完全一致により検索可能
 - インポート時に `Vulnerability` マスターテーブルへ自動 upsert
+- 差分更新は `CollectionJob` で最終実行日時を管理し、`modified` が更新されていないエントリをスキップ
 
 #### NVDデータ取得 ([src/worker/nvd-fetcher.ts](src/worker/nvd-fetcher.ts))
 - NVD REST API v2.0 (`https://services.nvd.nist.gov/rest/json/cves/2.0`) との連携
@@ -475,13 +479,64 @@ pnpm import:osv package npm lodash
 pnpm import:osv package PyPI requests
 ```
 
-### エコシステム全体のインポート
+### エコシステム全体のインポート（全件）
 ```bash
 pnpm import:osv ecosystem npm
 pnpm import:osv ecosystem PyPI
 pnpm import:osv ecosystem Go         # Go モジュール
 pnpm import:osv ecosystem Packagist  # PHP Composer パッケージ
 ```
+
+**`ecosystem` / `update` コマンドで指定できるエコシステム一覧:**
+
+| 指定値 | 言語・プラットフォーム |
+|---|---|
+| `npm` | Node.js |
+| `PyPI` | Python |
+| `Go` | Go モジュール |
+| `RubyGems` | Ruby |
+| `crates.io` | Rust |
+| `Packagist` | PHP (Composer) |
+| `Maven` | Java / Kotlin |
+| `NuGet` | .NET |
+| `Hex` | Elixir / Erlang |
+| `Pub` | Dart / Flutter |
+| `ConanCenter` | C / C++ |
+| `SwiftURL` | Swift |
+| `CRAN` | R |
+| `Linux` | Linux カーネル |
+| `Android` | Android |
+| `OSS-Fuzz` | OSS-Fuzz プロジェクト |
+| `Bitnami` | Bitnami アプリケーションスタック |
+
+> エコシステム名は**大文字小文字を区別します**。上記の表記を正確に使用してください。
+> Linux ディストリビューション系（Alpine、Debian、Ubuntu、AlmaLinux、Rocky Linux 等）はバージョンなしでインポートできます（例: `pnpm import:osv ecosystem Ubuntu`）。**検索時**はバージョン省略可能で、`?ecosystem=Ubuntu` と指定すると全 Ubuntu バージョンにプレフィックスマッチします。`?ecosystem=Ubuntu:22.04:LTS` とすれば特定バージョンに絞り込めます。なお、これらのエコシステムはディストリビューション形式のバージョン文字列を格納するため、アップストリームの semver バージョンは一致しません。
+
+### 差分更新（前回実行以降の変更分のみ）
+```bash
+pnpm import:osv update npm           # npm の差分更新
+pnpm import:osv update PyPI          # PyPI の差分更新
+pnpm import:osv update malware       # MAL エントリの差分更新
+```
+
+差分更新は全件 ZIP をダウンロードしますが、`modified` タイムスタンプが前回の `CollectionJob` 完了時刻以前のエントリをスキップします。初回実行時は過去30日分を対象にします。
+
+### マルウェア検知（MAL エントリ）
+
+[ossf/malicious-packages](https://github.com/ossf/malicious-packages) の悪意あるパッケージ情報をインポートします。
+
+```bash
+pnpm import:osv malware              # 全件インポート（初回）
+pnpm import:osv update malware       # 差分更新（2回目以降）
+```
+
+インポート後は通常の脆弱性検索で MAL エントリが取得できます：
+```bash
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:5000/api/v1/vulnerabilities/search?package=event-stream&version=3.3.6&ecosystem=npm"
+```
+
+> `update malware` はファイル一覧取得のために GitHub API を **1回だけ**呼び出します（未認証: 60 req/時）。スケジューラは1日1回の実行のため、通常 `GITHUB_TOKEN` は不要です。
 
 ### 特定IDでインポート
 ```bash
@@ -703,6 +758,7 @@ API_KEY=your-api-key-here   # Required. Requests without x-api-key header return
 NVD_API_KEY=                # Optional. Relaxes NVD rate limit from 10 → 50 req/min
 CISCO_CLIENT_ID=            # Required for Cisco PSIRT import (openVuln API client ID)
 CISCO_CLIENT_SECRET=        # Required for Cisco PSIRT import (openVuln API client secret)
+GITHUB_TOKEN=               # Optional. MAL インポート時の GitHub tree API 呼び出し（1回のみ）を認証する。同一 IP から1時間に60回以上実行する場合のみ必要。
 ```
 
 ### CPEマッピングについて

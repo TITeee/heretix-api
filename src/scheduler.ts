@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { logger } from './utils/logger.js';
+import { prisma } from './db/client.js';
 import { importNVDByDateRange } from './worker/nvd-fetcher.js';
 import { fullImportKEV } from './worker/kev-fetcher.js';
 import { fullImportEPSS } from './worker/epss-fetcher.js';
@@ -7,6 +8,7 @@ import { runAdvisoryFetcher } from './worker/advisory-fetcher.js';
 import { FortinetFetcher } from './worker/fortinet-fetcher.js';
 import { PanFetcher } from './worker/pan-fetcher.js';
 import { CiscoFetcher } from './worker/cisco-fetcher.js';
+import { importOSVEcosystemDelta, importMALDelta } from './worker/osv-fetcher.js';
 
 // Lock flag to prevent concurrent execution of the same job
 const running = new Set<string>();
@@ -52,6 +54,38 @@ export function startScheduler(): void {
   cron.schedule('0 11 * * *',  () => void runJob('advisory-fortinet', () => runAdvisoryFetcher(new FortinetFetcher())));
   cron.schedule('15 11 * * *', () => void runJob('advisory-pan',      () => runAdvisoryFetcher(new PanFetcher())));
   cron.schedule('30 11 * * *', () => void runJob('advisory-cisco',    () => runAdvisoryFetcher(new CiscoFetcher())));
+
+  // OSV delta: daily at 08:00 UTC — update all ecosystems already in the DB
+  cron.schedule('0 8 * * *', () => {
+    void runJob('osv-delta', async () => {
+      const ecosystems = await prisma.oSVVulnerability.groupBy({
+        by: ['ecosystem'],
+        where: { ecosystem: { not: null } },
+      });
+      for (const { ecosystem } of ecosystems) {
+        if (!ecosystem) continue;
+        const sourceKey = `osv-${ecosystem}`;
+        const lastJob = await prisma.collectionJob.findFirst({
+          where: { source: sourceKey, status: 'completed' },
+          orderBy: { completedAt: 'desc' },
+        });
+        const since = lastJob?.completedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        await importOSVEcosystemDelta(ecosystem, since);
+      }
+    });
+  });
+
+  // MAL delta: daily at 08:30 UTC
+  cron.schedule('30 8 * * *', () => {
+    void runJob('osv-malware-delta', async () => {
+      const lastJob = await prisma.collectionJob.findFirst({
+        where: { source: 'osv-mal', status: 'completed' },
+        orderBy: { completedAt: 'desc' },
+      });
+      const since = lastJob?.completedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      await importMALDelta(since);
+    });
+  });
 
   logger.info('Scheduler started');
 }

@@ -177,7 +177,18 @@ async function searchOSV(
     versionFilter = version ? { affectedVersions: { has: version } } : {};
   } else {
     approximate = versionInt === null;
-    versionFilter = versionInt !== null ? versionRangeWhere(versionInt) : {};
+    if (versionInt !== null) {
+      versionFilter = {
+        OR: [
+          // Standard semver/ecosystem entries: range comparison (preserves existing behaviour)
+          { versionType: { not: 'versions' }, ...versionRangeWhere(versionInt) },
+          // Versions-only entries (MAL etc.): exact match against the versions list
+          { versionType: 'versions', affectedVersions: { has: version } },
+        ],
+      };
+    } else {
+      versionFilter = {};
+    }
   }
 
   const rows = await prisma.oSVAffectedPackage.findMany({

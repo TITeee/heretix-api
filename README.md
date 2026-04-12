@@ -7,6 +7,7 @@ A simple, high-performance vulnerability management API backed by PostgreSQL. It
 ## Features
 
 - **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), Oracle Linux ELSA (OVAL XML), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, and more)
+- **Malware detection**: OSV `MAL-YYYY-NNNN` entries (malicious packages) are imported from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) and searchable via the same vulnerability search endpoint
 - **Deduplication**: A `Vulnerability` master table uses CVE ID as the primary key to merge duplicate entries across sources
 - **CPE alias support**: `src/config/product-aliases.ts` tracks CPE product name changes (e.g., post-acquisition renames) so search accuracy stays high
 - **Risk scoring**: CISA KEV (known-exploited flag) and EPSS (exploitation probability score) are attached to each vulnerability
@@ -15,6 +16,7 @@ A simple, high-performance vulnerability management API backed by PostgreSQL. It
 - **Scalable**: Raw data stored as JSONB, search fields kept normalized
 - **RESTful API**: Lightweight, high-throughput Fastify server
 - **Full NVD mirror**: Local mirror of all ~240,000 NVD CVEs with incremental update support
+- **Incremental updates**: OSV ecosystems and MAL entries support delta updates via `CollectionJob`-tracked timestamps
 
 ## Tech Stack
 
@@ -331,9 +333,11 @@ Semantic versions are converted to integers for fast range queries:
 
 ### OSV data ([src/worker/osv-fetcher.ts](src/worker/osv-fetcher.ts))
 
-- Integrates with the OSV API (`https://api.osv.dev/v1/`)
-- Single lookup, package query, and bulk import modes
+- Integrates with the OSV API (`https://api.osv.dev/v1/`) and the GCS ecosystem bucket
+- Single lookup, package query, bulk import, and delta update modes
+- **Malware detection**: imports `MAL-YYYY-NNNN` entries from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) — malicious packages are searchable via `/api/v1/vulnerabilities/search` with exact version matching
 - Automatically upserts to the `Vulnerability` master table on import
+- Delta updates track the last run via `CollectionJob` and skip entries not modified since then
 
 ### NVD data ([src/worker/nvd-fetcher.ts](src/worker/nvd-fetcher.ts))
 
@@ -409,12 +413,43 @@ Get a free API key at [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-
 ```bash
 pnpm import:osv sample                    # Import sample data
 pnpm import:osv package npm lodash        # All vulnerabilities for a package
-pnpm import:osv ecosystem npm             # Entire ecosystem bulk download
+pnpm import:osv ecosystem npm             # Entire ecosystem bulk download (full)
 pnpm import:osv ecosystem Go              # Go modules
 pnpm import:osv ecosystem Packagist       # PHP Composer packages
+pnpm import:osv update npm               # Delta update since last run
+pnpm import:osv update PyPI              # Delta update for PyPI
+pnpm import:osv update malware           # Delta update for MAL entries
+pnpm import:osv malware                  # Full import of all MAL entries (ossf/malicious-packages)
 pnpm import:osv id GHSA-67hx-6x53-jw92   # By OSV ID
 pnpm import:osv id CVE-2021-44228         # By CVE ID
 ```
+
+Delta updates (`update <ecosystem>`) download the full ecosystem ZIP but skip entries whose `modified` timestamp is not newer than the last completed `CollectionJob`. `update malware` makes one GitHub tree API call (60 req/hr unauthenticated); set `GITHUB_TOKEN` only if running it more than 60 times per hour.
+
+**Supported ecosystems for `ecosystem` / `update` commands:**
+
+| Ecosystem value | Language / Platform |
+|---|---|
+| `npm` | Node.js |
+| `PyPI` | Python |
+| `Go` | Go modules |
+| `RubyGems` | Ruby |
+| `crates.io` | Rust |
+| `Packagist` | PHP (Composer) |
+| `Maven` | Java / Kotlin |
+| `NuGet` | .NET |
+| `Hex` | Elixir / Erlang |
+| `Pub` | Dart / Flutter |
+| `ConanCenter` | C / C++ |
+| `SwiftURL` | Swift |
+| `CRAN` | R |
+| `Linux` | Linux kernel |
+| `Android` | Android |
+| `OSS-Fuzz` | OSS-Fuzz projects |
+| `Bitnami` | Bitnami application stack |
+
+> Ecosystem names are **case-sensitive** — use exactly the values shown above.
+> Linux distribution ecosystems (Alpine, Debian, Ubuntu, AlmaLinux, Rocky Linux, etc.) can be imported without a version suffix (e.g. `pnpm import:osv ecosystem Ubuntu`). When **searching**, the version suffix is optional — `?ecosystem=Ubuntu` matches all Ubuntu versions via prefix match; `?ecosystem=Ubuntu:22.04:LTS` narrows to that specific version. Note that distro ecosystems store distro-format version strings, so upstream semver versions will not match.
 
 ### CISA KEV
 
@@ -527,6 +562,8 @@ When the server starts, `src/scheduler.ts` registers cron jobs:
 | Fortinet advisory | Daily at 11:00 UTC |
 | PAN advisory | Daily at 11:15 UTC |
 | Cisco advisory | Daily at 11:30 UTC |
+| OSV delta (all ecosystems in DB) | Daily at 08:00 UTC |
+| MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
 
 ## Development & Deployment
 
@@ -571,6 +608,7 @@ API_KEY=your-api-key-here   # Required. Requests without x-api-key header return
 NVD_API_KEY=                # Optional. Relaxes NVD rate limit from 10 → 50 req/min
 CISCO_CLIENT_ID=            # Required for Cisco PSIRT import (openVuln API client ID)
 CISCO_CLIENT_SECRET=        # Required for Cisco PSIRT import (openVuln API client secret)
+GITHUB_TOKEN=               # Optional. Authenticates the single GitHub tree API call used by MAL import/update. Only needed if running MAL commands more than 60 times/hr from the same IP.
 ```
 
 ### CPE mapping notes

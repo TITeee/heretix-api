@@ -226,6 +226,191 @@ export async function importOSVEcosystemStreaming(ecosystem: string): Promise<{
 }
 
 /**
+ * Delta import for a single OSV ecosystem.
+ * Downloads the full ecosystem ZIP (same as importOSVEcosystemStreaming) but skips
+ * entries whose `modified` timestamp is not newer than `since`.
+ */
+export async function importOSVEcosystemDelta(ecosystem: string, since: Date): Promise<{
+  total: number;
+  skipped: number;
+  succeeded: number;
+  failed: number;
+}> {
+  const url = `https://storage.googleapis.com/osv-vulnerabilities/${ecosystem}/all.zip`;
+
+  logger.info({ ecosystem, url, since }, 'Fetching OSV ecosystem ZIP for delta import');
+
+  const response = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: 300000,
+  });
+
+  logger.info({ ecosystem, size: response.data.byteLength }, 'Downloaded ZIP file, applying delta filter...');
+
+  const zip = new AdmZip(Buffer.from(response.data));
+  const zipEntries = zip.getEntries();
+
+  let total = 0;
+  let skipped = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const entry of zipEntries) {
+    if (!entry.entryName.endsWith('.json')) continue;
+
+    total++;
+    try {
+      const content = entry.getData().toString('utf8');
+      const vuln = JSON.parse(content) as OSVVulnerability;
+
+      if (vuln.modified && new Date(vuln.modified) <= since) {
+        skipped++;
+        continue;
+      }
+
+      await importOSVData(vuln);
+      succeeded++;
+    } catch (err) {
+      failed++;
+      logger.error({ err, entry: entry.entryName }, 'Failed to import OSV entry');
+    }
+
+    if (total % 1000 === 0) {
+      logger.info({ total, skipped, succeeded, failed }, 'OSV delta import progress');
+    }
+  }
+
+  logger.info({ ecosystem, since, total, skipped, succeeded, failed }, 'OSV delta import completed');
+  return { total, skipped, succeeded, failed };
+}
+
+/**
+ * Import all malware detections from the ossf/malicious-packages GitHub repository.
+ * MAL entries are not exported to the GCS osv-vulnerabilities bucket; the canonical
+ * source is https://github.com/ossf/malicious-packages (osv/malicious/**\/*.json).
+ *
+ * Strategy: one GitHub tree API call to list all file paths, then fetch each JSON
+ * from raw.githubusercontent.com (CDN, no rate limit) one at a time.
+ * Set GITHUB_TOKEN env var to raise the tree API rate limit from 60 to 5000 req/hour
+ * (only needed if running this command more than 60 times per hour).
+ */
+export async function importMALFromGitHub(): Promise<{
+  total: number;
+  succeeded: number;
+  failed: number;
+}> {
+  const token = process.env.GITHUB_TOKEN;
+  const apiHeaders: Record<string, string> = { Accept: 'application/vnd.github.v3+json' };
+  if (token) apiHeaders['Authorization'] = `Bearer ${token}`;
+
+  // One API call to get the full recursive file tree
+  const treeUrl = 'https://api.github.com/repos/ossf/malicious-packages/git/trees/main?recursive=1';
+  logger.info('Fetching ossf/malicious-packages file tree');
+
+  const treeResp = await axios.get<{ tree: { path: string; type: string }[]; truncated: boolean }>(
+    treeUrl, { headers: apiHeaders, timeout: 60000 },
+  );
+
+  if (treeResp.data.truncated) {
+    logger.warn('GitHub tree response was truncated — some MAL entries may be missing');
+  }
+
+  const malPaths = treeResp.data.tree.filter(
+    item => item.type === 'blob' && item.path.startsWith('osv/malicious/') && item.path.endsWith('.json'),
+  );
+
+  logger.info({ count: malPaths.length }, 'MAL files found, importing...');
+
+  let total = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const item of malPaths) {
+    total++;
+    const rawUrl = `https://raw.githubusercontent.com/ossf/malicious-packages/main/${item.path}`;
+    try {
+      const resp = await axios.get<OSVVulnerability>(rawUrl, { timeout: 30000 });
+      await importOSVData(resp.data);
+      succeeded++;
+    } catch (err) {
+      failed++;
+      logger.error({ err, path: item.path }, 'Failed to import MAL entry');
+    }
+
+    if (total % 500 === 0) {
+      logger.info({ total, succeeded, failed }, 'MAL import progress');
+    }
+  }
+
+  logger.info({ total, succeeded, failed }, 'MAL import completed');
+  return { total, succeeded, failed };
+}
+
+/**
+ * Delta import for MAL entries from ossf/malicious-packages.
+ * Same as importMALFromGitHub but skips entries not modified after `since`.
+ */
+export async function importMALDelta(since: Date): Promise<{
+  total: number;
+  skipped: number;
+  succeeded: number;
+  failed: number;
+}> {
+  const token = process.env.GITHUB_TOKEN;
+  const apiHeaders: Record<string, string> = { Accept: 'application/vnd.github.v3+json' };
+  if (token) apiHeaders['Authorization'] = `Bearer ${token}`;
+
+  const treeUrl = 'https://api.github.com/repos/ossf/malicious-packages/git/trees/main?recursive=1';
+  logger.info({ since }, 'Fetching ossf/malicious-packages file tree for delta import');
+
+  const treeResp = await axios.get<{ tree: { path: string; type: string }[]; truncated: boolean }>(
+    treeUrl, { headers: apiHeaders, timeout: 60000 },
+  );
+
+  if (treeResp.data.truncated) {
+    logger.warn('GitHub tree response was truncated — some MAL entries may be missing');
+  }
+
+  const malPaths = treeResp.data.tree.filter(
+    item => item.type === 'blob' && item.path.startsWith('osv/malicious/') && item.path.endsWith('.json'),
+  );
+
+  logger.info({ count: malPaths.length, since }, 'MAL files found, applying delta filter...');
+
+  let total = 0;
+  let skipped = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const item of malPaths) {
+    total++;
+    const rawUrl = `https://raw.githubusercontent.com/ossf/malicious-packages/main/${item.path}`;
+    try {
+      const resp = await axios.get<OSVVulnerability>(rawUrl, { timeout: 30000 });
+      const vuln = resp.data;
+
+      if (vuln.modified && new Date(vuln.modified) <= since) {
+        skipped++;
+        continue;
+      }
+
+      await importOSVData(vuln);
+      succeeded++;
+    } catch (err) {
+      failed++;
+      logger.error({ err, path: item.path }, 'Failed to import MAL entry');
+    }
+
+    if (total % 500 === 0) {
+      logger.info({ total, skipped, succeeded, failed }, 'MAL delta import progress');
+    }
+  }
+
+  logger.info({ since, total, skipped, succeeded, failed }, 'MAL delta import completed');
+  return { total, skipped, succeeded, failed };
+}
+
+/**
  * Upsert into master table and update OSVVulnerability.masterVulnId
  * If NVD already has a master row, do not overwrite CVSS/severity values
  */
@@ -450,6 +635,18 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<void> {
                 await emitRange(currentIntroducedVersion, undefined, undefined);
               }
             }
+          } else if (affectedVersions.length > 0) {
+            // No ranges but versions[] present (e.g. MAL ecosystem entries).
+            // Store with versionType 'versions' so the search layer can route to exact match.
+            await tx.oSVAffectedPackage.create({
+              data: {
+                vulnerabilityId: vulnerability.id,
+                ecosystem,
+                packageName,
+                versionType: 'versions',
+                affectedVersions,
+              },
+            });
           }
         }
       }
