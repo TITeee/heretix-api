@@ -32,11 +32,37 @@ async function runJob(name: string, fn: () => Promise<unknown>): Promise<void> {
 
 export function startScheduler(): void {
   // NVD delta update: every 2 hours
+  // Uses CollectionJob to track the last successful run, so any downtime gap is
+  // covered on the next execution rather than silently dropped.
   cron.schedule('0 */2 * * *', () => {
-    void runJob('nvd-delta', () => {
+    void runJob('nvd-delta', async () => {
+      const lastJob = await prisma.collectionJob.findFirst({
+        where: { source: 'nvd-delta', status: 'completed' },
+        orderBy: { completedAt: 'desc' },
+      });
       const end = new Date();
-      const start = new Date(end.getTime() - 2 * 60 * 60 * 1000);
-      return importNVDByDateRange(start, end);
+      const start = lastJob?.completedAt ?? new Date(end.getTime() - 2 * 60 * 60 * 1000);
+
+      const job = await prisma.collectionJob.create({
+        data: { source: 'nvd-delta', status: 'running', startedAt: new Date() },
+      });
+      try {
+        await importNVDByDateRange(start, end);
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: { status: 'completed', completedAt: new Date() },
+        });
+      } catch (err) {
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: {
+            status: 'failed',
+            completedAt: new Date(),
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
+        throw err;
+      }
     });
   });
 
