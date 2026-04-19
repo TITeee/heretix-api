@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import vulnerabilitiesRoute from './routes/vulnerabilities.js';
+import dashboardRoute from './routes/dashboard.js';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
@@ -32,6 +33,9 @@ export async function createServer() {
   fastify.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
+
+  // Dashboard routes (no auth required)
+  await fastify.register(dashboardRoute);
 
   // Routes (API Key auth registered in the same scope)
   await fastify.register(async (app) => {
