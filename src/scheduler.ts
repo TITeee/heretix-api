@@ -81,9 +81,9 @@ export function startScheduler(): void {
   cron.schedule('15 11 * * *', () => void runJob('advisory-pan',      () => runAdvisoryFetcher(new PanFetcher())));
   cron.schedule('30 11 * * *', () => void runJob('advisory-cisco',    () => runAdvisoryFetcher(new CiscoFetcher())));
 
-  // OSV delta: daily at 08:00 UTC — update all ecosystems already in the DB
+  // OSV delta: daily at 08:00 UTC — run per-ecosystem so each gets its own CollectionJob
   cron.schedule('0 8 * * *', () => {
-    void runJob('osv-delta', async () => {
+    void (async () => {
       const ecosystems = await prisma.oSVVulnerability.groupBy({
         by: ['ecosystem'],
         where: { ecosystem: { not: null } },
@@ -91,14 +91,35 @@ export function startScheduler(): void {
       for (const { ecosystem } of ecosystems) {
         if (!ecosystem) continue;
         const sourceKey = `osv-${ecosystem}`;
-        const lastJob = await prisma.collectionJob.findFirst({
-          where: { source: sourceKey, status: 'completed' },
-          orderBy: { completedAt: 'desc' },
+        await runJob(sourceKey, async () => {
+          const lastJob = await prisma.collectionJob.findFirst({
+            where: { source: sourceKey, status: 'completed' },
+            orderBy: { completedAt: 'desc' },
+          });
+          const since = lastJob?.completedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+          const job = await prisma.collectionJob.create({
+            data: { source: sourceKey, status: 'running', startedAt: new Date() },
+          });
+          try {
+            await importOSVEcosystemDelta(ecosystem, since);
+            await prisma.collectionJob.update({
+              where: { id: job.id },
+              data: { status: 'completed', completedAt: new Date() },
+            });
+          } catch (err) {
+            await prisma.collectionJob.update({
+              where: { id: job.id },
+              data: {
+                status: 'failed',
+                completedAt: new Date(),
+                errorMessage: err instanceof Error ? err.message : String(err),
+              },
+            });
+            throw err;
+          }
         });
-        const since = lastJob?.completedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        await importOSVEcosystemDelta(ecosystem, since);
       }
-    });
+    })();
   });
 
   // MAL delta: daily at 08:30 UTC
@@ -109,7 +130,26 @@ export function startScheduler(): void {
         orderBy: { completedAt: 'desc' },
       });
       const since = lastJob?.completedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      await importMALDelta(since);
+      const job = await prisma.collectionJob.create({
+        data: { source: 'osv-mal', status: 'running', startedAt: new Date() },
+      });
+      try {
+        await importMALDelta(since);
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: { status: 'completed', completedAt: new Date() },
+        });
+      } catch (err) {
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: {
+            status: 'failed',
+            completedAt: new Date(),
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
+        throw err;
+      }
     });
   });
 

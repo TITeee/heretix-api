@@ -97,6 +97,29 @@ pnpm db:erd
 ```
 Output is saved to `docs/erd.md`.
 
+## Import Status Dashboard
+
+A lightweight web dashboard is available at `/dashboard` (no authentication required).
+
+```
+GET /dashboard
+```
+
+Displays:
+- **Record counts** — total rows in NVD, OSV, KEV, and Advisory tables
+- **Import status table** — latest `CollectionJob` per source with status badge, last completed time, inserted/updated counts, and any error message
+- **OSV ecosystems** — list of all ecosystems currently imported in the database
+
+Auto-refreshes every 60 seconds. Also available as JSON:
+
+```
+GET /api/v1/import-status
+```
+
+Example: `http://localhost:5000/dashboard`
+
+---
+
 ## API Endpoints
 
 All endpoints require the `x-api-key` header to match the `API_KEY` environment variable.
@@ -562,8 +585,10 @@ When the server starts, `src/scheduler.ts` registers cron jobs:
 | Fortinet advisory | Daily at 11:00 UTC |
 | PAN advisory | Daily at 11:15 UTC |
 | Cisco advisory | Daily at 11:30 UTC |
-| OSV delta (all ecosystems in DB) | Daily at 08:00 UTC |
+| OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
+
+Each OSV ecosystem runs as an independent job (`osv-{ecosystem}`) so its status appears separately in the dashboard.
 
 ## Development & Deployment
 

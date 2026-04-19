@@ -96,6 +96,29 @@ pnpm db:erd
 ```
 生成されたER図は `docs/erd.md` に保存されます。
 
+## インポートステータス ダッシュボード
+
+`/dashboard` にアクセスすると、インポート状況を確認できる Web UI が表示されます（認証不要）。
+
+```
+GET /dashboard
+```
+
+表示内容:
+- **レコード数** — NVD / OSV / KEV / Advisory テーブルの総件数
+- **インポートステータステーブル** — ソースごとの最新 `CollectionJob`（ステータスバッジ・最終完了日時・追加/更新件数・エラーメッセージ）
+- **OSV エコシステム一覧** — DB にインポート済みのエコシステム名バッジ
+
+60 秒ごとに自動リフレッシュ。JSON での取得も可能:
+
+```
+GET /api/v1/import-status
+```
+
+例: `http://localhost:5000/dashboard`
+
+---
+
 ## API エンドポイント
 
 ### Health Check
@@ -717,6 +740,23 @@ WHERE ecosystem = 'npm'
 | isKev / kev* | CISA KEV（独立更新） |
 | epssScore / epssPercentile | FIRST.org EPSS（独立更新） |
 | workaround / solution / url | Advisory（ベンダー固有情報） |
+
+## 自動スケジューラ
+
+サーバー起動時に `src/scheduler.ts` が以下の定期ジョブを登録します:
+
+| ジョブ | スケジュール |
+|---|---|
+| NVD 差分更新 | 2 時間ごと |
+| KEV 全件置き換え | 毎日 09:00 UTC |
+| EPSS 一括更新 | 毎日 10:00 UTC |
+| Fortinet アドバイザリ | 毎日 11:00 UTC |
+| PAN アドバイザリ | 毎日 11:15 UTC |
+| Cisco アドバイザリ | 毎日 11:30 UTC |
+| OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
+| MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
+
+OSV はエコシステムごとに独立したジョブ（`osv-{ecosystem}`）として実行されるため、ダッシュボードでエコシステム単位のステータスを確認できます。
 
 ## 開発・デプロイガイド
 
