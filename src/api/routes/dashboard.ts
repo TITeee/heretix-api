@@ -18,6 +18,10 @@ function sourceLabel(source: string): string {
   return source;
 }
 
+function isOsvEcosystemSource(source: string): boolean {
+  return source.startsWith('osv-') && source !== 'osv-mal' && source !== 'osv-delta';
+}
+
 export default async function dashboardRoute(fastify: FastifyInstance) {
   fastify.get('/api/v1/import-status', async () => {
     const allJobs = await prisma.collectionJob.findMany({
@@ -29,21 +33,32 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       if (!latestBySource.has(job.source)) latestBySource.set(job.source, job);
     }
 
-    const ecosystemRows = await prisma.oSVVulnerability.groupBy({
+    // Per-ecosystem record counts
+    const ecosystemCounts = await prisma.oSVVulnerability.groupBy({
       by: ['ecosystem'],
       where: { ecosystem: { not: null } },
+      _count: { id: true },
       orderBy: { ecosystem: 'asc' },
     });
 
-    const [nvdCount, osvCount, kevCount, advisoryCount] = await Promise.all([
-      prisma.nVDVulnerability.count(),
-      prisma.oSVVulnerability.count(),
-      prisma.vulnerability.count({ where: { isKev: true } }),
-      prisma.advisoryVulnerability.count(),
-    ]);
+    const osvEcosystems = ecosystemCounts.map((r) => {
+      const eco = r.ecosystem as string;
+      const job = latestBySource.get(`osv-${eco}`);
+      return {
+        ecosystem: eco,
+        recordCount: r._count.id,
+        status: job?.status ?? null,
+        completedAt: job?.completedAt ?? null,
+        totalInserted: job?.totalInserted ?? null,
+        totalUpdated: job?.totalUpdated ?? null,
+        errorMessage: job?.errorMessage ?? null,
+      };
+    });
 
-    return {
-      sources: Array.from(latestBySource.values()).map((j) => ({
+    // Main sources: exclude per-ecosystem OSV entries (shown separately)
+    const sources = Array.from(latestBySource.values())
+      .filter((j) => !isOsvEcosystemSource(j.source))
+      .map((j) => ({
         source: j.source,
         label: sourceLabel(j.source),
         status: j.status,
@@ -53,14 +68,19 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         totalUpdated: j.totalUpdated,
         totalFailed: j.totalFailed,
         errorMessage: j.errorMessage,
-      })),
-      osvEcosystems: ecosystemRows.map((r) => r.ecosystem).filter(Boolean),
-      recordCounts: {
-        nvd: nvdCount,
-        osv: osvCount,
-        kev: kevCount,
-        advisories: advisoryCount,
-      },
+      }));
+
+    const [nvdCount, osvCount, kevCount, advisoryCount] = await Promise.all([
+      prisma.nVDVulnerability.count(),
+      prisma.oSVVulnerability.count(),
+      prisma.vulnerability.count({ where: { isKev: true } }),
+      prisma.advisoryVulnerability.count(),
+    ]);
+
+    return {
+      sources,
+      osvEcosystems,
+      recordCounts: { nvd: nvdCount, osv: osvCount, kev: kevCount, advisories: advisoryCount },
     };
   });
 
@@ -125,10 +145,26 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     <!-- OSV Ecosystems -->
     <div class="bg-gray-900 rounded-xl overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-800">
-        <h2 class="text-lg font-semibold text-white">OSV Imported Ecosystems</h2>
+        <h2 class="text-lg font-semibold text-white">OSV Ecosystems</h2>
+        <p class="text-gray-500 text-xs mt-0.5">Per-ecosystem import status and record counts</p>
       </div>
-      <div id="ecosystems" class="px-6 py-5 flex flex-wrap gap-2">
-        <span class="text-gray-500 text-sm">Loading...</span>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-gray-400 text-left border-b border-gray-800">
+              <th class="px-6 py-3 font-medium">Ecosystem</th>
+              <th class="px-6 py-3 font-medium">Status</th>
+              <th class="px-6 py-3 font-medium">Last Completed</th>
+              <th class="px-6 py-3 font-medium text-right">Records</th>
+              <th class="px-6 py-3 font-medium text-right">Inserted</th>
+              <th class="px-6 py-3 font-medium text-right">Updated</th>
+              <th class="px-6 py-3 font-medium">Error</th>
+            </tr>
+          </thead>
+          <tbody id="osv-tbody">
+            <tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">Loading...</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -154,6 +190,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     }
 
     function statusBadge(status) {
+      if (!status) return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-800 text-gray-500">no jobs</span>';
       const map = {
         completed: 'bg-green-900 text-green-300',
         failed:    'bg-red-900 text-red-300',
@@ -165,6 +202,14 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         ? '<span class="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse mr-1.5"></span>'
         : '';
       return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ' + cls + '">' + dot + status + '</span>';
+    }
+
+    function errorCell(msg) {
+      if (!msg) return '<span class="text-gray-600">—</span>';
+      return '<span class="text-red-400 font-mono text-xs block truncate max-w-xs" title="' +
+        msg.replace(/"/g, '&quot;') + '">' +
+        msg.substring(0, 60) + (msg.length > 60 ? '…' : '') +
+      '</span>';
     }
 
     function renderCards(counts) {
@@ -189,33 +234,34 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         return;
       }
       const sorted = [...sources].sort((a, b) => a.label.localeCompare(b.label));
-      document.getElementById('sources-tbody').innerHTML = sorted.map(s => {
-        const errorCell = s.errorMessage
-          ? '<span class="text-red-400 font-mono text-xs truncate max-w-xs block" title="' +
-              s.errorMessage.replace(/"/g, '&quot;') + '">' +
-              s.errorMessage.substring(0, 60) + (s.errorMessage.length > 60 ? '…' : '') +
-            '</span>'
-          : '<span class="text-gray-600">—</span>';
-        return '<tr class="border-t border-gray-800 hover:bg-gray-800/50 transition-colors">' +
+      document.getElementById('sources-tbody').innerHTML = sorted.map(s =>
+        '<tr class="border-t border-gray-800 hover:bg-gray-800/50 transition-colors">' +
           '<td class="px-6 py-4 font-medium text-gray-100">' + s.label + '</td>' +
           '<td class="px-6 py-4">' + statusBadge(s.status) + '</td>' +
           '<td class="px-6 py-4 text-gray-400">' + relativeTime(s.completedAt) + '</td>' +
           '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(s.totalInserted) + '</td>' +
           '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(s.totalUpdated) + '</td>' +
-          '<td class="px-6 py-4">' + errorCell + '</td>' +
-        '</tr>';
-      }).join('');
+          '<td class="px-6 py-4">' + errorCell(s.errorMessage) + '</td>' +
+        '</tr>'
+      ).join('');
     }
 
-    function renderEcosystems(ecosystems) {
-      const container = document.getElementById('ecosystems');
+    function renderOsvEcosystems(ecosystems) {
       if (!ecosystems.length) {
-        container.innerHTML = '<span class="text-gray-500 text-sm">No OSV ecosystems imported yet.</span>';
+        document.getElementById('osv-tbody').innerHTML =
+          '<tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">No OSV ecosystems imported yet.</td></tr>';
         return;
       }
-      container.innerHTML = ecosystems.map(eco =>
-        '<span class="px-3 py-1 bg-purple-900/60 text-purple-300 text-xs font-medium rounded-full border border-purple-800/50">' +
-          eco + '</span>'
+      document.getElementById('osv-tbody').innerHTML = ecosystems.map(e =>
+        '<tr class="border-t border-gray-800 hover:bg-gray-800/50 transition-colors">' +
+          '<td class="px-6 py-4 font-medium text-purple-300">' + e.ecosystem + '</td>' +
+          '<td class="px-6 py-4">' + statusBadge(e.status) + '</td>' +
+          '<td class="px-6 py-4 text-gray-400">' + relativeTime(e.completedAt) + '</td>' +
+          '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(e.recordCount) + '</td>' +
+          '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(e.totalInserted) + '</td>' +
+          '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(e.totalUpdated) + '</td>' +
+          '<td class="px-6 py-4">' + errorCell(e.errorMessage) + '</td>' +
+        '</tr>'
       ).join('');
     }
 
@@ -226,12 +272,13 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         const data = await res.json();
         renderCards(data.recordCounts);
         renderSources(data.sources);
-        renderEcosystems(data.osvEcosystems);
+        renderOsvEcosystems(data.osvEcosystems);
         document.getElementById('last-updated').textContent =
           'Updated ' + new Date().toLocaleTimeString();
       } catch (err) {
-        document.getElementById('sources-tbody').innerHTML =
-          '<tr><td colspan="6" class="px-6 py-8 text-center text-red-400">Failed to load data: ' + err.message + '</td></tr>';
+        const msg = '<tr><td colspan="6" class="px-6 py-8 text-center text-red-400">Failed to load: ' + err.message + '</td></tr>';
+        document.getElementById('sources-tbody').innerHTML = msg;
+        document.getElementById('osv-tbody').innerHTML = msg.replace('colspan="6"', 'colspan="7"');
       }
     }
 
