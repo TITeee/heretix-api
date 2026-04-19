@@ -78,7 +78,13 @@ pnpm db:migrate
 pnpm dev
 ```
 
-サーバーは http://localhost:3000 で起動します。
+サーバーは http://localhost:5000 で起動します。
+
+> **開発時のインポートスクリプト**: `pnpm import:*` コマンドはコンパイル済みの `dist/` を参照します。`pnpm dev` のみで起動している場合（ビルドなし）は、`pnpm exec tsx` で直接実行してください：
+> ```bash
+> pnpm exec tsx src/scripts/import-osv.ts update npm
+> pnpm exec tsx src/scripts/import-nvd.ts update
+> ```
 
 ## データベース管理
 

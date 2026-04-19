@@ -79,6 +79,12 @@ pnpm dev
 
 The server starts at http://localhost:5000.
 
+> **Import scripts in dev mode**: `pnpm import:*` commands run against the compiled `dist/` output. When running `pnpm dev` without a prior build, use `pnpm exec tsx src/scripts/<script>.ts` instead:
+> ```bash
+> pnpm exec tsx src/scripts/import-osv.ts update npm
+> pnpm exec tsx src/scripts/import-nvd.ts update
+> ```
+
 ## Database Management
 
 ### Prisma Studio
