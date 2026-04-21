@@ -68,18 +68,89 @@ export function startScheduler(): void {
 
   // KEV full replace: daily at 09:00 UTC
   cron.schedule('0 9 * * *', () => {
-    void runJob('kev', fullImportKEV);
+    void runJob('kev', async () => {
+      const job = await prisma.collectionJob.create({
+        data: { source: 'kev', status: 'running', startedAt: new Date() },
+      });
+      try {
+        const result = await fullImportKEV();
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: { status: 'completed', completedAt: new Date(), totalUpdated: result.updated },
+        });
+      } catch (err) {
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: {
+            status: 'failed',
+            completedAt: new Date(),
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
+        throw err;
+      }
+    });
   });
 
   // EPSS bulk update: daily at 10:00 UTC
   cron.schedule('0 10 * * *', () => {
-    void runJob('epss', fullImportEPSS);
+    void runJob('epss', async () => {
+      const job = await prisma.collectionJob.create({
+        data: { source: 'epss', status: 'running', startedAt: new Date() },
+      });
+      try {
+        const result = await fullImportEPSS();
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: { status: 'completed', completedAt: new Date(), totalUpdated: result.updated },
+        });
+      } catch (err) {
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: {
+            status: 'failed',
+            completedAt: new Date(),
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
+        throw err;
+      }
+    });
   });
 
   // Vendor advisories: daily from 11:00 UTC (15-minute intervals)
-  cron.schedule('0 11 * * *',  () => void runJob('advisory-fortinet', () => runAdvisoryFetcher(new FortinetFetcher())));
-  cron.schedule('15 11 * * *', () => void runJob('advisory-pan',      () => runAdvisoryFetcher(new PanFetcher())));
-  cron.schedule('30 11 * * *', () => void runJob('advisory-cisco',    () => runAdvisoryFetcher(new CiscoFetcher())));
+  const advisoryJobs = [
+    { source: 'advisory-fortinet', fetcher: () => new FortinetFetcher(), cron: '0 11 * * *' },
+    { source: 'advisory-pan',      fetcher: () => new PanFetcher(),      cron: '15 11 * * *' },
+    { source: 'advisory-cisco',    fetcher: () => new CiscoFetcher(),    cron: '30 11 * * *' },
+  ] as const;
+
+  for (const { source, fetcher, cron: schedule } of advisoryJobs) {
+    cron.schedule(schedule, () => {
+      void runJob(source, async () => {
+        const job = await prisma.collectionJob.create({
+          data: { source, status: 'running', startedAt: new Date() },
+        });
+        try {
+          await runAdvisoryFetcher(fetcher());
+          await prisma.collectionJob.update({
+            where: { id: job.id },
+            data: { status: 'completed', completedAt: new Date() },
+          });
+        } catch (err) {
+          await prisma.collectionJob.update({
+            where: { id: job.id },
+            data: {
+              status: 'failed',
+              completedAt: new Date(),
+              errorMessage: err instanceof Error ? err.message : String(err),
+            },
+          });
+          throw err;
+        }
+      });
+    });
+  }
 
   // OSV delta: daily at 08:00 UTC — run per-ecosystem so each gets its own CollectionJob
   cron.schedule('0 8 * * *', () => {

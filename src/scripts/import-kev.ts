@@ -27,8 +27,27 @@ async function main() {
   switch (command) {
     case 'full': {
       logger.info('Starting KEV full import');
-      const result = await fullImportKEV();
-      logger.info(result, 'KEV import finished');
+      const job = await prisma.collectionJob.create({
+        data: { source: 'kev', status: 'running', startedAt: new Date() },
+      });
+      try {
+        const result = await fullImportKEV();
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: { status: 'completed', completedAt: new Date(), totalUpdated: result.updated },
+        });
+        logger.info(result, 'KEV import finished');
+      } catch (err) {
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: {
+            status: 'failed',
+            completedAt: new Date(),
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
+        throw err;
+      }
       break;
     }
     case 'stats':

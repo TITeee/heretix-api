@@ -6,20 +6,21 @@ const SOURCE_LABELS: Record<string, string> = {
   'nvd': 'NVD (Full)',
   'kev': 'CISA KEV',
   'epss': 'EPSS',
-  'osv-mal': 'OSV / Malware',
   'advisory-fortinet': 'Fortinet',
   'advisory-pan': 'Palo Alto',
   'advisory-cisco': 'Cisco',
+  'advisory-oracle-linux': 'Oracle Linux',
 };
 
 function sourceLabel(source: string): string {
   if (source in SOURCE_LABELS) return SOURCE_LABELS[source];
   if (source.startsWith('osv-')) return `OSV / ${source.slice(4)}`;
+  if (source.startsWith('advisory-oracle-linux-')) return `Oracle Linux (${source.slice(22)})`;
   return source;
 }
 
 function isOsvEcosystemSource(source: string): boolean {
-  return source.startsWith('osv-') && source !== 'osv-mal' && source !== 'osv-delta';
+  return source.startsWith('osv-') && source !== 'osv-delta';
 }
 
 export default async function dashboardRoute(fastify: FastifyInstance) {
@@ -53,6 +54,19 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         totalUpdated: job?.totalUpdated ?? null,
         errorMessage: job?.errorMessage ?? null,
       };
+    });
+
+    // Append Malware as a special OSV entry (GitHub source, no dedicated ecosystem column)
+    const malJob = latestBySource.get('osv-mal');
+    const malCount = await prisma.vulnerability.count({ where: { osvId: { startsWith: 'MAL-' } } });
+    osvEcosystems.push({
+      ecosystem: 'Malware',
+      recordCount: malCount,
+      status: malJob?.status ?? null,
+      completedAt: malJob?.completedAt ?? null,
+      totalInserted: malJob?.totalInserted ?? null,
+      totalUpdated: malJob?.totalUpdated ?? null,
+      errorMessage: malJob?.errorMessage ?? null,
     });
 
     // Main sources: exclude per-ecosystem OSV entries (shown separately)
@@ -93,7 +107,14 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
   <title>Heretix — Import Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-950 text-gray-100 min-h-screen font-sans">
+<body class="bg-black text-gray-100 min-h-screen font-sans">
+  <!-- Top navbar -->
+  <nav class="border-b border-gray-900 bg-gray-950">
+    <div class="max-w-6xl mx-auto px-6 py-3 flex items-center">
+      <span class="text-white font-bold text-lg tracking-tight">Heretix</span>
+    </div>
+  </nav>
+
   <div class="max-w-6xl mx-auto px-6 py-8">
     <!-- Header -->
     <div class="flex items-center justify-between mb-8">
@@ -112,21 +133,21 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
     <!-- Summary Cards -->
     <div id="summary-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-      <div class="bg-gray-900 rounded-xl p-5 animate-pulse h-24"></div>
-      <div class="bg-gray-900 rounded-xl p-5 animate-pulse h-24"></div>
-      <div class="bg-gray-900 rounded-xl p-5 animate-pulse h-24"></div>
-      <div class="bg-gray-900 rounded-xl p-5 animate-pulse h-24"></div>
+      <div class="bg-gray-950 rounded-xl p-5 animate-pulse h-24"></div>
+      <div class="bg-gray-950 rounded-xl p-5 animate-pulse h-24"></div>
+      <div class="bg-gray-950 rounded-xl p-5 animate-pulse h-24"></div>
+      <div class="bg-gray-950 rounded-xl p-5 animate-pulse h-24"></div>
     </div>
 
     <!-- Import Status Table -->
-    <div class="bg-gray-900 rounded-xl mb-8 overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-800">
+    <div class="bg-gray-950 rounded-xl mb-8 overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-900">
         <h2 class="text-lg font-semibold text-white">Import Status</h2>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead>
-            <tr class="text-gray-400 text-left border-b border-gray-800">
+            <tr class="text-gray-400 text-left border-b border-gray-900">
               <th class="px-6 py-3 font-medium">Source</th>
               <th class="px-6 py-3 font-medium">Status</th>
               <th class="px-6 py-3 font-medium">Last Completed</th>
@@ -143,15 +164,15 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     </div>
 
     <!-- OSV Ecosystems -->
-    <div class="bg-gray-900 rounded-xl overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-800">
+    <div class="bg-gray-950 rounded-xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-900">
         <h2 class="text-lg font-semibold text-white">OSV Ecosystems</h2>
         <p class="text-gray-500 text-xs mt-0.5">Per-ecosystem import status and record counts</p>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead>
-            <tr class="text-gray-400 text-left border-b border-gray-800">
+            <tr class="text-gray-400 text-left border-b border-gray-900">
               <th class="px-6 py-3 font-medium">Ecosystem</th>
               <th class="px-6 py-3 font-medium">Status</th>
               <th class="px-6 py-3 font-medium">Last Completed</th>
@@ -220,7 +241,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         { label: 'Advisories', value: fmt(counts.advisories), color: 'text-teal-400' },
       ];
       document.getElementById('summary-cards').innerHTML = cards.map(c =>
-        '<div class="bg-gray-900 rounded-xl p-5">' +
+        '<div class="bg-gray-950 rounded-xl p-5">' +
           '<p class="text-gray-400 text-xs font-medium uppercase tracking-wider mb-2">' + c.label + '</p>' +
           '<p class="text-3xl font-bold ' + c.color + '">' + c.value + '</p>' +
         '</div>'
@@ -235,7 +256,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       }
       const sorted = [...sources].sort((a, b) => a.label.localeCompare(b.label));
       document.getElementById('sources-tbody').innerHTML = sorted.map(s =>
-        '<tr class="border-t border-gray-800 hover:bg-gray-800/50 transition-colors">' +
+        '<tr class="border-t border-gray-900 hover:bg-gray-900/70 transition-colors">' +
           '<td class="px-6 py-4 font-medium text-gray-100">' + s.label + '</td>' +
           '<td class="px-6 py-4">' + statusBadge(s.status) + '</td>' +
           '<td class="px-6 py-4 text-gray-400">' + relativeTime(s.completedAt) + '</td>' +
@@ -253,7 +274,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         return;
       }
       document.getElementById('osv-tbody').innerHTML = ecosystems.map(e =>
-        '<tr class="border-t border-gray-800 hover:bg-gray-800/50 transition-colors">' +
+        '<tr class="border-t border-gray-900 hover:bg-gray-900/70 transition-colors">' +
           '<td class="px-6 py-4 font-medium text-purple-300">' + e.ecosystem + '</td>' +
           '<td class="px-6 py-4">' + statusBadge(e.status) + '</td>' +
           '<td class="px-6 py-4 text-gray-400">' + relativeTime(e.completedAt) + '</td>' +

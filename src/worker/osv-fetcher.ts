@@ -240,14 +240,24 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
 
   logger.info({ ecosystem, url, since }, 'Fetching OSV ecosystem ZIP for delta import');
 
-  const response = await axios.get(url, {
-    responseType: 'arraybuffer',
-    timeout: 300000,
-  });
+  let responseData: ArrayBuffer;
+  try {
+    const response = await axios.get<ArrayBuffer>(url, {
+      responseType: 'arraybuffer',
+      timeout: 300000,
+    });
+    responseData = response.data;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      logger.warn({ ecosystem }, 'No GCS bucket found for ecosystem, skipping delta update');
+      return { total: 0, skipped: 0, succeeded: 0, failed: 0 };
+    }
+    throw err;
+  }
 
-  logger.info({ ecosystem, size: response.data.byteLength }, 'Downloaded ZIP file, applying delta filter...');
+  logger.info({ ecosystem, size: responseData.byteLength }, 'Downloaded ZIP file, applying delta filter...');
 
-  const zip = new AdmZip(Buffer.from(response.data));
+  const zip = new AdmZip(Buffer.from(responseData));
   const zipEntries = zip.getEntries();
 
   let total = 0;

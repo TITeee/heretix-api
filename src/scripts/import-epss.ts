@@ -16,10 +16,28 @@ const [, , command = 'full', arg] = process.argv;
 async function main() {
   switch (command) {
     case 'full': {
-      // arg is an optional date string (YYYY-MM-DD)
       logger.info({ date: arg ?? 'today' }, 'Starting EPSS full import');
-      const result = await fullImportEPSS(arg);
-      logger.info(result, 'EPSS import finished');
+      const job = await prisma.collectionJob.create({
+        data: { source: 'epss', status: 'running', startedAt: new Date() },
+      });
+      try {
+        const result = await fullImportEPSS(arg);
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: { status: 'completed', completedAt: new Date(), totalUpdated: result.updated },
+        });
+        logger.info(result, 'EPSS import finished');
+      } catch (err) {
+        await prisma.collectionJob.update({
+          where: { id: job.id },
+          data: {
+            status: 'failed',
+            completedAt: new Date(),
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
+        throw err;
+      }
       break;
     }
     case 'cve': {
