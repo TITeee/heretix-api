@@ -759,6 +759,7 @@ WHERE ecosystem = 'npm'
 | Fortinet アドバイザリ | 毎日 11:00 UTC |
 | PAN アドバイザリ | 毎日 11:15 UTC |
 | Cisco アドバイザリ | 毎日 11:30 UTC |
+| Oracle Linux アドバイザリ | 毎日 11:45 UTC |
 | OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
 | MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
 

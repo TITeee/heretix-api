@@ -8,6 +8,7 @@ import { runAdvisoryFetcher } from './worker/advisory-fetcher.js';
 import { FortinetFetcher } from './worker/fortinet-fetcher.js';
 import { PanFetcher } from './worker/pan-fetcher.js';
 import { CiscoFetcher } from './worker/cisco-fetcher.js';
+import { OracleLinuxFetcher } from './worker/oracle-linux-fetcher.js';
 import { importOSVEcosystemDelta, importMALDelta } from './worker/osv-fetcher.js';
 
 // Lock flag to prevent concurrent execution of the same job
@@ -120,9 +121,10 @@ export function startScheduler(): void {
 
   // Vendor advisories: daily from 11:00 UTC (15-minute intervals)
   const advisoryJobs = [
-    { source: 'advisory-fortinet', fetcher: () => new FortinetFetcher(), cron: '0 11 * * *' },
-    { source: 'advisory-pan',      fetcher: () => new PanFetcher(),      cron: '15 11 * * *' },
-    { source: 'advisory-cisco',    fetcher: () => new CiscoFetcher(),    cron: '30 11 * * *' },
+    { source: 'advisory-fortinet',     fetcher: () => new FortinetFetcher(),     cron: '0 11 * * *' },
+    { source: 'advisory-pan',          fetcher: () => new PanFetcher(),          cron: '15 11 * * *' },
+    { source: 'advisory-cisco',        fetcher: () => new CiscoFetcher(),        cron: '30 11 * * *' },
+    { source: 'advisory-oracle-linux', fetcher: () => new OracleLinuxFetcher(), cron: '45 11 * * *' },
   ] as const;
 
   for (const { source, fetcher, cron: schedule } of advisoryJobs) {
