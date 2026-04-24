@@ -34,20 +34,22 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       if (!latestBySource.has(job.source)) latestBySource.set(job.source, job);
     }
 
-    // Per-ecosystem record counts
-    const ecosystemCounts = await prisma.oSVVulnerability.groupBy({
-      by: ['ecosystem'],
-      where: { ecosystem: { not: null } },
-      _count: { id: true },
-      orderBy: { ecosystem: 'asc' },
-    });
+    // Per-ecosystem distinct vulnerability counts (OSVAffectedPackage is source of truth;
+    // OSVVulnerability.ecosystem only stores affected[0] and is not updated on re-import)
+    const ecosystemCounts = await prisma.$queryRaw<{ ecosystem: string; count: bigint }[]>`
+      SELECT ecosystem, COUNT(DISTINCT "vulnerabilityId") AS count
+      FROM "OSVAffectedPackage"
+      WHERE ecosystem IS NOT NULL
+      GROUP BY ecosystem
+      ORDER BY ecosystem ASC
+    `;
 
     const osvEcosystems = ecosystemCounts.map((r) => {
-      const eco = r.ecosystem as string;
+      const eco = r.ecosystem;
       const job = latestBySource.get(`osv-${eco}`);
       return {
         ecosystem: eco,
-        recordCount: r._count.id,
+        recordCount: Number(r.count),
         status: job?.status ?? null,
         completedAt: job?.completedAt ?? null,
         totalInserted: job?.totalInserted ?? null,
@@ -104,7 +106,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Heretix — Import Dashboard</title>
+  <title>Heretix - Import Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-black text-gray-100 min-h-screen font-sans">
@@ -194,12 +196,12 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     const REFRESH_INTERVAL_MS = 60000;
 
     function fmt(n) {
-      if (n == null) return '—';
+      if (n == null) return '-';
       return n.toLocaleString();
     }
 
     function relativeTime(iso) {
-      if (!iso) return '—';
+      if (!iso) return '-';
       const diff = Date.now() - new Date(iso).getTime();
       const minutes = Math.floor(diff / 60000);
       if (minutes < 1) return 'just now';
@@ -226,7 +228,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     }
 
     function errorCell(msg) {
-      if (!msg) return '<span class="text-gray-600">—</span>';
+      if (!msg) return '<span class="text-gray-600">-</span>';
       return '<span class="text-red-400 font-mono text-xs block truncate max-w-xs" title="' +
         msg.replace(/"/g, '&quot;') + '">' +
         msg.substring(0, 60) + (msg.length > 60 ? '…' : '') +
