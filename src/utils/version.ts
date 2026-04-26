@@ -7,7 +7,12 @@
  */
 export function normalizeVersion(version: string): bigint | null {
   // Strip epoch prefix ("1:0.1.15-..." -> "0.1.15-...")
-  const withoutEpoch = version.replace(/^\d+:/, '');
+  let withoutEpoch = version.replace(/^\d+:/, '');
+
+  // Convert NVD "_update_?N" suffix to ".N" before stripping non-numerics.
+  // Without this, "6_update_4" strips to "64" (major=64) instead of "6.4" (minor=4).
+  // Examples: "6_update_4" → "6.4", "5.0_update13" → "5.0.13"
+  withoutEpoch = withoutEpoch.replace(/_update_?(\d+)/gi, '.$1');
 
   // Detect pre-release (only when character after hyphen is a letter)
   // "1.0.0-beta" -> true, "0.1.15-2.git..." -> false (RPM revision excluded)
