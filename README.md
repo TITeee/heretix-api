@@ -649,6 +649,21 @@ NVD describes affected products in CPE 2.3 format. This API uses the `<product>`
 
 CPEs come in two forms: version range fields (`versionStartIncluding`, etc.) and versions embedded directly in the URI. The latter (e.g., `cpe:2.3:a:vendor:product:3.0:*:*:*:*:*:*:*`) is stored as `introduced = lastAffected = 3.0`.
 
+Old-style CPEs encode version detail in the `<update>` field (parts[6]) rather than the version field. NVD range fields only reflect the base version, losing the qualifier. Two patterns are recovered automatically at import time:
+
+| Pattern | Example CPE update field | Stored as | Query format |
+|---|---|---|---|
+| `update_N` | `update21` | `1.5.0_21` | `version=1.5.0_21` |
+| `rcN` | `rc3` | `4.19.0-rc3` | `version=4.19.0-rc3` |
+
+The following patterns are **not** recovered (version range ordering breaks due to how `normalizeVersion` strips non-numeric characters):
+
+| Pattern | Affected products | Impact |
+|---|---|---|
+| `rN` / `rN-sN` | Juniper Junos (~63k entries) | Version ordering incorrect |
+| `spN` | Windows Server Service Pack (~23k entries) | Version ordering incorrect |
+| `pN` | FreeBSD/OpenBSD patches (~25k entries) | Treated as equivalent to `.N` patch release |
+
 | vendor | Inferred ecosystem |
 |---|---|
 | `python` / `pypi` | `PyPI` |
