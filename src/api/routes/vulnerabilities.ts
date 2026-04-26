@@ -438,7 +438,9 @@ async function searchVulnerabilities(
   const [osvResults, nvdResults, advisoryResults] = await Promise.all([
     searchOSV(packageName, version, versionInt, ecosystem),
     isDistro ? Promise.resolve([]) : searchNVD(packageName, versionInt, ecosystem),
-    searchAdvisory(packageName, version),
+    // Vendor advisories are product-specific and not meaningful for distro ecosystems.
+    // Skip to avoid Oracle Linux / vendor advisories appearing in Ubuntu/Debian searches.
+    isDistro ? Promise.resolve([]) : searchAdvisory(packageName, version),
   ]);
 
   const all = dedup([...osvResults, ...nvdResults, ...advisoryResults]);
