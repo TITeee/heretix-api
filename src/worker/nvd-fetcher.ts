@@ -116,13 +116,19 @@ const VENDOR_ECOSYSTEM_MAP: Record<string, string> = {
  * Parse a CPE string and extract package information
  * cpe:2.3:a:<vendor>:<product>:<version>:...
  */
-function parseCPE(cpe: string): { vendor: string; packageName: string; ecosystem: string | null; version: string | null } | null {
+function parseCPE(cpe: string): {
+  vendor: string;
+  packageName: string;
+  ecosystem: string | null;
+  version: string | null;
+  updateQualifier: string | null;
+} | null {
   // Target cpe:2.3:a: (application) and cpe:2.3:o: (OS)
   // Exclude h: (hardware) because version is always "-"
   if (!cpe.startsWith('cpe:2.3:a:') && !cpe.startsWith('cpe:2.3:o:')) return null;
 
   const parts = cpe.split(':');
-  // parts: ["cpe", "2.3", "a"/"o", "<vendor>", "<product>", "<version>", ...]
+  // parts: ["cpe", "2.3", "a"/"o", "<vendor>", "<product>", "<version>", "<update>", ...]
   if (parts.length < 5) return null;
 
   const vendor = parts[3];
@@ -136,7 +142,11 @@ function parseCPE(cpe: string): { vendor: string; packageName: string; ecosystem
   const rawVersion = parts[5];
   const version = rawVersion && rawVersion !== '*' && rawVersion !== '-' ? rawVersion : null;
 
-  return { vendor, packageName: product, ecosystem, version };
+  // Get parts[6] (update field) — present in old-style CPEs like sun:jre:1.5.0:update21
+  const rawUpdate = parts[6];
+  const updateQualifier = rawUpdate && rawUpdate !== '*' && rawUpdate !== '-' ? rawUpdate : null;
+
+  return { vendor, packageName: product, ecosystem, version, updateQualifier };
 }
 
 /**
@@ -542,7 +552,7 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<void> {
         const parsed = parseCPE(match.criteria);
         if (!parsed) continue;
 
-        const { vendor, packageName, ecosystem, version: cpeVersion } = parsed;
+        const { vendor, packageName, ecosystem, version: cpeVersion, updateQualifier } = parsed;
 
         // Convert version range to BigInt (best-effort)
         const toInt = (v: string | undefined): bigint | null =>
@@ -553,12 +563,29 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<void> {
           match.versionEndIncluding || match.versionEndExcluding;
         const pointVersion = !hasRangeFields ? cpeVersion : null;
 
-        // introduced = versionStartIncluding ?? versionStartExcluding ?? pointVersion
-        const introducedInt = toInt(match.versionStartIncluding ?? match.versionStartExcluding ?? pointVersion ?? undefined);
-        // fixed = fixedInt when versionEndExcluding is present
-        const fixedInt = toInt(match.versionEndExcluding);
-        // lastAffected = versionEndIncluding ?? pointVersion
-        const lastAffectedInt = toInt(match.versionEndIncluding ?? pointVersion ?? undefined);
+        // For CPEs with update_N qualifier (e.g., sun:jre:1.5.0:update21), NVD stores the
+        // point range as [base, base] omitting the update number. Recover it so that queries
+        // for "1.5.0_21" match correctly rather than falling back to the bare "1.5.0" range.
+        const updateNMatch = updateQualifier?.match(/^update[_]?(\d+)$/i);
+        const updateNum = updateNMatch?.[1] ?? null;
+        const isQualifiablePointRange = updateNum !== null
+          && !match.versionStartExcluding
+          && !match.versionEndExcluding
+          && match.versionStartIncluding !== undefined
+          && match.versionEndIncluding !== undefined
+          && match.versionStartIncluding === match.versionEndIncluding;
+        const qualifiedVersion = isQualifiablePointRange
+          ? `${match.versionStartIncluding}_${updateNum}`
+          : null;
+
+        const vsi = qualifiedVersion ?? match.versionStartIncluding ?? pointVersion ?? null;
+        const vei = qualifiedVersion ?? match.versionEndIncluding ?? pointVersion ?? null;
+        const vse = match.versionStartExcluding ?? null;
+        const vee = match.versionEndExcluding ?? null;
+
+        const introducedInt = toInt(vsi ?? vse ?? undefined);
+        const fixedInt = toInt(vee ?? undefined);
+        const lastAffectedInt = toInt(vei ?? undefined);
 
         await tx.nVDAffectedPackage.create({
           data: {
@@ -567,10 +594,10 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<void> {
             vendor,
             packageName,
             ecosystem,
-            versionStartIncluding: match.versionStartIncluding ?? pointVersion ?? null,
-            versionStartExcluding: match.versionStartExcluding ?? null,
-            versionEndIncluding: match.versionEndIncluding ?? pointVersion ?? null,
-            versionEndExcluding: match.versionEndExcluding ?? null,
+            versionStartIncluding: vsi,
+            versionStartExcluding: vse,
+            versionEndIncluding: vei,
+            versionEndExcluding: vee,
             introducedInt,
             fixedInt,
             lastAffectedInt,
