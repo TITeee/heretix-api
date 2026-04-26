@@ -43,13 +43,14 @@ export const PRODUCT_ALIASES: Record<string, string[]> = {
   // ── Varnish ────────────────────────────────────────────────────────────────
   varnish: ['varnish', 'varnish_cache'],
 
-  // ── Java (JRE / JDK / OpenJDK) ─────────────────────────────────────────────
-  // NVD records Java vulnerabilities under three separate product names.
+  // ── Java (JRE / JDK) ───────────────────────────────────────────────────────
+  // jre and jdk are interchangeable Sun/Oracle product names for the same runtime.
+  // openjdk is kept separate: old NVD entries use openjdk:* with no version bounds,
+  // which would cause false positives if cross-linked with jre/jdk aliases.
   // DB counts: jre=28,573 / jdk=24,225 / openjdk=6,026
-  java: ['jre', 'jdk', 'openjdk'],
-  jre: ['jre', 'jdk', 'openjdk'],
-  jdk: ['jre', 'jdk', 'openjdk'],
-  openjdk: ['jre', 'jdk', 'openjdk'],
+  java: ['jre', 'jdk'],
+  jre: ['jre', 'jdk'],
+  jdk: ['jre', 'jdk'],
 
   // ── Adobe Acrobat ──────────────────────────────────────────────────────────
   // NVD uses four distinct product names across Acrobat generations.
