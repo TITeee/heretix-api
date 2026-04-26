@@ -563,19 +563,26 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<void> {
           match.versionEndIncluding || match.versionEndExcluding;
         const pointVersion = !hasRangeFields ? cpeVersion : null;
 
-        // For CPEs with update_N qualifier (e.g., sun:jre:1.5.0:update21), NVD stores the
-        // point range as [base, base] omitting the update number. Recover it so that queries
-        // for "1.5.0_21" match correctly rather than falling back to the bare "1.5.0" range.
-        const updateNMatch = updateQualifier?.match(/^update[_]?(\d+)$/i);
-        const updateNum = updateNMatch?.[1] ?? null;
-        const isQualifiablePointRange = updateNum !== null
+        // For CPEs where NVD stores the point range as [base, base] but the CPE update field
+        // carries version detail that was dropped, recover it:
+        //   update_N (e.g. update21) → "1.5.0_21"  (patch qualifier; sorts above 1.5.0)
+        //   rcN      (e.g. rc3)      → "4.19.0-rc3" (pre-release; sorts below 4.19.0 final)
+        const qualifyPointVersion = (base: string, qualifier: string): string | null => {
+          const updateNMatch = qualifier.match(/^update[_]?(\d+)$/i);
+          if (updateNMatch) return `${base}_${updateNMatch[1]}`;
+          const rcMatch = qualifier.match(/^rc(\d*)$/i);
+          if (rcMatch) return `${base}-rc${rcMatch[1]}`;
+          return null;
+        };
+
+        const isQualifiablePointRange = updateQualifier !== null
           && !match.versionStartExcluding
           && !match.versionEndExcluding
           && match.versionStartIncluding !== undefined
           && match.versionEndIncluding !== undefined
           && match.versionStartIncluding === match.versionEndIncluding;
-        const qualifiedVersion = isQualifiablePointRange
-          ? `${match.versionStartIncluding}_${updateNum}`
+        const qualifiedVersion = isQualifiablePointRange && updateQualifier
+          ? qualifyPointVersion(match.versionStartIncluding!, updateQualifier)
           : null;
 
         const vsi = qualifiedVersion ?? match.versionStartIncluding ?? pointVersion ?? null;
