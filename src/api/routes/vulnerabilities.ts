@@ -145,6 +145,17 @@ function isDistroEcosystem(eco: string): boolean {
   return DISTRO_ECOSYSTEM_PREFIXES.some(p => eco.startsWith(p));
 }
 
+// Language package ecosystems (npm, PyPI, Go, etc.) are fully covered by OSV.
+// NVD and Advisory tables contain OS/C-library entries that share package names
+// with language packages (e.g. C bzip2 vs npm bzip2), causing false positives.
+const LANGUAGE_ECOSYSTEMS = new Set([
+  'npm', 'PyPI', 'Go', 'Packagist', 'crates.io', 'RubyGems', 'NuGet', 'Maven',
+]);
+
+function isLanguageEcosystem(eco: string): boolean {
+  return LANGUAGE_ECOSYSTEMS.has(eco);
+}
+
 // Normalize ecosystem names from heretix-cli internal names to OSV ecosystem names
 const ECOSYSTEM_ALIASES: Record<string, string> = {
   'composer': 'Packagist',
@@ -434,13 +445,16 @@ async function searchVulnerabilities(
   ecosystem = normalizeEcosystem(ecosystem);
   const versionInt = version ? normalizeVersion(version) : null;
   const isDistro = ecosystem ? isDistroEcosystem(ecosystem) : false;
+  // Language ecosystems (npm, PyPI, Go …) are fully covered by OSV.
+  // Querying NVD/Advisory for these would surface C-library or OS CVEs that share
+  // the same package name (e.g. C bzip2 → npm bzip2 false positive).
+  const isLanguage = ecosystem ? isLanguageEcosystem(ecosystem) : false;
 
   const [osvResults, nvdResults, advisoryResults] = await Promise.all([
     searchOSV(packageName, version, versionInt, ecosystem),
-    isDistro ? Promise.resolve([]) : searchNVD(packageName, versionInt, ecosystem),
-    // Vendor advisories are product-specific and not meaningful for distro ecosystems.
-    // Skip to avoid Oracle Linux / vendor advisories appearing in Ubuntu/Debian searches.
-    isDistro ? Promise.resolve([]) : searchAdvisory(packageName, version),
+    isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, versionInt, ecosystem),
+    // Vendor advisories are product-specific and not meaningful for distro or language ecosystems.
+    isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version),
   ]);
 
   const all = dedup([...osvResults, ...nvdResults, ...advisoryResults]);
