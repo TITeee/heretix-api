@@ -346,13 +346,15 @@ heretix-api/
 │   │   ├── fortinet-fetcher.ts     # Fortinet PSIRT CSAF取得・パース
 │   │   ├── pan-fetcher.ts          # Palo Alto Networks PSIRT CSAF取得・パース
 │   │   ├── cisco-fetcher.ts        # Cisco PSIRT openVuln API取得・パース
-│   │   └── oracle-linux-fetcher.ts # Oracle Linux OVAL XML取得・bzip2解凍・パース
+│   │   ├── oracle-linux-fetcher.ts # Oracle Linux OVAL XML取得・bzip2解凍・パース
+│   │   └── sophos-fetcher.ts       # Sophos サイトマップ+RSS+ヘッドレスブラウザ取得
 │   ├── config/
 │   │   └── product-aliases.ts      # NVD CPE product 名エイリアスマッピング
 │   ├── utils/
 │   │   ├── logger.ts               # Pinoロガー設定
 │   │   ├── version.ts              # バージョン正規化ユーティリティ
-│   │   └── cpe.ts                  # CPE 2.3 パースユーティリティ
+│   │   ├── cpe.ts                  # CPE 2.3 パースユーティリティ
+│   │   └── browser.ts              # Playwright stealth ブラウザ共有シングルトン
 │   └── index.ts                    # エントリーポイント
 ├── prisma/
 │   ├── schema.prisma               # データベーススキーマ定義
@@ -870,7 +872,7 @@ Dependabot は依存グラフを解析して影響を受けるサブモジュー
 
 ### Sophos アドバイザリにはバージョン範囲情報がない
 
-Sophos アドバイザリは RSS フィードから収集しているが、RSS にはバージョン範囲データが含まれない。CVE ID へのリンクと severity・製品名は取得できるが、`?version=X.Y.Z` によるバージョン指定検索では Sophos の結果はヒットしない。CVE ID による直接検索（`/api/v1/vulnerabilities/CVE-YYYY-NNNNN`）で関連する Sophos アドバイザリを確認できる。
+Sophos アドバイザリはサイトマップ + RSS + ヘッドレスブラウザレンダリングで63件を収集している。CVE ID と severity は取得できるが、アドバイザリ詳細ページに構造化されたバージョン範囲データがないため、`?version=X.Y.Z` によるバージョン指定検索では Sophos の結果はヒットしない。CVE ID による直接検索（`/api/v1/vulnerabilities/CVE-YYYY-NNNNN`）で関連する Sophos アドバイザリを確認できる。
 
 ### NVD と OSV のパッケージ名の表記ゆれ
 

@@ -309,13 +309,15 @@ heretix-api/
 │   │   ├── fortinet-fetcher.ts      # Fortinet PSIRT CSAF fetch & parse
 │   │   ├── pan-fetcher.ts           # Palo Alto Networks PSIRT CSAF fetch & parse
 │   │   ├── cisco-fetcher.ts         # Cisco PSIRT openVuln API fetch & parse
-│   │   └── oracle-linux-fetcher.ts  # Oracle Linux OVAL XML fetch, decompress & parse
+│   │   ├── oracle-linux-fetcher.ts  # Oracle Linux OVAL XML fetch, decompress & parse
+│   │   └── sophos-fetcher.ts        # Sophos sitemap + RSS + headless browser fetch
 │   ├── config/
 │   │   └── product-aliases.ts       # NVD CPE product name alias mappings
 │   ├── utils/
 │   │   ├── logger.ts                # Pino logger configuration
 │   │   ├── version.ts               # Version normalization utility
-│   │   └── cpe.ts                   # CPE 2.3 parse utility
+│   │   ├── cpe.ts                   # CPE 2.3 parse utility
+│   │   └── browser.ts               # Shared Playwright stealth browser singleton
 │   ├── scheduler.ts                 # node-cron based automatic update scheduler
 │   └── index.ts                     # Entry point
 ├── prisma/
@@ -739,7 +741,7 @@ When `ecosystem` is a distribution ecosystem (`Ubuntu:*`, `Debian:*`, `Alpine:*`
 
 ### Sophos advisory source has no version ranges
 
-Sophos advisories are collected from their RSS feed, which does not include version range data. Advisories are linked to CVE IDs and provide severity and affected product names, but version-specific matching (`?version=18.0.1`) will not return Sophos results. Use CVE ID lookup (`/api/v1/vulnerabilities/CVE-YYYY-NNNNN`) to find associated Sophos advisories.
+Sophos advisories are collected via sitemap + RSS + headless browser rendering (63 advisories total). CVE IDs and severity are extracted; however, affected version ranges are not available because the advisory detail pages do not expose structured version data. Advisories are linked to CVEs where present, but version-specific matching (`?version=18.0.1`) will not return Sophos results. Use CVE ID lookup (`/api/v1/vulnerabilities/CVE-YYYY-NNNNN`) to find associated Sophos advisories.
 
 ### NVD vs OSV package name discrepancies
 
