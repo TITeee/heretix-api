@@ -10,6 +10,7 @@ const SOURCE_LABELS: Record<string, string> = {
   'advisory-pan': 'Palo Alto',
   'advisory-cisco': 'Cisco',
   'advisory-oracle-linux': 'Oracle Linux',
+  'advisory-sophos':       'Sophos',
 };
 
 function sourceLabel(source: string): string {

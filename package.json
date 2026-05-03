@@ -20,6 +20,7 @@
     "import:pan": "node dist/scripts/import-pan.js",
     "import:cisco": "node dist/scripts/import-cisco.js",
     "import:oracle-linux": "node dist/scripts/import-oracle-linux.js",
+    "import:sophos": "node dist/scripts/import-sophos.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
     "validate:apache": "node dist/scripts/validate-apache.js"

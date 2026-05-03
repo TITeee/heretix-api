@@ -592,6 +592,7 @@ When the server starts, `src/scheduler.ts` registers cron jobs:
 | PAN advisory | Daily at 11:15 UTC |
 | Cisco advisory | Daily at 11:30 UTC |
 | Oracle Linux advisory | Daily at 11:45 UTC |
+| Sophos advisory | Daily at 12:00 UTC |
 | OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
 

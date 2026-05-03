@@ -9,6 +9,7 @@ import { FortinetFetcher } from './worker/fortinet-fetcher.js';
 import { PanFetcher } from './worker/pan-fetcher.js';
 import { CiscoFetcher } from './worker/cisco-fetcher.js';
 import { OracleLinuxFetcher } from './worker/oracle-linux-fetcher.js';
+import { SophosFetcher } from './worker/sophos-fetcher.js';
 import { importOSVEcosystemDelta, importMALDelta } from './worker/osv-fetcher.js';
 
 // Lock flag to prevent concurrent execution of the same job
@@ -125,6 +126,7 @@ export function startScheduler(): void {
     { source: 'advisory-pan',          fetcher: () => new PanFetcher(),          cron: '15 11 * * *' },
     { source: 'advisory-cisco',        fetcher: () => new CiscoFetcher(),        cron: '30 11 * * *' },
     { source: 'advisory-oracle-linux', fetcher: () => new OracleLinuxFetcher(), cron: '45 11 * * *' },
+    { source: 'advisory-sophos',       fetcher: () => new SophosFetcher(),       cron: '0 12 * * *' },
   ] as const;
 
   for (const { source, fetcher, cron: schedule } of advisoryJobs) {
