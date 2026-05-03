@@ -760,6 +760,7 @@ WHERE ecosystem = 'npm'
 | PAN アドバイザリ | 毎日 11:15 UTC |
 | Cisco アドバイザリ | 毎日 11:30 UTC |
 | Oracle Linux アドバイザリ | 毎日 11:45 UTC |
+| Sophos アドバイザリ | 毎日 12:00 UTC |
 | OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
 | MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
 
@@ -851,6 +852,25 @@ GET /api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosy
 GET /api/v1/vulnerabilities/search?package=xz-utils&version=5.1.1&ecosystem=Ubuntu:20.04:LTS
 → {"results": []}
 ```
+
+### Go サブモジュールは完全なモジュールパスで検索する必要がある
+
+OSV は Go の脆弱性をサブモジュール単位（例: `go.opentelemetry.io/otel/baggage`）で記録するため、親モジュール（`go.opentelemetry.io/otel`）で検索しても結果が返らない。
+
+回避策: 完全なサブモジュールパスで検索する:
+```
+GET /api/v1/vulnerabilities/search?package=go.opentelemetry.io/otel/baggage&version=1.36.0&ecosystem=Go
+```
+
+Dependabot は依存グラフを解析して影響を受けるサブモジュールを特定するが、本 API ではプレフィックスマッチによる検索は未実装。
+
+### ディストリビューション ecosystem 指定時はベンダーアドバイザリ検索がスキップされる
+
+`ecosystem` に `Ubuntu:*` / `Debian:*` / `Alpine:*` 等を指定した場合、ベンダーアドバイザリ（Fortinet / Cisco / Oracle Linux ELSA / Sophos 等）の検索結果は除外される。ディストロのパッケージ名（例: `curl`）とベンダーの製品名が重複するため偽陽性が発生するのを防ぐためである。
+
+### Sophos アドバイザリにはバージョン範囲情報がない
+
+Sophos アドバイザリは RSS フィードから収集しているが、RSS にはバージョン範囲データが含まれない。CVE ID へのリンクと severity・製品名は取得できるが、`?version=X.Y.Z` によるバージョン指定検索では Sophos の結果はヒットしない。CVE ID による直接検索（`/api/v1/vulnerabilities/CVE-YYYY-NNNNN`）で関連する Sophos アドバイザリを確認できる。
 
 ### NVD と OSV のパッケージ名の表記ゆれ
 

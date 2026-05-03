@@ -673,6 +673,25 @@ The following patterns are **not** recovered (version range ordering breaks due 
 | `golang` | `Go` |
 | `rubygems` | `RubyGems` |
 
+### NVD product name aliases
+
+NVD sometimes uses multiple CPE product names for the same software (e.g., after vendor acquisitions). `src/config/product-aliases.ts` maps search terms to all known CPE product names. Aliases are verified against actual `NVDAffectedPackage` counts in the database.
+
+| Search term | CPE product names searched | Reason |
+|---|---|---|
+| `nginx` | `nginx`, `nginx_open_source`, `nginx_open_source_subscription` | F5 acquisition renamed the product |
+| `java` / `jre` / `jdk` | `jre`, `jdk` | Sun/Oracle uses both names interchangeably |
+| `openjdk` | `openjdk` | Kept separate — old entries have unbounded wildcard ranges |
+| `acrobat` / `acrobat_reader` | `acrobat`, `acrobat_dc`, `acrobat_reader`, `acrobat_reader_dc` | Four product names across generations |
+| `opera` | `opera`, `opera_browser` | Two distinct product names in NVD |
+| `macos` / `mac_os_x` | `macos`, `mac_os_x` | Apple renamed macOS |
+| `joomla` | `joomla`, `joomla!` | Exclamation mark variant in older NVD entries |
+| `curl` | `curl`, `libcurl` | Both names used in NVD |
+| `tomcat` | `tomcat` | Version-specific names (tomcat7/8/9/10) absent from DB |
+| `postgres` | `postgresql` | Common abbreviation |
+| `spring` / `spring_framework` | `spring_framework` | NVD uses full name only |
+| `k8s` | `kubernetes` | Common abbreviation |
+
 ## Accuracy Validation
 
 Scripts to measure Precision / Recall against official security advisories:
@@ -702,6 +721,25 @@ GET /api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosy
 GET /api/v1/vulnerabilities/search?package=xz-utils&version=5.1.1&ecosystem=Ubuntu:20.04:LTS
 → {"results": []}
 ```
+
+### Go sub-module search requires exact module path
+
+OSV records Go vulnerabilities at the sub-module level (e.g., `go.opentelemetry.io/otel/baggage`), not at the parent module level (`go.opentelemetry.io/otel`). Searching with the parent module returns no results even if a sub-module is affected.
+
+Workaround: search with the exact sub-module path:
+```
+GET /api/v1/vulnerabilities/search?package=go.opentelemetry.io/otel/baggage&version=1.36.0&ecosystem=Go
+```
+
+Dependabot and similar tools resolve the full dependency graph to find affected sub-modules. Prefix-based matching (searching `go.opentelemetry.io/otel` to also match `/baggage`) is not yet implemented.
+
+### Vendor advisory search is skipped for distro ecosystems
+
+When `ecosystem` is a distribution ecosystem (`Ubuntu:*`, `Debian:*`, `Alpine:*`, etc.), vendor advisory results (Fortinet, Cisco, Oracle Linux ELSA, Sophos, etc.) are excluded. Distro-specific package names (e.g., `curl`) overlap with vendor product names, which would cause false positives.
+
+### Sophos advisory source has no version ranges
+
+Sophos advisories are collected from their RSS feed, which does not include version range data. Advisories are linked to CVE IDs and provide severity and affected product names, but version-specific matching (`?version=18.0.1`) will not return Sophos results. Use CVE ID lookup (`/api/v1/vulnerabilities/CVE-YYYY-NNNNN`) to find associated Sophos advisories.
 
 ### NVD vs OSV package name discrepancies
 
