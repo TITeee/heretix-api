@@ -4,7 +4,7 @@ PostgreSQLベースのシンプルかつ高速な脆弱性管理APIです。**OS
 
 ## 特徴
 
-- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・Oracle Linux ELSA (OVAL XML)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT 等）に対応
+- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・Oracle Linux ELSA (OVAL XML)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU 等）に対応
 - **マルウェア検知**: OSV の `MAL-YYYY-NNNN` エントリ（悪意あるパッケージ）を [ossf/malicious-packages](https://github.com/ossf/malicious-packages) からインポートし、脆弱性検索エンドポイントで検索可能
 - **重複排除**: `Vulnerability` マスターテーブルが CVE ID をキーにソース間の重複を吸収
 - **CPE エイリアス対応**: NVD の CPE product 名変更（ベンダー買収等）に追従する `src/config/product-aliases.ts` で検索精度を維持
@@ -335,7 +335,12 @@ heretix-api/
 │   │   ├── import-pan.ts                    # Palo Alto Networks PSIRTアドバイザリインポートCLI
 │   │   ├── import-cisco.ts                  # Cisco PSIRTアドバイザリインポートCLI
 │   │   ├── import-oracle-linux.ts           # Oracle Linux ELSAインポートCLI
-│   │   ├── validate-accuracy.ts             # nginx 検索精度検証（pnpm validate:nginx）
+│   │   ├── import-sophos.ts                 # Sophosアドバイザリインポートcli
+│   │   ├── import-sonicwall.ts              # SonicWall PSIRTインポートCLI
+│   │   ├── import-oracle-cpu.ts             # Oracle CPU（四半期パッチ）インポートCLI
+│   │   ├── validate-tomcat.ts               # Tomcat 検索精度検証
+│   │   ├── validate-apache.ts               # Apache HTTPD 検索精度検証
+│   │   ├── validate-nginx.ts                # nginx 検索精度検証
 │   │   └── clear-db.ts                      # DB全テーブル削除（Vulnerability含む全テーブル）
 │   ├── worker/
 │   │   ├── osv-fetcher.ts          # OSV API連携ロジック
@@ -357,6 +362,7 @@ heretix-api/
 │   │   ├── version.ts              # バージョン正規化ユーティリティ
 │   │   ├── cpe.ts                  # CPE 2.3 パースユーティリティ
 │   │   └── browser.ts              # Playwright stealth ブラウザ共有シングルトン
+│   ├── scheduler.ts                # node-cron ベースの自動更新スケジューラ
 │   └── index.ts                    # エントリーポイント
 ├── prisma/
 │   ├── schema.prisma               # データベーススキーマ定義
