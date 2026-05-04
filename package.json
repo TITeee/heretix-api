@@ -22,6 +22,7 @@
     "import:oracle-linux": "node dist/scripts/import-oracle-linux.js",
     "import:sophos": "node dist/scripts/import-sophos.js",
     "import:sonicwall": "node dist/scripts/import-sonicwall.js",
+    "import:oracle-cpu": "node dist/scripts/import-oracle-cpu.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
     "validate:apache": "node dist/scripts/validate-apache.js"

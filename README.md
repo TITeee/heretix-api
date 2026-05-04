@@ -596,6 +596,7 @@ When the server starts, `src/scheduler.ts` registers cron jobs:
 | Oracle Linux advisory | Daily at 11:45 UTC |
 | Sophos advisory | Daily at 12:00 UTC |
 | SonicWall advisory | Daily at 12:15 UTC |
+| Oracle CPU advisory | Daily at 12:30 UTC |
 | OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
 

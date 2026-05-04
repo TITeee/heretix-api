@@ -12,6 +12,7 @@ const SOURCE_LABELS: Record<string, string> = {
   'advisory-oracle-linux': 'Oracle Linux',
   'advisory-sophos':       'Sophos',
   'advisory-sonicwall':    'SonicWall',
+  'advisory-oracle-cpu':   'Oracle CPU',
 };
 
 function sourceLabel(source: string): string {
