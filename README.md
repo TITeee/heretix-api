@@ -310,7 +310,9 @@ heretix-api/
 │   │   ├── pan-fetcher.ts           # Palo Alto Networks PSIRT CSAF fetch & parse
 │   │   ├── cisco-fetcher.ts         # Cisco PSIRT openVuln API fetch & parse
 │   │   ├── oracle-linux-fetcher.ts  # Oracle Linux OVAL XML fetch, decompress & parse
-│   │   └── sophos-fetcher.ts        # Sophos sitemap + RSS + headless browser fetch
+│   │   ├── sophos-fetcher.ts        # Sophos sitemap + RSS + headless browser fetch
+│   │   ├── sonicwall-fetcher.ts     # SonicWall PSIRT JSON API fetch & parse
+│   │   └── oracle-cpu-fetcher.ts    # Oracle CPU CSAF 2.0 fetch & per-CVE split
 │   ├── config/
 │   │   └── product-aliases.ts       # NVD CPE product name alias mappings
 │   ├── utils/
@@ -504,6 +506,10 @@ pnpm import:fortinet                  # Fortinet PSIRT (all)
 pnpm import:pan                       # Palo Alto Networks PSIRT (all)
 pnpm import:cisco                     # Cisco PSIRT (all, requires credentials)
 pnpm import:cisco latest              # Cisco PSIRT (latest 100 only)
+pnpm import:sophos                    # Sophos security advisories (63 advisories via sitemap + browser)
+pnpm import:sonicwall                 # SonicWall PSIRT (all, ~200 advisories via JSON API)
+pnpm import:oracle-cpu                # Oracle Critical Patch Updates (all historical CPUs via CSAF)
+pnpm import:oracle-cpu latest         # Oracle CPU (most recent CPU only)
 ```
 
 ### Oracle Linux
@@ -522,6 +528,45 @@ curl -H "x-api-key: $API_KEY" \
 
 > **ecosystem value**: `oracle-linux` (no version suffix). Range queries use RPM version strings.
 > Specify versions as `MAJOR.MINOR.PATCH-RELEASE.dist` (e.g. `3.2.5-3.el9`) or upstream `MAJOR.MINOR.PATCH` (e.g. `3.2.4`).
+
+### Sophos
+
+Sophos security advisories. No authentication required.
+
+```bash
+pnpm import:sophos                    # All 63 advisories (sitemap + RSS + headless browser)
+```
+
+- Fetches advisory IDs from sitemap → enriches with RSS → falls back to Playwright stealth for pages where CVE is not in the title
+- CVE IDs and severity extracted; no version ranges available (use CVE ID lookup instead)
+- Products: XG/XGS Firewall, Sophos AP series, etc.
+
+### SonicWall
+
+SonicWall PSIRT advisories via public JSON API. No authentication required.
+
+```bash
+pnpm import:sonicwall                 # All advisories (~200)
+```
+
+- Fetches directly from the JSON API (`psirtapi.global.sonicwall.com/api/v1/vulnsummary/`) that the React SPA calls internally
+- Extracts CVE IDs, severity, CVSS score/vector, and product family names
+- Version numbers extracted best-effort from HTML product tables
+- Products: SonicOS Gen5/6/7/8 firewalls, SMA series, etc.
+
+### Oracle Critical Patch Update
+
+Oracle quarterly CPU advisories in CSAF 2.0 format. No authentication required.
+
+```bash
+pnpm import:oracle-cpu                # All historical CPUs (via RSS)
+pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # Most recent CPU only
+```
+
+- Discovers CPUs from Oracle RSS → fetches CSAF 2.0 JSON per CPU (same format as Fortinet/Cisco)
+- Each CPU is split into per-CVE advisory entries (`externalId: cpuapr2026-CVE-XXXX-NNNN`)
+- ~450 CVEs per CPU covering MySQL, Java SE, WebLogic, E-Business Suite, Fusion Middleware, etc.
+- Separate from `advisory-oracle-linux` (ELSA) — this covers Oracle software products, not OS packages
 
 ### Adding a new vendor
 

@@ -347,7 +347,9 @@ heretix-api/
 │   │   ├── pan-fetcher.ts          # Palo Alto Networks PSIRT CSAF取得・パース
 │   │   ├── cisco-fetcher.ts        # Cisco PSIRT openVuln API取得・パース
 │   │   ├── oracle-linux-fetcher.ts # Oracle Linux OVAL XML取得・bzip2解凍・パース
-│   │   └── sophos-fetcher.ts       # Sophos サイトマップ+RSS+ヘッドレスブラウザ取得
+│   │   ├── sophos-fetcher.ts       # Sophos サイトマップ+RSS+ヘッドレスブラウザ取得
+│   │   ├── sonicwall-fetcher.ts    # SonicWall PSIRT JSON API取得・パース
+│   │   └── oracle-cpu-fetcher.ts  # Oracle CPU CSAF 2.0取得・CVE別分割
 │   ├── config/
 │   │   └── product-aliases.ts      # NVD CPE product 名エイリアスマッピング
 │   ├── utils/
@@ -690,6 +692,46 @@ curl -H "x-api-key: $API_KEY" \
 ```
 
 > **ecosystem の値**: `oracle-linux`（バージョンサフィックスなし）。バージョンは RPM 形式（`3.2.5-3.el9`）または upstream 形式（`3.2.4`）を指定できます。
+
+### Sophos
+
+Sophos のセキュリティアドバイザリを収集します。認証不要。
+
+```bash
+pnpm import:sophos                    # 全63件（サイトマップ + RSS + ヘッドレスブラウザ）
+```
+
+- サイトマップから全アドバイザリ ID を取得 → RSS で最新情報を補完 → JS レンダリングが必要なページは Playwright stealth でフォールバック
+- CVE ID・深刻度を取得。バージョン範囲は非公開のため版本指定検索ではヒットしない（CVE 直接検索で確認可）
+- 対象製品: XG/XGS Firewall・Sophos AP シリーズ 等
+
+### SonicWall
+
+SonicWall PSIRT のアドバイザリを収集します。認証不要（公開 JSON API）。
+
+```bash
+pnpm import:sonicwall                 # 全件（約200件）
+```
+
+- SonicWall の React SPA が内部で呼び出す JSON API（`psirtapi.global.sonicwall.com/api/v1/vulnsummary/`）から直接取得
+- CVE ID・深刻度・CVSS スコア/ベクター・影響製品ファミリーを取得
+- バージョン情報は HTML テーブルからベストエフォートで抽出
+- 対象製品: SonicOS Gen5/6/7/8 Firewall・SMA シリーズ 等
+
+### Oracle Critical Patch Update
+
+Oracle の四半期セキュリティパッチ（CPU）を収集します。認証不要。
+
+```bash
+pnpm import:oracle-cpu                # 全履歴 CPU（RSS から全件）
+pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # 最新 CPU のみ
+```
+
+- Oracle 公式 RSS → CSAF 2.0 JSON（四半期ごとに公開）
+- Fortinet/Cisco と同じ CSAF 2.0 形式を使用
+- 各 CPU 内の CVE を個別 Advisory エントリに分割（externalId: `cpuapr2026-CVE-XXXX-NNNN`）
+- 1 CPU あたり約 450 CVE（MySQL・Java SE・WebLogic・E-Business Suite 等 Oracle ソフトウェア全般を対象）
+- `advisory-oracle-linux`（ELSA）とは別データ — こちらは Oracle ソフトウェア製品の CPU
 
 ### 新規ベンダーの追加方法
 
