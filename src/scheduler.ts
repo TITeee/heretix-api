@@ -10,6 +10,7 @@ import { PanFetcher } from './worker/pan-fetcher.js';
 import { CiscoFetcher } from './worker/cisco-fetcher.js';
 import { OracleLinuxFetcher } from './worker/oracle-linux-fetcher.js';
 import { SophosFetcher } from './worker/sophos-fetcher.js';
+import { SonicWallFetcher } from './worker/sonicwall-fetcher.js';
 import { importOSVEcosystemDelta, importMALDelta } from './worker/osv-fetcher.js';
 
 // Lock flag to prevent concurrent execution of the same job
@@ -127,6 +128,7 @@ export function startScheduler(): void {
     { source: 'advisory-cisco',        fetcher: () => new CiscoFetcher(),        cron: '30 11 * * *' },
     { source: 'advisory-oracle-linux', fetcher: () => new OracleLinuxFetcher(), cron: '45 11 * * *' },
     { source: 'advisory-sophos',       fetcher: () => new SophosFetcher(),       cron: '0 12 * * *' },
+    { source: 'advisory-sonicwall',    fetcher: () => new SonicWallFetcher(),    cron: '15 12 * * *' },
   ] as const;
 
   for (const { source, fetcher, cron: schedule } of advisoryJobs) {

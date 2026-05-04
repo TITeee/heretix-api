@@ -763,6 +763,7 @@ WHERE ecosystem = 'npm'
 | Cisco アドバイザリ | 毎日 11:30 UTC |
 | Oracle Linux アドバイザリ | 毎日 11:45 UTC |
 | Sophos アドバイザリ | 毎日 12:00 UTC |
+| SonicWall アドバイザリ | 毎日 12:15 UTC |
 | OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
 | MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
 
