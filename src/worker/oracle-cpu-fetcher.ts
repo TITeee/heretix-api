@@ -67,7 +67,7 @@ function extractProductFamily(fullName: string): string {
   return fullName
     .replace(/^Oracle\s+/i, '')
     .replace(/\s+v?\d[\d.]*\S*$/i, '')
-    .replace(/\s+Version\s+\S+$/i, '')
+    .replace(/\s+Version\s*\S*$/i, '')
     .trim() || fullName;
 }
 
