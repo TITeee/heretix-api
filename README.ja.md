@@ -1,30 +1,21 @@
 # Heretix API
 
-PostgreSQLベースのシンプルかつ高速な脆弱性管理APIです。**OSV**・**NIST NVD**・**CISA KEV**・**EPSS**・**Oracle Linux ELSA**・**ベンダーセキュリティアドバイザリ**などのデータを収集し、正規化されたマスターテーブルを通じて効率的な検索を提供します。
+シンプルかつ高速な脆弱性管理APIです。**OSV**・**NIST NVD**・**CISA KEV**・**EPSS**・**ベンダーセキュリティアドバイザリ**などのデータを収集し、正規化されたマスターテーブルを通じて効率的な検索を提供します。
 
 ## 特徴
 
-- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・Oracle Linux ELSA (OVAL XML)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU 等）に対応
+- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU / Oracle Linux / Broadcom/VMware 等）に対応
 - **マルウェア検知**: OSV の `MAL-YYYY-NNNN` エントリ（悪意あるパッケージ）を [ossf/malicious-packages](https://github.com/ossf/malicious-packages) からインポートし、脆弱性検索エンドポイントで検索可能
 - **重複排除**: `Vulnerability` マスターテーブルが CVE ID をキーにソース間の重複を吸収
 - **CPE エイリアス対応**: NVD の CPE product 名変更（ベンダー買収等）に追従する `src/config/product-aliases.ts` で検索精度を維持
 - **リスク評価値**: CISA KEV（悪用実績フラグ）・EPSS（悪用予測スコア）を脆弱性に紐づけ
-- **シンプル**: PostgreSQLのみで動作（Redis不要）。Docker Compose によるデプロイにも対応
+- **シンプル**: PostgreSQLのみで動作。Docker Compose によるデプロイにも対応
 - **高速検索**: 正規化されたバージョン番号による整数比較で高速な範囲検索を実現
 - **スケーラブル**: 生データをJSONBで保存し、検索用フィールドを正規化
 - **RESTful API**: Fastifyベースの軽量で高速なAPIサーバー
 - **NVD全件ミラー**: NVD全CVE（約24万件）のローカルミラーに対応（差分更新も可能）
 - **OSV差分更新**: `CollectionJob` で最終実行日時を管理し、変更があったエントリのみを処理する差分更新に対応
 
-## 技術スタック
-
-- **Runtime**: Node.js
-- **Framework**: Fastify (高速なWebフレームワーク)
-- **ORM**: Prisma (型安全なデータベースアクセス)
-- **Database**: PostgreSQL 15+ (ローカル/リモート対応)
-- **Language**: TypeScript
-- **Logging**: Pino (構造化ログ)
-- **Validation**: Zod (スキーマ検証)
 
 ## セットアップ
 
@@ -46,13 +37,6 @@ psql --version
 # データベース作成
 createdb vulndb
 ```
-
-#### リモートPostgreSQLの場合:
-- Supabase
-- Neon
-- Railway
-- AWS RDS
-などのサービスが利用可能
 
 ### 3. 環境変数の設定
 
@@ -335,6 +319,7 @@ heretix-api/
 │   │   ├── import-pan.ts                    # Palo Alto Networks PSIRTアドバイザリインポートCLI
 │   │   ├── import-cisco.ts                  # Cisco PSIRTアドバイザリインポートCLI
 │   │   ├── import-oracle-linux.ts           # Oracle Linux ELSAインポートCLI
+│   │   ├── import-broadcom.ts               # Broadcom/VMware VMSAインポートCLI
 │   │   ├── import-sophos.ts                 # Sophosアドバイザリインポートcli
 │   │   ├── import-sonicwall.ts              # SonicWall PSIRTインポートCLI
 │   │   ├── import-oracle-cpu.ts             # Oracle CPU（四半期パッチ）インポートCLI
@@ -354,7 +339,8 @@ heretix-api/
 │   │   ├── oracle-linux-fetcher.ts # Oracle Linux OVAL XML取得・bzip2解凍・パース
 │   │   ├── sophos-fetcher.ts       # Sophos サイトマップ+RSS+ヘッドレスブラウザ取得
 │   │   ├── sonicwall-fetcher.ts    # SonicWall PSIRT JSON API取得・パース
-│   │   └── oracle-cpu-fetcher.ts  # Oracle CPU CSAF 2.0取得・CVE別分割
+│   │   ├── oracle-cpu-fetcher.ts   # Oracle CPU CSAF 2.0取得・CVE別分割
+│   │   └── broadcom-fetcher.ts     # Broadcom/VMware VMSA JSON API+Playwright取得
 │   ├── config/
 │   │   └── product-aliases.ts      # NVD CPE product 名エイリアスマッピング
 │   ├── utils/
@@ -724,6 +710,21 @@ pnpm import:sonicwall                 # 全件（約200件）
 - バージョン情報は HTML テーブルからベストエフォートで抽出
 - 対象製品: SonicOS Gen5/6/7/8 Firewall・SMA シリーズ 等
 
+### Broadcom / VMware
+
+Broadcom/VMware の VMSA アドバイザリを収集します。認証不要（公開 JSON API）。
+
+```bash
+pnpm import:broadcom                  # 全件（JSON API + Playwright で詳細ページ取得）
+```
+
+- Broadcom サポートポータルの JSON API（非認証 POST エンドポイント）からアドバイザリ一覧を取得
+- 各詳細ページを Playwright でレンダリングし、影響製品・バージョンテーブルを抽出
+- VMware アップデートレベル形式（`8.0 U3d`）は内部形式（`8.0.3-4`）に自動変換されバージョン範囲検索に対応
+- 対象製品: vCenter Server / ESXi / NSX / VMware Aria / Horizon / Carbon Black 等
+
+> **バージョンクエリ形式**: VMware のアップデートレベル文字列をそのまま使用 — `version=8.0+U3d` は自動正規化されます。
+
 ### Oracle Critical Patch Update
 
 Oracle の四半期セキュリティパッチ（CPU）を収集します。認証不要。
@@ -813,6 +814,7 @@ WHERE ecosystem = 'npm'
 | Sophos アドバイザリ | 毎日 12:00 UTC |
 | SonicWall アドバイザリ | 毎日 12:15 UTC |
 | Oracle CPU アドバイザリ | 毎日 12:30 UTC |
+| Broadcom/VMware アドバイザリ | 毎日 13:00 UTC |
 | OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
 | MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
 

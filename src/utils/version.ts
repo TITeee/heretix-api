@@ -14,6 +14,15 @@ export function normalizeVersion(version: string): bigint | null {
   // Examples: "6_update_4" → "6.4", "5.0_update13" → "5.0.13"
   withoutEpoch = withoutEpoch.replace(/_update_?(\d+)/gi, '.$1');
 
+  // Broadcom/VMware: "8.0 U3d" → "8.0.3-4"  (major.minor.update-letter_index)
+  // letter a=1, b=2, …, z=26; no letter means no 4th component.
+  if (/^\d+\.\d+ U\d+[a-z]?$/.test(withoutEpoch)) {
+    withoutEpoch = withoutEpoch.replace(/ U(\d+)([a-z]?)$/, (_, u, letter) => {
+      const sub = letter ? `-${letter.charCodeAt(0) - 96}` : '';
+      return `.${u}${sub}`;
+    });
+  }
+
   // Detect pre-release (only when character after hyphen is a letter)
   // "1.0.0-beta" -> true, "0.1.15-2.git..." -> false (RPM revision excluded)
   const hasPrerelease = /\d-[a-zA-Z]/.test(withoutEpoch);

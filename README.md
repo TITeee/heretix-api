@@ -1,12 +1,12 @@
 # Heretix API
 
-A simple, high-performance vulnerability management API backed by PostgreSQL. It collects and normalizes data from **OSV**, **NIST NVD**, **CISA KEV**, **EPSS**, **Oracle Linux ELSA**, and **vendor security advisories**, then provides fast, deduplicated search through a unified master table.
+A simple, high-performance vulnerability management API backed by PostgreSQL. It collects and normalizes data from **OSV**, **NIST NVD**, **CISA KEV**, **EPSS**, and **vendor security advisories**, then provides fast, deduplicated search through a unified master table.
 
 [日本語版 README](README.ja.md)
 
 ## Features
 
-- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), Oracle Linux ELSA (OVAL XML), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, and more)
+- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, Sophos, SonicWall, Oracle CPU, Oracle Linux, Broadcom/VMware, and more)
 - **Malware detection**: OSV `MAL-YYYY-NNNN` entries (malicious packages) are imported from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) and searchable via the same vulnerability search endpoint
 - **Deduplication**: A `Vulnerability` master table uses CVE ID as the primary key to merge duplicate entries across sources
 - **CPE alias support**: `src/config/product-aliases.ts` tracks CPE product name changes (e.g., post-acquisition renames) so search accuracy stays high
@@ -17,18 +17,6 @@ A simple, high-performance vulnerability management API backed by PostgreSQL. It
 - **RESTful API**: Lightweight, high-throughput Fastify server
 - **Full NVD mirror**: Local mirror of all ~240,000 NVD CVEs with incremental update support
 - **Incremental updates**: OSV ecosystems and MAL entries support delta updates via `CollectionJob`-tracked timestamps
-
-## Tech Stack
-
-| | |
-|---|---|
-| **Runtime** | Node.js |
-| **Framework** | Fastify |
-| **ORM** | Prisma |
-| **Database** | PostgreSQL 15+ |
-| **Language** | TypeScript |
-| **Logging** | Pino |
-| **Validation** | Zod |
 
 ## Setup
 
@@ -296,6 +284,7 @@ heretix-api/
 │   │   ├── import-pan.ts            # Palo Alto Networks PSIRT import CLI
 │   │   ├── import-cisco.ts          # Cisco PSIRT import CLI
 │   │   ├── import-oracle-linux.ts   # Oracle Linux ELSA import CLI
+│   │   ├── import-broadcom.ts       # Broadcom/VMware VMSA import CLI
 │   │   ├── validate-tomcat.ts       # Tomcat search accuracy validator
 │   │   ├── validate-apache.ts       # Apache HTTPD search accuracy validator
 │   │   ├── validate-nginx.ts        # nginx search accuracy validator
@@ -312,7 +301,8 @@ heretix-api/
 │   │   ├── oracle-linux-fetcher.ts  # Oracle Linux OVAL XML fetch, decompress & parse
 │   │   ├── sophos-fetcher.ts        # Sophos sitemap + RSS + headless browser fetch
 │   │   ├── sonicwall-fetcher.ts     # SonicWall PSIRT JSON API fetch & parse
-│   │   └── oracle-cpu-fetcher.ts    # Oracle CPU CSAF 2.0 fetch & per-CVE split
+│   │   ├── oracle-cpu-fetcher.ts    # Oracle CPU CSAF 2.0 fetch & per-CVE split
+│   │   └── broadcom-fetcher.ts      # Broadcom/VMware VMSA JSON API + Playwright fetch
 │   ├── config/
 │   │   └── product-aliases.ts       # NVD CPE product name alias mappings
 │   ├── utils/
@@ -510,6 +500,7 @@ pnpm import:sophos                    # Sophos security advisories (63 advisorie
 pnpm import:sonicwall                 # SonicWall PSIRT (all, ~200 advisories via JSON API)
 pnpm import:oracle-cpu                # Oracle Critical Patch Updates (all historical CPUs via CSAF)
 pnpm import:oracle-cpu latest         # Oracle CPU (most recent CPU only)
+pnpm import:broadcom                  # Broadcom/VMware security advisories (VMSA series, JSON API)
 ```
 
 ### Oracle Linux
@@ -553,6 +544,21 @@ pnpm import:sonicwall                 # All advisories (~200)
 - Extracts CVE IDs, severity, CVSS score/vector, and product family names
 - Version numbers extracted best-effort from HTML product tables
 - Products: SonicOS Gen5/6/7/8 firewalls, SMA series, etc.
+
+### Broadcom / VMware
+
+Broadcom/VMware VMSA advisories via public JSON API + Playwright for version detail. No authentication required.
+
+```bash
+pnpm import:broadcom                  # All VMSA advisories (JSON API + Playwright)
+```
+
+- Fetches the advisory list from the Broadcom support portal JSON API (unauthenticated POST endpoint)
+- Renders each advisory detail page with Playwright to extract the affected/fixed version table
+- VMware update-level version strings (`8.0 U3d`) are automatically normalized (`8.0.3-4`) for range queries
+- Products: vCenter Server, ESXi, NSX, VMware Aria, Horizon, Carbon Black, and more
+
+> **Version query format**: Use VMware update-level strings — `version=8.0+U3d` is automatically normalized.
 
 ### Oracle Critical Patch Update
 
@@ -642,6 +648,7 @@ When the server starts, `src/scheduler.ts` registers cron jobs:
 | Sophos advisory | Daily at 12:00 UTC |
 | SonicWall advisory | Daily at 12:15 UTC |
 | Oracle CPU advisory | Daily at 12:30 UTC |
+| Broadcom/VMware advisory | Daily at 13:00 UTC |
 | OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
 
