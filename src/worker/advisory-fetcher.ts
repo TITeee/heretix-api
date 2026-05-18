@@ -131,8 +131,11 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
       const versionStartInt = prod.versionStart
         ? (normalizeVersion(prod.versionStart) ?? null)
         : null;
-      const versionEndInt = prod.versionEnd
-        ? (normalizeVersion(prod.versionEnd) ?? null)
+      // versionFixed has the same exclusive-upper-bound semantics as versionEnd:
+      // "fixed in X.Y.Z" means versions < X.Y.Z are affected → use as fallback for range queries.
+      const effectiveVersionEnd = prod.versionEnd ?? prod.versionFixed;
+      const versionEndInt = effectiveVersionEnd
+        ? (normalizeVersion(effectiveVersionEnd) ?? null)
         : null;
       const lastAffectedInt = prod.lastAffected
         ? (normalizeVersion(prod.lastAffected) ?? null)

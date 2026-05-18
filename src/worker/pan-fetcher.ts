@@ -110,6 +110,19 @@ function extractProductName(productId: string, knownProducts: Set<string>): stri
 }
 
 /**
+ * Derive the next minor branch as an exclusive upper bound.
+ * "11.1" → "11.2", "10.2" → "10.3"
+ * Used when no versionFixed is found, to prevent unbounded range matching.
+ */
+function nextMinorBranch(branch: string): string | undefined {
+  const parts = branch.split('.');
+  if (parts.length < 2) return undefined;
+  const minor = parseInt(parts[1], 10);
+  if (isNaN(minor)) return undefined;
+  return `${parts[0]}.${minor + 1}`;
+}
+
+/**
  * "< 11.1.4" → versionEnd: "11.1.4" (exclusive)
  * ">= 11.1.4" → versionFixed: "11.1.4"
  */
@@ -223,10 +236,14 @@ function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date): Norm
         if (/^\d[\d.]+$/.test(versionPart)) {
           const branch = versionPart.split('.').slice(0, 2).join('.');
           const versionFixed = fixedVersions.find(fv => fv.startsWith(branch + '.'));
+          // Set exclusive upper bound: versionFixed if known, otherwise next minor branch.
+          // Without this, the range is unbounded (+∞) and would incorrectly match future versions.
+          const versionEnd = versionFixed ?? nextMinorBranch(branch);
           affectedProducts.push({
             vendor: 'paloalto',
             product: name,
             versionStart: versionPart,
+            versionEnd,
             versionFixed,
             patchAvailable: !!versionFixed,
           });
