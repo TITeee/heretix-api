@@ -1,6 +1,7 @@
 {
   "name": "heretix-api",
   "version": "0.1.0",
+  "packageManager": "pnpm@10.24.0",
   "type": "module",
   "description": "Vulnerability Management API - Simple PostgreSQL-only backend",
   "main": "dist/index.js",
