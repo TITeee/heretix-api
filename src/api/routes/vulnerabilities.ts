@@ -36,6 +36,7 @@ type VulnerabilityResult = {
   isKev: boolean;
   epssScore: number | null;
   epssPercentile: number | null;
+  fixedVersion: string | null;
 };
 
 // Fields to select from the master table
@@ -72,6 +73,7 @@ function masterToResult(
   },
   approximateMatch: boolean,
   hitSource: string,
+  fixedVersion: string | null = null,
 ): VulnerabilityResult {
   const primarySource = master.cveId ? 'nvd' : master.osvId ? 'osv' : 'advisory';
   return {
@@ -88,10 +90,11 @@ function masterToResult(
     isKev: master.isKev,
     epssScore: master.epssScore,
     epssPercentile: master.epssPercentile,
+    fixedVersion,
   };
 }
 
-/** Deduplicate by master ID (merge sources) */
+/** Deduplicate by master ID (merge sources, keep first non-null fixedVersion) */
 function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
   const seen = new Map<string, VulnerabilityResult>();
   for (const item of items) {
@@ -99,6 +102,9 @@ function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
     if (existing) {
       for (const s of item.sources) {
         if (!existing.sources.includes(s)) existing.sources.push(s);
+      }
+      if (!existing.fixedVersion && item.fixedVersion) {
+        existing.fixedVersion = item.fixedVersion;
       }
     } else {
       seen.set(item.id, { ...item, sources: [...item.sources] });
@@ -224,7 +230,7 @@ async function searchOSV(
   return rows.map(r => {
     const v = r.vulnerability;
     if (v.masterVuln) {
-      return masterToResult(v.masterVuln, approximate, 'osv');
+      return masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null);
     }
     // Fallback before backfill
     return {
@@ -241,6 +247,7 @@ async function searchOSV(
       isKev: false,
       epssScore: null,
       epssPercentile: null,
+      fixedVersion: r.fixedVersion ?? null,
     };
   });
 }
@@ -276,8 +283,9 @@ async function searchNVD(
 
   return rows.map(r => {
     const v = r.vulnerability;
+    const fixedVersion = r.versionEndExcluding ?? null;
     if (v.masterVuln) {
-      return masterToResult(v.masterVuln, approximate, 'nvd');
+      return masterToResult(v.masterVuln, approximate, 'nvd', fixedVersion);
     }
     // Fallback before backfill
     return {
@@ -294,6 +302,7 @@ async function searchNVD(
       isKev: false,
       epssScore: null,
       epssPercentile: null,
+      fixedVersion,
     };
   });
 }
@@ -355,8 +364,9 @@ async function searchAdvisory(
 
   return rows.map(r => {
     const adv = r.advisory;
+    const fixedVersion = r.versionFixed ?? null;
     if (adv.masterVuln) {
-      return masterToResult(adv.masterVuln, version === undefined || approximate, adv.source);
+      return masterToResult(adv.masterVuln, version === undefined || approximate, adv.source, fixedVersion);
     }
     return {
       id: adv.id,
@@ -372,6 +382,7 @@ async function searchAdvisory(
       isKev: false,
       epssScore: null,
       epssPercentile: null,
+      fixedVersion,
     };
   });
 }
@@ -413,8 +424,9 @@ async function searchByCPE(
 
   return rows.map(r => {
     const v = r.vulnerability;
+    const fixedVersion = r.versionEndExcluding ?? null;
     if (v.masterVuln) {
-      return masterToResult(v.masterVuln, noVersionSpecified || approximate, 'nvd');
+      return masterToResult(v.masterVuln, noVersionSpecified || approximate, 'nvd', fixedVersion);
     }
     return {
       id: v.id,
@@ -430,6 +442,7 @@ async function searchByCPE(
       isKev: false,
       epssScore: null,
       epssPercentile: null,
+      fixedVersion,
     };
   });
 }
