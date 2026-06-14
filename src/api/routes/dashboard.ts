@@ -1,4 +1,6 @@
 import { FastifyInstance } from 'fastify';
+import { readFile } from 'fs/promises';
+import path from 'path';
 import { prisma } from '../../db/client.js';
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -103,6 +105,11 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     };
   });
 
+  fastify.get('/icon.png', async (_req, reply) => {
+    const icon = await readFile(path.join(process.cwd(), 'public', 'icon.png'));
+    reply.type('image/png').send(icon);
+  });
+
   fastify.get('/dashboard', async (_req, reply) => {
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -111,12 +118,30 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Heretix - Import Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --background: oklch(0.145 0 0);
+      --foreground: oklch(0.985 0 0);
+      --card: oklch(0.205 0 0);
+      --card-foreground: oklch(0.985 0 0);
+      --border: oklch(1 0 0 / 10%);
+      --muted: oklch(0.269 0 0);
+      --muted-foreground: oklch(0.708 0 0);
+      --accent: oklch(0.371 0 0);
+      --primary: oklch(0.87 0 0);
+      --primary-foreground: oklch(0.205 0 0);
+      --secondary: oklch(0.269 0 0);
+      --destructive: oklch(0.704 0.191 22.216);
+      --radius: 0.625rem;
+    }
+  </style>
 </head>
-<body class="bg-black text-gray-100 min-h-screen font-sans">
+<body class="bg-[var(--background)] text-[var(--foreground)] min-h-screen font-sans">
   <!-- Top navbar -->
-  <nav class="border-b border-gray-900 bg-gray-950">
-    <div class="max-w-6xl mx-auto px-6 py-3 flex items-center">
-      <span class="text-white font-bold text-lg tracking-tight">Heretix</span>
+  <nav class="border-b border-[var(--border)] bg-[var(--background)]">
+    <div class="max-w-6xl mx-auto px-6 py-3 flex items-center gap-2">
+      <img src="/icon.png" alt="Heretix" class="w-6 h-6 rounded-sm" />
+      <span class="text-[var(--foreground)] font-bold text-lg tracking-tight">Heretix</span>
     </div>
   </nav>
 
@@ -124,35 +149,35 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     <!-- Header -->
     <div class="flex items-center justify-between mb-8">
       <div>
-        <h1 class="text-2xl font-bold text-white">Import Dashboard</h1>
-        <p class="text-gray-400 text-sm mt-1">Data source status and import history</p>
+        <h1 class="text-2xl font-bold text-[var(--foreground)]">Import Dashboard</h1>
+        <p class="text-[var(--muted-foreground)] text-sm mt-1">Data source status and import history</p>
       </div>
       <div class="flex items-center gap-4">
-        <span id="last-updated" class="text-gray-500 text-sm"></span>
+        <span id="last-updated" class="text-[var(--muted-foreground)] text-sm"></span>
         <button
           onclick="loadData()"
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors"
+          class="px-4 py-2 bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 text-sm font-medium rounded-md transition-opacity"
         >Refresh</button>
       </div>
     </div>
 
     <!-- Summary Cards -->
     <div id="summary-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-      <div class="bg-gray-950 rounded-xl p-5 animate-pulse h-24"></div>
-      <div class="bg-gray-950 rounded-xl p-5 animate-pulse h-24"></div>
-      <div class="bg-gray-950 rounded-xl p-5 animate-pulse h-24"></div>
-      <div class="bg-gray-950 rounded-xl p-5 animate-pulse h-24"></div>
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-pulse h-24"></div>
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-pulse h-24"></div>
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-pulse h-24"></div>
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-pulse h-24"></div>
     </div>
 
     <!-- Import Status Table -->
-    <div class="bg-gray-950 rounded-xl mb-8 overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-900">
-        <h2 class="text-lg font-semibold text-white">Import Status</h2>
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl mb-8 overflow-hidden">
+      <div class="px-6 py-4 border-b border-[var(--border)]">
+        <h2 class="text-lg font-semibold text-[var(--card-foreground)]">Import Status</h2>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead>
-            <tr class="text-gray-400 text-left border-b border-gray-900">
+            <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
               <th class="px-6 py-3 font-medium">Source</th>
               <th class="px-6 py-3 font-medium">Status</th>
               <th class="px-6 py-3 font-medium">Last Completed</th>
@@ -162,22 +187,22 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
             </tr>
           </thead>
           <tbody id="sources-tbody">
-            <tr><td colspan="6" class="px-6 py-8 text-center text-gray-500">Loading...</td></tr>
+            <tr><td colspan="6" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
           </tbody>
         </table>
       </div>
     </div>
 
     <!-- OSV Ecosystems -->
-    <div class="bg-gray-950 rounded-xl overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-900">
-        <h2 class="text-lg font-semibold text-white">OSV Ecosystems</h2>
-        <p class="text-gray-500 text-xs mt-0.5">Per-ecosystem import status and record counts</p>
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-[var(--border)]">
+        <h2 class="text-lg font-semibold text-[var(--card-foreground)]">OSV Ecosystems</h2>
+        <p class="text-[var(--muted-foreground)] text-xs mt-0.5">Per-ecosystem import status and record counts</p>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead>
-            <tr class="text-gray-400 text-left border-b border-gray-900">
+            <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
               <th class="px-6 py-3 font-medium">Ecosystem</th>
               <th class="px-6 py-3 font-medium">Status</th>
               <th class="px-6 py-3 font-medium">Last Completed</th>
@@ -188,7 +213,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
             </tr>
           </thead>
           <tbody id="osv-tbody">
-            <tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">Loading...</td></tr>
+            <tr><td colspan="7" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -216,23 +241,23 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     }
 
     function statusBadge(status) {
-      if (!status) return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-800 text-gray-500">no jobs</span>';
+      if (!status) return '<span class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-0.5 text-xs font-medium text-[var(--muted-foreground)]">no jobs</span>';
       const map = {
-        completed: 'bg-green-900 text-green-300',
-        failed:    'bg-red-900 text-red-300',
-        running:   'bg-yellow-900 text-yellow-300',
-        pending:   'bg-gray-800 text-gray-400',
+        completed: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400',
+        failed:    'border-[var(--destructive)]/30 bg-[var(--destructive)]/10 text-[var(--destructive)]',
+        running:   'border-amber-500/20 bg-amber-500/10 text-amber-400',
+        pending:   'border-[var(--border)] bg-[var(--secondary)] text-[var(--muted-foreground)]',
       };
-      const cls = map[status] || 'bg-gray-800 text-gray-400';
+      const cls = map[status] || 'border-[var(--border)] bg-[var(--secondary)] text-[var(--muted-foreground)]';
       const dot = status === 'running'
-        ? '<span class="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse mr-1.5"></span>'
+        ? '<span class="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse mr-1.5"></span>'
         : '';
-      return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ' + cls + '">' + dot + status + '</span>';
+      return '<span class="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium ' + cls + '">' + dot + status + '</span>';
     }
 
     function errorCell(msg) {
-      if (!msg) return '<span class="text-gray-600">-</span>';
-      return '<span class="text-red-400 font-mono text-xs block truncate max-w-xs" title="' +
+      if (!msg) return '<span class="text-[var(--muted-foreground)]">-</span>';
+      return '<span class="text-[var(--destructive)] font-mono text-xs block truncate max-w-xs" title="' +
         msg.replace(/"/g, '&quot;') + '">' +
         msg.substring(0, 60) + (msg.length > 60 ? '…' : '') +
       '</span>';
@@ -240,15 +265,15 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
     function renderCards(counts) {
       const cards = [
-        { label: 'NVD',        value: fmt(counts.nvd),        color: 'text-blue-400' },
-        { label: 'OSV',        value: fmt(counts.osv),        color: 'text-purple-400' },
-        { label: 'KEV',        value: fmt(counts.kev),        color: 'text-orange-400' },
-        { label: 'Advisories', value: fmt(counts.advisories), color: 'text-teal-400' },
+        { label: 'NVD',        value: fmt(counts.nvd) },
+        { label: 'OSV',        value: fmt(counts.osv) },
+        { label: 'KEV',        value: fmt(counts.kev) },
+        { label: 'Advisories', value: fmt(counts.advisories) },
       ];
       document.getElementById('summary-cards').innerHTML = cards.map(c =>
-        '<div class="bg-gray-950 rounded-xl p-5">' +
-          '<p class="text-gray-400 text-xs font-medium uppercase tracking-wider mb-2">' + c.label + '</p>' +
-          '<p class="text-3xl font-bold ' + c.color + '">' + c.value + '</p>' +
+        '<div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">' +
+          '<p class="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider mb-2">' + c.label + '</p>' +
+          '<p class="text-3xl font-bold text-[var(--card-foreground)]">' + c.value + '</p>' +
         '</div>'
       ).join('');
     }
@@ -256,17 +281,17 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     function renderSources(sources) {
       if (!sources.length) {
         document.getElementById('sources-tbody').innerHTML =
-          '<tr><td colspan="6" class="px-6 py-8 text-center text-gray-500">No import jobs found.</td></tr>';
+          '<tr><td colspan="6" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No import jobs found.</td></tr>';
         return;
       }
       const sorted = [...sources].sort((a, b) => a.label.localeCompare(b.label));
       document.getElementById('sources-tbody').innerHTML = sorted.map(s =>
-        '<tr class="border-t border-gray-900 hover:bg-gray-900/70 transition-colors">' +
-          '<td class="px-6 py-4 font-medium text-gray-100">' + s.label + '</td>' +
+        '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors">' +
+          '<td class="px-6 py-4 font-medium text-[var(--foreground)]">' + s.label + '</td>' +
           '<td class="px-6 py-4">' + statusBadge(s.status) + '</td>' +
-          '<td class="px-6 py-4 text-gray-400">' + relativeTime(s.completedAt) + '</td>' +
-          '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(s.totalInserted) + '</td>' +
-          '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(s.totalUpdated) + '</td>' +
+          '<td class="px-6 py-4 text-[var(--muted-foreground)]">' + relativeTime(s.completedAt) + '</td>' +
+          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalInserted) + '</td>' +
+          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalUpdated) + '</td>' +
           '<td class="px-6 py-4">' + errorCell(s.errorMessage) + '</td>' +
         '</tr>'
       ).join('');
@@ -275,17 +300,17 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     function renderOsvEcosystems(ecosystems) {
       if (!ecosystems.length) {
         document.getElementById('osv-tbody').innerHTML =
-          '<tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">No OSV ecosystems imported yet.</td></tr>';
+          '<tr><td colspan="7" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No OSV ecosystems imported yet.</td></tr>';
         return;
       }
       document.getElementById('osv-tbody').innerHTML = ecosystems.map(e =>
-        '<tr class="border-t border-gray-900 hover:bg-gray-900/70 transition-colors">' +
-          '<td class="px-6 py-4 font-medium text-purple-300">' + e.ecosystem + '</td>' +
+        '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors">' +
+          '<td class="px-6 py-4 font-medium text-[var(--foreground)]">' + e.ecosystem + '</td>' +
           '<td class="px-6 py-4">' + statusBadge(e.status) + '</td>' +
-          '<td class="px-6 py-4 text-gray-400">' + relativeTime(e.completedAt) + '</td>' +
-          '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(e.recordCount) + '</td>' +
-          '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(e.totalInserted) + '</td>' +
-          '<td class="px-6 py-4 text-right text-gray-300 font-mono">' + fmt(e.totalUpdated) + '</td>' +
+          '<td class="px-6 py-4 text-[var(--muted-foreground)]">' + relativeTime(e.completedAt) + '</td>' +
+          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.recordCount) + '</td>' +
+          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.totalInserted) + '</td>' +
+          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.totalUpdated) + '</td>' +
           '<td class="px-6 py-4">' + errorCell(e.errorMessage) + '</td>' +
         '</tr>'
       ).join('');
@@ -302,7 +327,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         document.getElementById('last-updated').textContent =
           'Updated ' + new Date().toLocaleTimeString();
       } catch (err) {
-        const msg = '<tr><td colspan="6" class="px-6 py-8 text-center text-red-400">Failed to load: ' + err.message + '</td></tr>';
+        const msg = '<tr><td colspan="6" class="px-6 py-8 text-center text-[var(--destructive)]">Failed to load: ' + err.message + '</td></tr>';
         document.getElementById('sources-tbody').innerHTML = msg;
         document.getElementById('osv-tbody').innerHTML = msg.replace('colspan="6"', 'colspan="7"');
       }
