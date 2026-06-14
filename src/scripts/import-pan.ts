@@ -28,7 +28,8 @@ async function main() {
         status: 'completed',
         completedAt: new Date(),
         totalFetched: result.total,
-        totalInserted: result.succeeded,
+        totalInserted: result.inserted,
+        totalUpdated: result.updated,
         totalFailed: result.failed,
       },
     });

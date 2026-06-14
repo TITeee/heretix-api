@@ -43,10 +43,10 @@ export interface AdvisoryFetcher {
  * Save advisory data to the AdvisoryVulnerability table
  * Vendor is identified by the source field
  */
-export async function importAdvisoryData(adv: NormalizedAdvisory, source: string): Promise<void> {
+export async function importAdvisoryData(adv: NormalizedAdvisory, source: string): Promise<'inserted' | 'updated'> {
   logger.info({ externalId: adv.externalId, source }, 'Importing advisory');
 
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     // ─── Step 1: Link to Vulnerability master table ───────────
     //
     // Priority rules:
@@ -91,6 +91,11 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
     }
 
     // ─── Step 2: Upsert AdvisoryVulnerability ────────────────────
+    const existing = await tx.advisoryVulnerability.findUnique({
+      where: { source_externalId: { source, externalId: adv.externalId } },
+      select: { id: true },
+    });
+
     const advisory = await tx.advisoryVulnerability.upsert({
       where: { source_externalId: { source, externalId: adv.externalId } },
       create: {
@@ -157,9 +162,9 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
         },
       });
     }
-  });
 
-  logger.debug({ externalId: adv.externalId, source }, 'Advisory imported');
+    return existing ? 'updated' : 'inserted';
+  });
 }
 
 /**
@@ -168,25 +173,29 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
 export async function runAdvisoryFetcher(fetcher: AdvisoryFetcher): Promise<{
   total: number;
   succeeded: number;
+  inserted: number;
+  updated: number;
   failed: number;
 }> {
   const source = fetcher.source();
   logger.info({ source }, 'Running advisory fetcher');
 
   const advisories = await fetcher.fetch();
-  let succeeded = 0;
+  let inserted = 0;
+  let updated = 0;
   let failed = 0;
 
   for (const adv of advisories) {
     try {
-      await importAdvisoryData(adv, source);
-      succeeded++;
+      const result = await importAdvisoryData(adv, source);
+      if (result === 'inserted') inserted++; else updated++;
     } catch (err) {
       failed++;
       logger.error({ err, externalId: adv.externalId, source }, 'Failed to import advisory');
     }
   }
 
+  const succeeded = inserted + updated;
   logger.info({ source, total: advisories.length, succeeded, failed }, 'Advisory fetcher completed');
-  return { total: advisories.length, succeeded, failed };
+  return { total: advisories.length, succeeded, inserted, updated, failed };
 }

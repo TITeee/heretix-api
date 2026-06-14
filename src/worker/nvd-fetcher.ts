@@ -412,7 +412,8 @@ export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; 
   }
 
   let totalResults = Infinity;
-  let succeeded = 0;
+  let inserted = 0;
+  let updated = 0;
   let failed = 0;
 
   while (startIndex < totalResults) {
@@ -429,8 +430,8 @@ export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; 
 
     for (const item of items) {
       try {
-        await importNVDData(item);
-        succeeded++;
+        const result = await importNVDData(item);
+        if (result === 'inserted') inserted++; else updated++;
       } catch (err) {
         failed++;
         logger.error({ err, cveId: item.id }, 'Failed to import NVD CVE');
@@ -444,12 +445,13 @@ export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; 
       where: { id: savedJobId },
       data: {
         metadata: { lastStartIndex: startIndex, totalResults },
-        totalInserted: succeeded,
+        totalInserted: inserted,
+        totalUpdated: updated,
         totalFailed: failed,
       },
     });
 
-    logger.info({ startIndex, totalResults, succeeded, failed }, 'NVD page imported');
+    logger.info({ startIndex, totalResults, inserted, updated, failed }, 'NVD page imported');
 
     if (startIndex < totalResults) {
       await sleep(RATE_LIMIT_DELAY_MS);
@@ -458,9 +460,10 @@ export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; 
 
   await prisma.collectionJob.update({
     where: { id: savedJobId },
-    data: { status: 'completed', completedAt: new Date(), totalInserted: succeeded, totalFailed: failed },
+    data: { status: 'completed', completedAt: new Date(), totalInserted: inserted, totalUpdated: updated, totalFailed: failed },
   });
 
+  const succeeded = inserted + updated;
   logger.info({ succeeded, failed, total: succeeded + failed }, 'NVD full download completed');
   return { total: succeeded + failed, succeeded, failed };
 }
@@ -510,11 +513,16 @@ async function upsertMasterFromNVD(
 /**
  * Save NVD CVE data to the database
  */
-export async function importNVDData(cveItem: NVDCveItem): Promise<void> {
+export async function importNVDData(cveItem: NVDCveItem): Promise<'inserted' | 'updated'> {
   const { cvssScore, cvssVector, severity } = extractNVDCvss(cveItem.metrics);
   const summary = cveItem.descriptions?.find(d => d.lang === 'en')?.value ?? null;
 
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.nVDVulnerability.findUnique({
+      where: { cveId: cveItem.id },
+      select: { id: true },
+    });
+
     const vulnerability = await tx.nVDVulnerability.upsert({
       where: { cveId: cveItem.id },
       create: {
@@ -612,9 +620,9 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<void> {
         });
       }
     }
-  });
 
-  logger.debug({ cveId: cveItem.id }, 'Imported NVD CVE');
+    return existing ? 'updated' : 'inserted';
+  });
 }
 
 /**

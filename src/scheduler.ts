@@ -142,10 +142,17 @@ export function startScheduler(): void {
           data: { source, status: 'running', startedAt: new Date() },
         });
         try {
-          await runAdvisoryFetcher(fetcher());
+          const result = await runAdvisoryFetcher(fetcher());
           await prisma.collectionJob.update({
             where: { id: job.id },
-            data: { status: 'completed', completedAt: new Date() },
+            data: {
+              status: 'completed',
+              completedAt: new Date(),
+              totalFetched: result.total,
+              totalInserted: result.inserted,
+              totalUpdated: result.updated,
+              totalFailed: result.failed,
+            },
           });
         } catch (err) {
           await prisma.collectionJob.update({
@@ -182,10 +189,17 @@ export function startScheduler(): void {
             data: { source: sourceKey, status: 'running', startedAt: new Date() },
           });
           try {
-            await importOSVEcosystemDelta(ecosystem, since);
+            const result = await importOSVEcosystemDelta(ecosystem, since);
             await prisma.collectionJob.update({
               where: { id: job.id },
-              data: { status: 'completed', completedAt: new Date() },
+              data: {
+                status: 'completed',
+                completedAt: new Date(),
+                totalFetched: result.total,
+                totalInserted: result.inserted,
+                totalUpdated: result.updated,
+                totalFailed: result.failed,
+              },
             });
           } catch (err) {
             await prisma.collectionJob.update({
@@ -215,10 +229,17 @@ export function startScheduler(): void {
         data: { source: 'osv-mal', status: 'running', startedAt: new Date() },
       });
       try {
-        await importMALDelta(since);
+        const result = await importMALDelta(since);
         await prisma.collectionJob.update({
           where: { id: job.id },
-          data: { status: 'completed', completedAt: new Date() },
+          data: {
+            status: 'completed',
+            completedAt: new Date(),
+            totalFetched: result.total,
+            totalInserted: result.inserted,
+            totalUpdated: result.updated,
+            totalFailed: result.failed,
+          },
         });
       } catch (err) {
         await prisma.collectionJob.update({

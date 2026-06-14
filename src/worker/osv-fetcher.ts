@@ -234,6 +234,8 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
   total: number;
   skipped: number;
   succeeded: number;
+  inserted: number;
+  updated: number;
   failed: number;
 }> {
   const url = `https://storage.googleapis.com/osv-vulnerabilities/${ecosystem}/all.zip`;
@@ -250,7 +252,7 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
   } catch (err) {
     if (axios.isAxiosError(err) && err.response?.status === 404) {
       logger.warn({ ecosystem }, 'No GCS bucket found for ecosystem, skipping delta update');
-      return { total: 0, skipped: 0, succeeded: 0, failed: 0 };
+      return { total: 0, skipped: 0, succeeded: 0, inserted: 0, updated: 0, failed: 0 };
     }
     throw err;
   }
@@ -262,7 +264,8 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
 
   let total = 0;
   let skipped = 0;
-  let succeeded = 0;
+  let inserted = 0;
+  let updated = 0;
   let failed = 0;
 
   for (const entry of zipEntries) {
@@ -278,20 +281,21 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
         continue;
       }
 
-      await importOSVData(vuln);
-      succeeded++;
+      const result = await importOSVData(vuln);
+      if (result === 'inserted') inserted++; else updated++;
     } catch (err) {
       failed++;
       logger.error({ err, entry: entry.entryName }, 'Failed to import OSV entry');
     }
 
     if (total % 1000 === 0) {
-      logger.info({ total, skipped, succeeded, failed }, 'OSV delta import progress');
+      logger.info({ total, skipped, inserted, updated, failed }, 'OSV delta import progress');
     }
   }
 
+  const succeeded = inserted + updated;
   logger.info({ ecosystem, since, total, skipped, succeeded, failed }, 'OSV delta import completed');
-  return { total, skipped, succeeded, failed };
+  return { total, skipped, succeeded, inserted, updated, failed };
 }
 
 /**
@@ -364,6 +368,8 @@ export async function importMALDelta(since: Date): Promise<{
   total: number;
   skipped: number;
   succeeded: number;
+  inserted: number;
+  updated: number;
   failed: number;
 }> {
   const token = process.env.GITHUB_TOKEN;
@@ -389,7 +395,8 @@ export async function importMALDelta(since: Date): Promise<{
 
   let total = 0;
   let skipped = 0;
-  let succeeded = 0;
+  let inserted = 0;
+  let updated = 0;
   let failed = 0;
 
   for (const item of malPaths) {
@@ -404,20 +411,21 @@ export async function importMALDelta(since: Date): Promise<{
         continue;
       }
 
-      await importOSVData(vuln);
-      succeeded++;
+      const result = await importOSVData(vuln);
+      if (result === 'inserted') inserted++; else updated++;
     } catch (err) {
       failed++;
       logger.error({ err, path: item.path }, 'Failed to import MAL entry');
     }
 
     if (total % 500 === 0) {
-      logger.info({ total, skipped, succeeded, failed }, 'MAL delta import progress');
+      logger.info({ total, skipped, inserted, updated, failed }, 'MAL delta import progress');
     }
   }
 
+  const succeeded = inserted + updated;
   logger.info({ since, total, skipped, succeeded, failed }, 'MAL delta import completed');
-  return { total, skipped, succeeded, failed };
+  return { total, skipped, succeeded, inserted, updated, failed };
 }
 
 /**
@@ -498,7 +506,7 @@ async function upsertMasterFromOSV(
 /**
  * Convert OSV data to Prisma model and save
  */
-export async function importOSVData(osvData: OSVVulnerability): Promise<void> {
+export async function importOSVData(osvData: OSVVulnerability): Promise<'inserted' | 'updated'> {
   logger.info({ osvId: osvData.id }, 'Importing OSV vulnerability');
 
   // Extract CVE ID from aliases, then upstream
@@ -509,7 +517,12 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<void> {
 
   try {
     // Save in a transaction
-    await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.oSVVulnerability.findUnique({
+        where: { osvId: osvData.id },
+        select: { id: true },
+      });
+
       // Save basic vulnerability info
       const vulnerability = await tx.oSVVulnerability.upsert({
         where: { osvId: osvData.id },
@@ -660,9 +673,12 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<void> {
           }
         }
       }
+
+      return existing ? 'updated' : 'inserted';
     });
 
     logger.info({ osvId: osvData.id }, 'Successfully imported OSV vulnerability');
+    return result;
   } catch (error) {
     logger.error({ error, osvId: osvData.id }, 'Failed to import OSV vulnerability');
     throw error;
