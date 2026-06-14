@@ -22,9 +22,11 @@ const SEVERITY_MAP: Record<string, string> = {
 
 // ─── Helpers ──────────────────────────────────────────────────
 
-function mapSeverity(s?: string): string | undefined {
-  if (!s) return undefined;
-  return SEVERITY_MAP[s.toLowerCase()] ?? s.toUpperCase();
+function mapSeverity(s?: unknown): string | undefined {
+  if (s === undefined || s === null || s === '') return undefined;
+  // fast-xml-parser auto-coerces purely numeric tag text (e.g. "<severity>0</severity>") to a number
+  const str = String(s);
+  return SEVERITY_MAP[str.toLowerCase()] ?? str.toUpperCase();
 }
 
 /** Strip RPM epoch prefix: "0:2.9.13-9.el9" → "2.9.13-9.el9" */
@@ -224,7 +226,7 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
 
       // ── Severity + CVEs ──────────────────────────────────────
       const advisory = meta['advisory'] as Record<string, unknown> | undefined;
-      const severity = mapSeverity(advisory?.['severity'] as string | undefined);
+      const severity = mapSeverity(advisory?.['severity']);
 
       const cveElements = toArray(advisory?.['cve'] as unknown);
       const cves = cveElements
