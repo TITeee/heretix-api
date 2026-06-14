@@ -28,6 +28,19 @@ function isOsvEcosystemSource(source: string): boolean {
   return source.startsWith('osv-') && source !== 'osv-delta';
 }
 
+// Maps CollectionJob.source values to the AdvisoryVulnerability.source value
+// used by the corresponding fetcher (these naming conventions are inconsistent
+// across vendors, e.g. 'advisory-pan' -> 'paloalto', 'advisory-cisco' -> 'cisco').
+const ADVISORY_SOURCE_MAP: Record<string, string> = {
+  'advisory-fortinet':   'fortinet',
+  'advisory-pan':        'paloalto',
+  'advisory-cisco':      'cisco',
+  'advisory-broadcom':   'advisory-broadcom',
+  'advisory-sophos':     'advisory-sophos',
+  'advisory-sonicwall':  'advisory-sonicwall',
+  'advisory-oracle-cpu': 'advisory-oracle-cpu',
+};
+
 export default async function dashboardRoute(fastify: FastifyInstance) {
   fastify.get('/api/v1/import-status', async () => {
     const allJobs = await prisma.collectionJob.findMany({
@@ -76,12 +89,33 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       errorMessage: malJob?.errorMessage ?? null,
     });
 
+    const [nvdCount, osvCount, kevCount, advisoryCount, epssCount, advisorySourceCounts] = await Promise.all([
+      prisma.nVDVulnerability.count(),
+      prisma.oSVVulnerability.count(),
+      prisma.vulnerability.count({ where: { isKev: true } }),
+      prisma.advisoryVulnerability.count(),
+      prisma.vulnerability.count({ where: { epssScore: { not: null } } }),
+      prisma.advisoryVulnerability.groupBy({ by: ['source'], _count: { _all: true } }),
+    ]);
+    const advisoryCountBySource = new Map(advisorySourceCounts.map((r) => [r.source, r._count._all]));
+
+    function recordCountForSource(source: string): number | null {
+      if (source === 'nvd' || source === 'nvd-delta') return nvdCount;
+      if (source === 'kev') return kevCount;
+      if (source === 'epss') return epssCount;
+      if (source.startsWith('advisory-oracle-linux')) return advisoryCountBySource.get('oracle-linux') ?? 0;
+      const mapped = ADVISORY_SOURCE_MAP[source];
+      if (mapped) return advisoryCountBySource.get(mapped) ?? 0;
+      return null;
+    }
+
     // Main sources: exclude per-ecosystem OSV entries (shown separately)
     const sources = Array.from(latestBySource.values())
       .filter((j) => !isOsvEcosystemSource(j.source))
       .map((j) => ({
         source: j.source,
         label: sourceLabel(j.source),
+        recordCount: recordCountForSource(j.source),
         status: j.status,
         startedAt: j.startedAt,
         completedAt: j.completedAt,
@@ -90,13 +124,6 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         totalFailed: j.totalFailed,
         errorMessage: j.errorMessage,
       }));
-
-    const [nvdCount, osvCount, kevCount, advisoryCount] = await Promise.all([
-      prisma.nVDVulnerability.count(),
-      prisma.oSVVulnerability.count(),
-      prisma.vulnerability.count({ where: { isKev: true } }),
-      prisma.advisoryVulnerability.count(),
-    ]);
 
     return {
       sources,
@@ -131,6 +158,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       --primary: oklch(0.87 0 0);
       --primary-foreground: oklch(0.205 0 0);
       --secondary: oklch(0.269 0 0);
+      --secondary-foreground: oklch(0.985 0 0);
       --destructive: oklch(0.704 0.191 22.216);
       --radius: 0.625rem;
     }
@@ -181,13 +209,14 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
               <th class="px-6 py-3 font-medium">Source</th>
               <th class="px-6 py-3 font-medium">Status</th>
               <th class="px-6 py-3 font-medium">Last Completed</th>
+              <th class="px-6 py-3 font-medium text-right">Records</th>
               <th class="px-6 py-3 font-medium text-right">Inserted</th>
               <th class="px-6 py-3 font-medium text-right">Updated</th>
               <th class="px-6 py-3 font-medium">Error</th>
             </tr>
           </thead>
           <tbody id="sources-tbody">
-            <tr><td colspan="6" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
+            <tr><td colspan="7" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -241,18 +270,19 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     }
 
     function statusBadge(status) {
-      if (!status) return '<span class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-0.5 text-xs font-medium text-[var(--muted-foreground)]">no jobs</span>';
+      const base = 'inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 rounded-4xl border px-2 py-0.5 text-xs font-medium whitespace-nowrap';
+      if (!status) return '<span class="' + base + ' border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]">no jobs</span>';
       const map = {
-        completed: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400',
-        failed:    'border-[var(--destructive)]/30 bg-[var(--destructive)]/10 text-[var(--destructive)]',
-        running:   'border-amber-500/20 bg-amber-500/10 text-amber-400',
-        pending:   'border-[var(--border)] bg-[var(--secondary)] text-[var(--muted-foreground)]',
+        completed: 'border-[var(--border)] bg-transparent text-[var(--foreground)]',
+        failed:    'border-transparent bg-[var(--destructive)]/20 text-[var(--destructive)]',
+        running:   'border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]',
+        pending:   'border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]',
       };
-      const cls = map[status] || 'border-[var(--border)] bg-[var(--secondary)] text-[var(--muted-foreground)]';
+      const cls = map[status] || 'border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]';
       const dot = status === 'running'
-        ? '<span class="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse mr-1.5"></span>'
+        ? '<span class="inline-block w-2 h-2 rounded-full bg-current animate-pulse mr-1"></span>'
         : '';
-      return '<span class="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium ' + cls + '">' + dot + status + '</span>';
+      return '<span class="' + base + ' ' + cls + '">' + dot + status + '</span>';
     }
 
     function errorCell(msg) {
@@ -281,7 +311,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     function renderSources(sources) {
       if (!sources.length) {
         document.getElementById('sources-tbody').innerHTML =
-          '<tr><td colspan="6" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No import jobs found.</td></tr>';
+          '<tr><td colspan="7" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No import jobs found.</td></tr>';
         return;
       }
       const sorted = [...sources].sort((a, b) => a.label.localeCompare(b.label));
@@ -290,6 +320,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
           '<td class="px-6 py-4 font-medium text-[var(--foreground)]">' + s.label + '</td>' +
           '<td class="px-6 py-4">' + statusBadge(s.status) + '</td>' +
           '<td class="px-6 py-4 text-[var(--muted-foreground)]">' + relativeTime(s.completedAt) + '</td>' +
+          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.recordCount) + '</td>' +
           '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalInserted) + '</td>' +
           '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalUpdated) + '</td>' +
           '<td class="px-6 py-4">' + errorCell(s.errorMessage) + '</td>' +
