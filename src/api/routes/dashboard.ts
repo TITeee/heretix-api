@@ -15,6 +15,8 @@ const SOURCE_LABELS: Record<string, string> = {
   'advisory-sophos':       'Sophos',
   'advisory-sonicwall':    'SonicWall',
   'advisory-oracle-cpu':   'Oracle CPU',
+  'advisory-redhat-rhel9': 'Red Hat (RHEL 9)',
+  'advisory-redhat-rhel8': 'Red Hat (RHEL 8)',
 };
 
 function sourceLabel(source: string): string {
@@ -39,6 +41,8 @@ const ADVISORY_SOURCE_MAP: Record<string, string> = {
   'advisory-sophos':     'advisory-sophos',
   'advisory-sonicwall':  'advisory-sonicwall',
   'advisory-oracle-cpu': 'advisory-oracle-cpu',
+  'advisory-redhat-rhel9': 'red-hat',
+  'advisory-redhat-rhel8': 'red-hat',
 };
 
 export default async function dashboardRoute(fastify: FastifyInstance) {

@@ -13,6 +13,7 @@ import { SophosFetcher } from './worker/sophos-fetcher.js';
 import { SonicWallFetcher } from './worker/sonicwall-fetcher.js';
 import { OracleCpuFetcher } from './worker/oracle-cpu-fetcher.js';
 import { BroadcomFetcher } from './worker/broadcom-fetcher.js';
+import { RedHatFetcher } from './worker/redhat-fetcher.js';
 import { importOSVEcosystemDelta, importMALDelta } from './worker/osv-fetcher.js';
 
 // Lock flag to prevent concurrent execution of the same job
@@ -133,6 +134,8 @@ export function startScheduler(): void {
     { source: 'advisory-sonicwall',    fetcher: () => new SonicWallFetcher(),    cron: '15 12 * * *' },
     { source: 'advisory-oracle-cpu',   fetcher: () => new OracleCpuFetcher(),   cron: '30 12 * * *' },
     { source: 'advisory-broadcom',     fetcher: () => new BroadcomFetcher(),     cron: '0 13 * * *'  },
+    { source: 'advisory-redhat-rhel9', fetcher: () => new RedHatFetcher('rhel9'), cron: '15 13 * * *' },
+    { source: 'advisory-redhat-rhel8', fetcher: () => new RedHatFetcher('rhel8'), cron: '30 13 * * *' },
   ] as const;
 
   for (const { source, fetcher, cron: schedule } of advisoryJobs) {

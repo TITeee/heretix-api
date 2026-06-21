@@ -25,6 +25,7 @@
     "import:sonicwall": "node dist/scripts/import-sonicwall.js",
     "import:oracle-cpu": "node dist/scripts/import-oracle-cpu.js",
     "import:broadcom": "node dist/scripts/import-broadcom.js",
+    "import:redhat": "node dist/scripts/import-redhat.js",
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",

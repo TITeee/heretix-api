@@ -4,6 +4,7 @@ import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases } from '../../config/product-aliases.js';
+import { compareRpmVersions } from '../../utils/rpm-version.js';
 
 const searchSchema = z.object({
   package: z.string().min(1),
@@ -166,6 +167,19 @@ function isLanguageEcosystem(eco: string): boolean {
 const ECOSYSTEM_ALIASES: Record<string, string> = {
   'composer': 'Packagist',
 };
+
+// RPM-based distro ecosystems that have vendor advisory data.
+// Maps ecosystem prefix → AdvisoryAffectedProduct.vendor value.
+const RPM_ECOSYSTEM_VENDOR: Record<string, string> = {
+  'Red Hat': 'red-hat',
+};
+
+function rpmAdvisoryVendor(ecosystem: string): string | null {
+  for (const [prefix, vendor] of Object.entries(RPM_ECOSYSTEM_VENDOR)) {
+    if (ecosystem.startsWith(prefix + ':')) return vendor;
+  }
+  return null;
+}
 
 function normalizeEcosystem(eco: string | undefined): string | undefined {
   if (!eco) return eco;
@@ -387,6 +401,62 @@ async function searchAdvisory(
   });
 }
 
+/** Search Advisory table for RPM-based distros using rpmvercmp */
+async function searchAdvisoryRpm(
+  product: string,
+  version: string | undefined,
+  vendor: string,
+): Promise<VulnerabilityResult[]> {
+  const rows = await prisma.advisoryAffectedProduct.findMany({
+    where: { product, vendor },
+    include: {
+      advisory: {
+        select: {
+          id: true,
+          source: true,
+          externalId: true,
+          cveId: true,
+          severity: true,
+          cvssScore: true,
+          cvssVector: true,
+          summary: true,
+          publishedAt: true,
+          masterVuln: { select: masterSelect },
+        },
+      },
+    },
+  });
+
+  const filtered = version
+    ? rows.filter(r => r.versionEnd && compareRpmVersions(version, r.versionEnd) < 0)
+    : rows;
+  const approximate = version === undefined;
+
+  return filtered.map(r => {
+    const adv = r.advisory;
+    const fixedVersion = r.versionEnd ?? r.versionFixed ?? null;
+    if (adv.masterVuln) {
+      return masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion);
+    }
+    return {
+      id: adv.id,
+      externalId: adv.externalId,
+      source: adv.source,
+      sources: [adv.source],
+      severity: adv.severity,
+      cvssScore: adv.cvssScore,
+      cvssVector: adv.cvssVector,
+      summary: adv.summary,
+      publishedAt: adv.publishedAt,
+      approximateMatch: approximate,
+      isKev: false,
+      epssScore: null,
+      epssPercentile: null,
+      fixedVersion,
+    };
+  });
+}
+
 /** Search NVD table by CPE */
 async function searchByCPE(
   vendor: string,
@@ -463,11 +533,14 @@ async function searchVulnerabilities(
   // the same package name (e.g. C bzip2 → npm bzip2 false positive).
   const isLanguage = ecosystem ? isLanguageEcosystem(ecosystem) : false;
 
+  const rpmVendor = ecosystem ? rpmAdvisoryVendor(ecosystem) : null;
+
   const [osvResults, nvdResults, advisoryResults] = await Promise.all([
     searchOSV(packageName, version, versionInt, ecosystem),
     isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, versionInt, ecosystem),
-    // Vendor advisories are product-specific and not meaningful for distro or language ecosystems.
-    isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version),
+    rpmVendor
+      ? searchAdvisoryRpm(packageName, version, rpmVendor)
+      : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),
   ]);
 
   const all = dedup([...osvResults, ...nvdResults, ...advisoryResults]);
