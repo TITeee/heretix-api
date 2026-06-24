@@ -233,9 +233,6 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
         .map(parseCveElement)
         .filter((c): c is CveInfo => c !== null);
 
-      // Primary CVE: highest CVSS score, or first in list
-      const primaryCve = cves.sort((a, b) => (b.cvssScore ?? 0) - (a.cvssScore ?? 0))[0];
-
       // ── Affected packages ─────────────────────────────────────
       const criteriaNode = d['criteria'] as unknown;
       // criteria parsed as array due to isArray; use first top-level node
@@ -252,7 +249,6 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
         const parsed = parseCriterionComment(comment);
         if (!parsed) continue;
 
-        // Deduplicate same package+version pairs within one advisory
         const key = `${parsed.packageName}@${parsed.versionEnd}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -267,17 +263,27 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
 
       if (affectedProducts.length === 0) continue;
 
-      advisories.push({
-        externalId:  elsaId,
-        cveId:       primaryCve?.cveId,
-        summary:     meta['title'] as string | undefined,
+      const baseFields = {
+        summary: meta['title'] as string | undefined,
         severity,
-        cvssScore:   primaryCve?.cvssScore,
-        cvssVector:  primaryCve?.cvssVector,
-        url:         elsaRef?.['@_ref_url'] as string | undefined,
+        url: elsaRef?.['@_ref_url'] as string | undefined,
         affectedProducts,
         rawData: def,
-      });
+      };
+
+      if (cves.length === 0) {
+        advisories.push({ externalId: elsaId, ...baseFields });
+      } else {
+        for (const cve of cves) {
+          advisories.push({
+            externalId: `${elsaId}/${cve.cveId}`,
+            cveId: cve.cveId,
+            cvssScore: cve.cvssScore,
+            cvssVector: cve.cvssVector,
+            ...baseFields,
+          });
+        }
+      }
     }
 
     logger.info({ count: advisories.length }, 'Parsed Oracle Linux OVAL advisories');

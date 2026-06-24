@@ -497,6 +497,29 @@ async function upsertMasterFromOSV(
     masterId = master.id;
   }
 
+  // Clean up orphaned master row when CVE is assigned after initial import.
+  // The OSV record may have been linked to an osvId-keyed master (row A);
+  // now that a CVE exists, it should link to the cveId-keyed master (row B).
+  // Migrate any remaining references from A to B, then delete A.
+  if (osvRecord.cveId) {
+    const current = await tx.oSVVulnerability.findUnique({
+      where: { id: osvRecord.id },
+      select: { masterVulnId: true },
+    });
+    const oldMasterId = current?.masterVulnId;
+    if (oldMasterId && oldMasterId !== masterId) {
+      const oldMaster = await tx.vulnerability.findUnique({
+        where: { id: oldMasterId },
+        select: { cveId: true },
+      });
+      if (oldMaster && !oldMaster.cveId) {
+        await tx.oSVVulnerability.updateMany({ where: { masterVulnId: oldMasterId }, data: { masterVulnId: masterId } });
+        await tx.advisoryVulnerability.updateMany({ where: { masterVulnId: oldMasterId }, data: { masterVulnId: masterId } });
+        await tx.vulnerability.delete({ where: { id: oldMasterId } });
+      }
+    }
+  }
+
   await tx.oSVVulnerability.update({
     where: { id: osvRecord.id },
     data: { masterVulnId: masterId },

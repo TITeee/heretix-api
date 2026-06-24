@@ -209,8 +209,6 @@ export class RedHatFetcher implements AdvisoryFetcher {
         .map(parseCveElement)
         .filter((c): c is CveInfo => c !== null);
 
-      const primaryCve = cves.sort((a, b) => (b.cvssScore ?? 0) - (a.cvssScore ?? 0))[0];
-
       // ── Affected packages ─────────────────────────────────────
       const criteriaNode = d['criteria'] as unknown;
       const topCriteria = Array.isArray(criteriaNode) ? criteriaNode[0] : criteriaNode;
@@ -240,17 +238,27 @@ export class RedHatFetcher implements AdvisoryFetcher {
 
       if (affectedProducts.length === 0) continue;
 
-      advisories.push({
-        externalId:  advisoryId,
-        cveId:       primaryCve?.cveId,
-        summary:     meta['title'] as string | undefined,
+      const baseFields = {
+        summary: meta['title'] as string | undefined,
         severity,
-        cvssScore:   primaryCve?.cvssScore,
-        cvssVector:  primaryCve?.cvssVector,
-        url:         rhsaRef?.['@_ref_url'] as string | undefined,
+        url: rhsaRef?.['@_ref_url'] as string | undefined,
         affectedProducts,
         rawData: def,
-      });
+      };
+
+      if (cves.length === 0) {
+        advisories.push({ externalId: advisoryId, ...baseFields });
+      } else {
+        for (const cve of cves) {
+          advisories.push({
+            externalId: `${advisoryId}/${cve.cveId}`,
+            cveId: cve.cveId,
+            cvssScore: cve.cvssScore,
+            cvssVector: cve.cvssVector,
+            ...baseFields,
+          });
+        }
+      }
     }
 
     logger.info({ count: advisories.length }, 'Parsed Red Hat OVAL advisories');
