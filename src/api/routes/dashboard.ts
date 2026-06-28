@@ -4,8 +4,7 @@ import path from 'path';
 import { prisma } from '../../db/client.js';
 
 const SOURCE_LABELS: Record<string, string> = {
-  'nvd-delta': 'NVD (Delta)',
-  'nvd': 'NVD (Full)',
+  'nvd': 'NVD',
   'kev': 'CISA KEV',
   'epss': 'EPSS',
   'advisory-fortinet': 'Fortinet',
@@ -104,7 +103,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     const advisoryCountBySource = new Map(advisorySourceCounts.map((r) => [r.source, r._count._all]));
 
     function recordCountForSource(source: string): number | null {
-      if (source === 'nvd' || source === 'nvd-delta') return nvdCount;
+      if (source === 'nvd') return nvdCount;
       if (source === 'kev') return kevCount;
       if (source === 'epss') return epssCount;
       if (source.startsWith('advisory-oracle-linux')) return advisoryCountBySource.get('oracle-linux') ?? 0;

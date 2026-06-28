@@ -41,16 +41,16 @@ export function startScheduler(): void {
   // Uses CollectionJob to track the last successful run, so any downtime gap is
   // covered on the next execution rather than silently dropped.
   cron.schedule('0 */2 * * *', () => {
-    void runJob('nvd-delta', async () => {
+    void runJob('nvd', async () => {
       const lastJob = await prisma.collectionJob.findFirst({
-        where: { source: 'nvd-delta', status: 'completed' },
+        where: { source: 'nvd', status: 'completed' },
         orderBy: { completedAt: 'desc' },
       });
       const end = new Date();
       const start = lastJob?.completedAt ?? new Date(end.getTime() - 2 * 60 * 60 * 1000);
 
       const job = await prisma.collectionJob.create({
-        data: { source: 'nvd-delta', status: 'running', startedAt: new Date() },
+        data: { source: 'nvd', status: 'running', startedAt: new Date() },
       });
       try {
         await importNVDByDateRange(start, end);

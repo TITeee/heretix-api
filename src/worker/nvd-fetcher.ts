@@ -311,7 +311,7 @@ async function fetchNVDByDateRangeChunk(
 
     totalResults = page.totalResults;
     const items = page.vulnerabilities.map(v => v.cve);
-    allItems.push(...items);
+    for (const item of items) allItems.push(item);
     startIndex += items.length;
 
     logger.info({ startIndex, totalResults }, 'Fetched NVD page');
@@ -341,7 +341,7 @@ export async function fetchNVDByDateRange(
     logger.info({ chunkStart, chunkEnd }, 'Fetching NVD chunk');
 
     const items = await fetchNVDByDateRangeChunk(chunkStart, chunkEnd, options);
-    allItems.push(...items);
+    for (const item of items) allItems.push(item);
 
     chunkStart = new Date(chunkEnd.getTime() + 1);
 

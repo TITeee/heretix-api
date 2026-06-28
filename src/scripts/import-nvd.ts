@@ -39,10 +39,8 @@ async function main() {
       const endDate = new Date();
 
       console.log(`Fetching NVD updates from ${startDate.toISOString()} to ${endDate.toISOString()}...`);
-      const items = await fetchNVDByDateRange(startDate, endDate, { useLastMod: true });
-      console.log(`Fetched ${items.length} CVEs, importing...`);
-      const result = await batchImportNVD(items);
-      console.log(`Done: ${result.succeeded} imported, ${result.failed} failed`);
+      const result = await importNVDByDateRange(startDate, endDate);
+      console.log(`Done: ${result.succeeded} imported, ${result.failed} failed (total: ${result.total})`);
       break;
     }
 
