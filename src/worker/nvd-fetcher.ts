@@ -373,7 +373,7 @@ export async function importNVDByDateRange(
     const chunkEnd = new Date(Math.min(chunkStart.getTime() + chunkMs, end.getTime()));
     logger.info({ chunkStart, chunkEnd }, 'Fetching NVD chunk');
 
-    const items = await fetchNVDByDateRangeChunk(chunkStart, chunkEnd);
+    const items = await fetchNVDByDateRangeChunk(chunkStart, chunkEnd, { useLastMod: true });
     const result = await batchImportNVD(items);
     total += result.total;
     succeeded += result.succeeded;
