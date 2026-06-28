@@ -198,7 +198,9 @@ function filterExpectedCVEs(version: string, advisories: NginxAdvisory[]): Set<s
 
 async function querySearchEndpoint(baseUrl: string, version: string): Promise<ApiVulnerability[]> {
   const url = `${baseUrl}/api/v1/vulnerabilities/search?package=nginx&version=${encodeURIComponent(version)}&limit=500`;
-  const res = await axios.get<{ results: ApiVulnerability[] }>(url, { timeout: 30000 });
+  const headers: Record<string, string> = {};
+  if (process.env.API_KEY) headers['x-api-key'] = process.env.API_KEY;
+  const res = await axios.get<{ results: ApiVulnerability[] }>(url, { timeout: 30000, headers });
   return res.data.results ?? [];
 }
 

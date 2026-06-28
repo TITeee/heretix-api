@@ -27,10 +27,11 @@ export const PRODUCT_ALIASES: Record<string, string[]> = {
   openssl: ['openssl'],
 
   // ── Apache HTTP Server ─────────────────────────────────────────────────────
-  // NVD uses apache:httpd consistently.
-  // http_server is used by oracle:http_server (Oracle HTTP Server) so it is excluded
-  // to prevent Oracle products from appearing in packageName searches without a vendor filter.
-  httpd: ['httpd'],
+  // NVD uses both apache:httpd and apache:http_server as CPE product names.
+  // oracle:http_server (Oracle HTTP Server) also exists but is a separate product;
+  // without a vendor filter this may cause minor false positives for Oracle HTTP Server.
+  httpd: ['httpd', 'http_server'],
+  http_server: ['httpd', 'http_server'],
 
   // ── Apache Tomcat ──────────────────────────────────────────────────────────
   // NVD uses apache:tomcat consistently. Version-specific names (tomcat7/8/9/10)
