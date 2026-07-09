@@ -88,7 +88,7 @@ pnpm db:erd
 
 ## インポートステータス ダッシュボード
 
-`/dashboard` にアクセスすると、インポート状況を確認できる Web UI が表示されます（認証不要）。
+`/dashboard` にアクセスすると、インポート状況の確認と収集ジョブの操作ができる Web UI が表示されます（閲覧は認証不要）。
 
 ```
 GET /dashboard
@@ -97,13 +97,28 @@ GET /dashboard
 表示内容:
 - **レコード数** — NVD / OSV / KEV / Advisory テーブルの総件数
 - **インポートステータステーブル** — ソースごとの最新 `CollectionJob`（ステータスバッジ・最終完了日時・追加/更新件数・エラーメッセージ）
-- **OSV エコシステム一覧** — DB にインポート済みのエコシステム名バッジ
+- **OSV エコシステム一覧** — エコシステムごとのインポート状況・件数
 
 60 秒ごとに自動リフレッシュ。JSON での取得も可能:
 
 ```
 GET /api/v1/import-status
 ```
+
+### ジョブの操作（ON/OFF・手動実行）
+
+各行の **On/Off トグル** でスケジューラによる自動実行を有効/無効にでき、**Run ボタン** でその場で手動実行できます。OSV はエコシステム単位で個別に制御できます。
+
+これらの操作は状態を変更するため、`x-api-key` による認証が必要です。ダッシュボード右上の入力欄に API キーを入力すると、ブラウザの `localStorage` に保存され、以降の操作で送信されます（閲覧のみなら不要）。
+
+対応するエンドポイント（`/api/v1` 認証スコープ内）:
+
+```
+POST  /api/v1/jobs/:source/run     # 手動実行（fire-and-forget、202。有効/無効に関わらず実行可能）
+PATCH /api/v1/jobs/:source          # 有効/無効の切り替え。body: { "enabled": boolean }
+```
+
+`:source` は `CollectionJob.source`（`nvd`, `kev`, `advisory-fortinet`, `osv-npm` など）。実行中に再度実行すると `409`、未知のソースは `404` を返します。有効/無効の状態は `JobConfig` テーブルに永続化され、行がなければデフォルト有効です。
 
 例: `http://localhost:5000/dashboard`
 
@@ -306,8 +321,15 @@ heretix-api/
 ├── src/
 │   ├── api/
 │   │   ├── routes/
-│   │   │   └── vulnerabilities.ts  # 脆弱性API エンドポイント
+│   │   │   ├── vulnerabilities.ts  # 脆弱性API エンドポイント
+│   │   │   ├── dashboard.ts        # ダッシュボードUI・import-status API
+│   │   │   └── jobs.ts             # ジョブ手動実行・有効/無効切り替えAPI
 │   │   └── server.ts               # Fastifyサーバー設定
+│   ├── jobs/
+│   │   ├── types.ts                # JobDefinition / JobResult 型
+│   │   ├── registry.ts             # 全ジョブ定義（STATIC_JOBS）+ 動的リゾルバ
+│   │   ├── executor.ts             # ジョブ共通ライフサイクル + 二重実行防止
+│   │   └── config.ts               # ジョブ有効/無効（JobConfig）の読み書き
 │   ├── db/
 │   │   └── client.ts               # Prismaクライアント
 │   ├── scripts/
@@ -327,6 +349,8 @@ heretix-api/
 │   │   ├── validate-tomcat.ts               # Tomcat 検索精度検証
 │   │   ├── validate-apache.ts               # Apache HTTPD 検索精度検証
 │   │   ├── validate-nginx.ts                # nginx 検索精度検証
+│   │   ├── validate-openssl.ts              # OpenSSL 検索精度検証
+│   │   ├── validate-postgresql.ts           # PostgreSQL 検索精度検証
 │   │   └── clear-db.ts                      # DB全テーブル削除（Vulnerability含む全テーブル）
 │   ├── worker/
 │   │   ├── osv-fetcher.ts          # OSV API連携ロジック
@@ -383,7 +407,8 @@ Vulnerability (マスター)
 - **OSVVulnerability** / **OSVAffectedPackage**: OSV・Security Advisory データ（生データ + 検索用フィールド）
 - **NVDVulnerability** / **NVDAffectedPackage**: NIST NVD (CVE) データ。CPEをパッケージ名にマッピング
 - **AdvisoryVulnerability** / **AdvisoryAffectedProduct**: ベンダーアドバイザリデータ。プロダクト名・バージョン範囲を格納
-- **CollectionJob**: データ収集ジョブの状態管理
+- **CollectionJob**: データ収集ジョブの実行履歴・状態管理
+- **JobConfig**: 収集ジョブの有効/無効フラグ（ソースごと、行がなければデフォルト有効）
 
 ##### 重複排除キーの優先度
 
@@ -849,7 +874,9 @@ WHERE ecosystem = 'npm'
 | OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
 | MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
 
-OSV はエコシステムごとに独立したジョブ（`osv-{ecosystem}`）として実行されるため、ダッシュボードでエコシステム単位のステータスを確認できます。
+OSV はエコシステムごとに独立したジョブ（`osv-{ecosystem}`）として実行されるため、ダッシュボードでエコシステム単位のステータス確認・ON/OFF・手動実行ができます。
+
+ジョブ定義（ソースキー・ラベル・cron・実処理）は `src/jobs/registry.ts` に集約され、`src/jobs/executor.ts` が全ジョブ共通で `CollectionJob` のライフサイクル（`running` → `completed`/`failed` + 件数記録）と二重実行防止を扱います。スケジューラはレジストリを反復して cron を登録し、発火時に `JobConfig` の有効/無効を確認します（無効なジョブはスキップ）。トグルの変更は cron の再登録なしで次回発火時に即反映されます。
 
 ## 開発・デプロイガイド
 
@@ -1012,6 +1039,3 @@ pnpm db:migrate
 
 Apache License 2.0 — 詳細は [LICENSE](LICENSE) を参照してください。
 
-## 貢献
-
-Issue、Pull Requestを歓迎します。

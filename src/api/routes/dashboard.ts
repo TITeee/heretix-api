@@ -2,28 +2,8 @@ import { FastifyInstance } from 'fastify';
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { prisma } from '../../db/client.js';
-
-const SOURCE_LABELS: Record<string, string> = {
-  'nvd': 'NVD',
-  'kev': 'CISA KEV',
-  'epss': 'EPSS',
-  'advisory-fortinet': 'Fortinet',
-  'advisory-pan': 'Palo Alto',
-  'advisory-cisco': 'Cisco',
-  'advisory-oracle-linux': 'Oracle Linux',
-  'advisory-sophos':       'Sophos',
-  'advisory-sonicwall':    'SonicWall',
-  'advisory-oracle-cpu':   'Oracle CPU',
-  'advisory-redhat-rhel9': 'Red Hat (RHEL 9)',
-  'advisory-redhat-rhel8': 'Red Hat (RHEL 8)',
-};
-
-function sourceLabel(source: string): string {
-  if (source in SOURCE_LABELS) return SOURCE_LABELS[source];
-  if (source.startsWith('osv-')) return `OSV / ${source.slice(4)}`;
-  if (source.startsWith('advisory-oracle-linux-')) return `Oracle Linux (${source.slice(22)})`;
-  return source;
-}
+import { STATIC_JOBS } from '../../jobs/registry.js';
+import { getEnabledMap } from '../../jobs/config.js';
 
 function isOsvEcosystemSource(source: string): boolean {
   return source.startsWith('osv-') && source !== 'osv-delta';
@@ -65,11 +45,17 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       ORDER BY ecosystem ASC
     `;
 
+    const enabledMap = await getEnabledMap();
+    const isSourceEnabled = (source: string): boolean => enabledMap.get(source) ?? true;
+
     const osvEcosystems = ecosystemCounts.map((r) => {
       const eco = r.ecosystem;
-      const job = latestBySource.get(`osv-${eco}`);
+      const source = `osv-${eco}`;
+      const job = latestBySource.get(source);
       return {
         ecosystem: eco,
+        source,
+        enabled: isSourceEnabled(source),
         recordCount: Number(r.count),
         status: job?.status ?? null,
         completedAt: job?.completedAt ?? null,
@@ -84,6 +70,8 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     const malCount = await prisma.vulnerability.count({ where: { osvId: { startsWith: 'MAL-' } } });
     osvEcosystems.push({
       ecosystem: 'Malware',
+      source: 'osv-mal',
+      enabled: isSourceEnabled('osv-mal'),
       recordCount: malCount,
       status: malJob?.status ?? null,
       completedAt: malJob?.completedAt ?? null,
@@ -112,21 +100,26 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       return null;
     }
 
-    // Main sources: exclude per-ecosystem OSV entries (shown separately)
-    const sources = Array.from(latestBySource.values())
-      .filter((j) => !isOsvEcosystemSource(j.source))
-      .map((j) => ({
-        source: j.source,
-        label: sourceLabel(j.source),
-        recordCount: recordCountForSource(j.source),
-        status: j.status,
-        startedAt: j.startedAt,
-        completedAt: j.completedAt,
-        totalInserted: j.totalInserted,
-        totalUpdated: j.totalUpdated,
-        totalFailed: j.totalFailed,
-        errorMessage: j.errorMessage,
-      }));
+    // Main sources: driven by the registry so every job has a row (even if it
+    // has never run). OSV per-ecosystem entries and Malware are shown separately.
+    const sources = STATIC_JOBS
+      .filter((def) => !isOsvEcosystemSource(def.source))
+      .map((def) => {
+        const j = latestBySource.get(def.source);
+        return {
+          source: def.source,
+          label: def.label,
+          enabled: isSourceEnabled(def.source),
+          recordCount: recordCountForSource(def.source),
+          status: j?.status ?? null,
+          startedAt: j?.startedAt ?? null,
+          completedAt: j?.completedAt ?? null,
+          totalInserted: j?.totalInserted ?? null,
+          totalUpdated: j?.totalUpdated ?? null,
+          totalFailed: j?.totalFailed ?? null,
+          errorMessage: j?.errorMessage ?? null,
+        };
+      });
 
     return {
       sources,
@@ -185,12 +178,22 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       </div>
       <div class="flex items-center gap-4">
         <span id="last-updated" class="text-[var(--muted-foreground)] text-sm"></span>
+        <input
+          id="api-key-input"
+          type="password"
+          placeholder="API key (for actions)"
+          onchange="saveApiKey(this.value)"
+          class="px-3 py-2 bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] text-sm rounded-md w-56 placeholder:text-[var(--muted-foreground)] focus:outline-none focus:border-[var(--primary)]"
+        />
         <button
           onclick="loadData()"
           class="px-4 py-2 bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 text-sm font-medium rounded-md transition-opacity"
         >Refresh</button>
       </div>
     </div>
+
+    <!-- Toast -->
+    <div id="toast" class="hidden fixed bottom-6 right-6 px-4 py-3 rounded-md text-sm font-medium shadow-lg z-50"></div>
 
     <!-- Summary Cards -->
     <div id="summary-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
@@ -202,24 +205,25 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
     <!-- Import Status Table -->
     <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl mb-8 overflow-hidden">
-      <div class="px-6 py-4 border-b border-[var(--border)]">
+      <div class="px-4 py-4 border-b border-[var(--border)]">
         <h2 class="text-lg font-semibold text-[var(--card-foreground)]">Import Status</h2>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead>
             <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
-              <th class="px-6 py-3 font-medium">Source</th>
-              <th class="px-6 py-3 font-medium">Status</th>
-              <th class="px-6 py-3 font-medium">Last Completed</th>
-              <th class="px-6 py-3 font-medium text-right">Records</th>
-              <th class="px-6 py-3 font-medium text-right">Inserted</th>
-              <th class="px-6 py-3 font-medium text-right">Updated</th>
-              <th class="px-6 py-3 font-medium">Error</th>
+              <th class="px-4 py-3 font-medium">Source</th>
+              <th class="px-4 py-3 font-medium">Status</th>
+              <th class="px-4 py-3 font-medium">Last Completed</th>
+              <th class="px-4 py-3 font-medium text-right">Records</th>
+              <th class="px-4 py-3 font-medium text-right">Inserted</th>
+              <th class="px-4 py-3 font-medium text-right">Updated</th>
+              <th class="px-4 py-3 font-medium">Error</th>
+              <th class="px-4 py-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody id="sources-tbody">
-            <tr><td colspan="7" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
+            <tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -227,7 +231,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
     <!-- OSV Ecosystems -->
     <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
-      <div class="px-6 py-4 border-b border-[var(--border)]">
+      <div class="px-4 py-4 border-b border-[var(--border)]">
         <h2 class="text-lg font-semibold text-[var(--card-foreground)]">OSV Ecosystems</h2>
         <p class="text-[var(--muted-foreground)] text-xs mt-0.5">Per-ecosystem import status and record counts</p>
       </div>
@@ -235,17 +239,18 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         <table class="w-full text-sm">
           <thead>
             <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
-              <th class="px-6 py-3 font-medium">Ecosystem</th>
-              <th class="px-6 py-3 font-medium">Status</th>
-              <th class="px-6 py-3 font-medium">Last Completed</th>
-              <th class="px-6 py-3 font-medium text-right">Records</th>
-              <th class="px-6 py-3 font-medium text-right">Inserted</th>
-              <th class="px-6 py-3 font-medium text-right">Updated</th>
-              <th class="px-6 py-3 font-medium">Error</th>
+              <th class="px-4 py-3 font-medium">Ecosystem</th>
+              <th class="px-4 py-3 font-medium">Status</th>
+              <th class="px-4 py-3 font-medium">Last Completed</th>
+              <th class="px-4 py-3 font-medium text-right">Records</th>
+              <th class="px-4 py-3 font-medium text-right">Inserted</th>
+              <th class="px-4 py-3 font-medium text-right">Updated</th>
+              <th class="px-4 py-3 font-medium">Error</th>
+              <th class="px-4 py-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody id="osv-tbody">
-            <tr><td colspan="7" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
+            <tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -290,10 +295,86 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
     function errorCell(msg) {
       if (!msg) return '<span class="text-[var(--muted-foreground)]">-</span>';
-      return '<span class="text-[var(--destructive)] font-mono text-xs block truncate max-w-xs" title="' +
+      return '<span class="text-[var(--destructive)] font-mono text-xs block truncate max-w-[140px]" title="' +
         msg.replace(/"/g, '&quot;') + '">' +
         msg.substring(0, 60) + (msg.length > 60 ? '…' : '') +
       '</span>';
+    }
+
+    // ─── API key & actions ────────────────────────────────────────
+    const API_KEY_STORAGE = 'heretix_api_key';
+
+    function getApiKey() {
+      return localStorage.getItem(API_KEY_STORAGE) || '';
+    }
+    function saveApiKey(value) {
+      localStorage.setItem(API_KEY_STORAGE, value.trim());
+      showToast('API key saved', 'ok');
+    }
+
+    let toastTimer = null;
+    function showToast(msg, kind) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'fixed bottom-6 right-6 px-4 py-3 rounded-md text-sm font-medium shadow-lg z-50 ' +
+        (kind === 'error'
+          ? 'bg-[var(--destructive)] text-white'
+          : 'bg-[var(--primary)] text-[var(--primary-foreground)]');
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { el.className = 'hidden'; }, 3000);
+    }
+
+    function actionCell(row) {
+      const running = row.status === 'running';
+      const runBtn = '<button onclick="runJob(\\'' + row.source + '\\')" ' +
+        (running ? 'disabled ' : '') +
+        'class="px-2.5 py-1 text-xs font-medium rounded-md border border-[var(--border)] ' +
+        (running ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[var(--accent)]') + '">' +
+        (running ? 'Running…' : 'Run') + '</button>';
+      const enabled = row.enabled !== false;
+      const toggleBtn = '<button onclick="toggleJob(\\'' + row.source + '\\', ' + (!enabled) + ')" ' +
+        'class="px-2.5 py-1 text-xs font-medium rounded-md border ' +
+        (enabled
+          ? 'border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--accent)]'
+          : 'border-transparent bg-[var(--destructive)]/20 text-[var(--destructive)]') +
+        '">' + (enabled ? 'On' : 'Off') + '</button>';
+      return '<div class="flex items-center justify-end gap-2">' + toggleBtn + runBtn + '</div>';
+    }
+
+    async function runJob(source) {
+      const key = getApiKey();
+      if (!key) { showToast('API key required for actions', 'error'); return; }
+      try {
+        const res = await fetch('/api/v1/jobs/' + encodeURIComponent(source) + '/run', {
+          method: 'POST',
+          headers: { 'x-api-key': key },
+        });
+        if (res.status === 401) { showToast('Invalid API key', 'error'); return; }
+        if (res.status === 409) { showToast(source + ' is already running', 'error'); return; }
+        if (!res.ok) { showToast('Failed: HTTP ' + res.status, 'error'); return; }
+        showToast('Started ' + source, 'ok');
+        setTimeout(loadData, 800);
+      } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+      }
+    }
+
+    async function toggleJob(source, enabled) {
+      const key = getApiKey();
+      if (!key) { showToast('API key required for actions', 'error'); return; }
+      try {
+        const res = await fetch('/api/v1/jobs/' + encodeURIComponent(source), {
+          method: 'PATCH',
+          headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
+        if (res.status === 401) { showToast('Invalid API key', 'error'); return; }
+        if (!res.ok) { showToast('Failed: HTTP ' + res.status, 'error'); return; }
+        showToast(source + (enabled ? ' enabled' : ' disabled'), 'ok');
+        loadData();
+      } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+      }
     }
 
     function renderCards(counts) {
@@ -314,19 +395,21 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     function renderSources(sources) {
       if (!sources.length) {
         document.getElementById('sources-tbody').innerHTML =
-          '<tr><td colspan="7" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No import jobs found.</td></tr>';
+          '<tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No import jobs found.</td></tr>';
         return;
       }
       const sorted = [...sources].sort((a, b) => a.label.localeCompare(b.label));
       document.getElementById('sources-tbody').innerHTML = sorted.map(s =>
-        '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors">' +
-          '<td class="px-6 py-4 font-medium text-[var(--foreground)]">' + s.label + '</td>' +
-          '<td class="px-6 py-4">' + statusBadge(s.status) + '</td>' +
-          '<td class="px-6 py-4 text-[var(--muted-foreground)]">' + relativeTime(s.completedAt) + '</td>' +
-          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.recordCount) + '</td>' +
-          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalInserted) + '</td>' +
-          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalUpdated) + '</td>' +
-          '<td class="px-6 py-4">' + errorCell(s.errorMessage) + '</td>' +
+        '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors' +
+          (s.enabled === false ? ' opacity-50' : '') + '">' +
+          '<td class="px-4 py-4 font-medium text-[var(--foreground)]">' + s.label + '</td>' +
+          '<td class="px-4 py-4">' + statusBadge(s.status) + '</td>' +
+          '<td class="px-4 py-4 text-[var(--muted-foreground)]">' + relativeTime(s.completedAt) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.recordCount) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalInserted) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalUpdated) + '</td>' +
+          '<td class="px-4 py-4">' + errorCell(s.errorMessage) + '</td>' +
+          '<td class="px-4 py-4">' + actionCell(s) + '</td>' +
         '</tr>'
       ).join('');
     }
@@ -334,18 +417,20 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     function renderOsvEcosystems(ecosystems) {
       if (!ecosystems.length) {
         document.getElementById('osv-tbody').innerHTML =
-          '<tr><td colspan="7" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No OSV ecosystems imported yet.</td></tr>';
+          '<tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No OSV ecosystems imported yet.</td></tr>';
         return;
       }
       document.getElementById('osv-tbody').innerHTML = ecosystems.map(e =>
-        '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors">' +
-          '<td class="px-6 py-4 font-medium text-[var(--foreground)]">' + e.ecosystem + '</td>' +
-          '<td class="px-6 py-4">' + statusBadge(e.status) + '</td>' +
-          '<td class="px-6 py-4 text-[var(--muted-foreground)]">' + relativeTime(e.completedAt) + '</td>' +
-          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.recordCount) + '</td>' +
-          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.totalInserted) + '</td>' +
-          '<td class="px-6 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.totalUpdated) + '</td>' +
-          '<td class="px-6 py-4">' + errorCell(e.errorMessage) + '</td>' +
+        '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors' +
+          (e.enabled === false ? ' opacity-50' : '') + '">' +
+          '<td class="px-4 py-4 font-medium text-[var(--foreground)]">' + e.ecosystem + '</td>' +
+          '<td class="px-4 py-4">' + statusBadge(e.status) + '</td>' +
+          '<td class="px-4 py-4 text-[var(--muted-foreground)]">' + relativeTime(e.completedAt) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.recordCount) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.totalInserted) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.totalUpdated) + '</td>' +
+          '<td class="px-4 py-4">' + errorCell(e.errorMessage) + '</td>' +
+          '<td class="px-4 py-4">' + actionCell(e) + '</td>' +
         '</tr>'
       ).join('');
     }
@@ -361,11 +446,14 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         document.getElementById('last-updated').textContent =
           'Updated ' + new Date().toLocaleTimeString();
       } catch (err) {
-        const msg = '<tr><td colspan="6" class="px-6 py-8 text-center text-[var(--destructive)]">Failed to load: ' + err.message + '</td></tr>';
+        const msg = '<tr><td colspan="8" class="px-6 py-8 text-center text-[var(--destructive)]">Failed to load: ' + err.message + '</td></tr>';
         document.getElementById('sources-tbody').innerHTML = msg;
-        document.getElementById('osv-tbody').innerHTML = msg.replace('colspan="6"', 'colspan="7"');
+        document.getElementById('osv-tbody').innerHTML = msg;
       }
     }
+
+    // Prefill API key input from localStorage
+    document.getElementById('api-key-input').value = getApiKey();
 
     loadData();
     setInterval(loadData, REFRESH_INTERVAL_MS);

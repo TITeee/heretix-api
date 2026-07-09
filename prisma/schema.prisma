@@ -310,3 +310,10 @@ model CollectionJob {
   @@index([status, priority, createdAt])
   @@index([completedAt])
 }
+
+// 収集ジョブの有効/無効フラグ（行がなければデフォルト有効）
+model JobConfig {
+  source    String   @id
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+}

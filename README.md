@@ -93,7 +93,7 @@ Output is saved to `docs/erd.md`.
 
 ## Import Status Dashboard
 
-A lightweight web dashboard is available at `/dashboard` (no authentication required).
+A lightweight web dashboard is available at `/dashboard` (viewing requires no authentication).
 
 ```
 GET /dashboard
@@ -102,7 +102,7 @@ GET /dashboard
 Displays:
 - **Record counts** — total rows in NVD, OSV, KEV, and Advisory tables
 - **Import status table** — latest `CollectionJob` per source with status badge, last completed time, inserted/updated counts, and any error message
-- **OSV ecosystems** — list of all ecosystems currently imported in the database
+- **OSV ecosystems** — per-ecosystem import status and record counts
 
 Auto-refreshes every 60 seconds. Also available as JSON:
 
@@ -110,13 +110,28 @@ Auto-refreshes every 60 seconds. Also available as JSON:
 GET /api/v1/import-status
 ```
 
+### Job control (enable/disable & manual run)
+
+Each row has an **On/Off toggle** to enable/disable the scheduled run, and a **Run** button to trigger it on demand. OSV is controllable per ecosystem.
+
+These actions mutate state, so they require `x-api-key` authentication. Enter your API key in the field at the top-right of the dashboard — it is saved in the browser's `localStorage` and sent with subsequent actions (not needed for viewing).
+
+Corresponding endpoints (inside the `/api/v1` auth scope):
+
+```
+POST  /api/v1/jobs/:source/run     # Manual run (fire-and-forget, 202; runs regardless of enabled state)
+PATCH /api/v1/jobs/:source          # Toggle enabled. Body: { "enabled": boolean }
+```
+
+`:source` is the `CollectionJob.source` (`nvd`, `kev`, `advisory-fortinet`, `osv-npm`, etc.). Re-running while in progress returns `409`; an unknown source returns `404`. The enabled state is persisted in the `JobConfig` table and defaults to enabled when no row exists.
+
 Example: `http://localhost:5000/dashboard`
 
 ---
 
 ## API Endpoints
 
-All endpoints require the `x-api-key` header to match the `API_KEY` environment variable.
+Endpoints require the `x-api-key` header to match the `API_KEY` environment variable, except the following public routes: `/health`, `/dashboard`, `/icon.png`, `/api/v1/import-status`.
 
 ### Health check
 
@@ -264,6 +279,40 @@ GET /api/v1/vulnerabilities/stats
 }
 ```
 
+### Run a job (manual trigger)
+
+```
+POST /api/v1/jobs/:source/run
+```
+
+Triggers the given source on demand (fire-and-forget). Runs regardless of enabled state.
+
+| Case | Response |
+|---|---|
+| Started | `202 { "status": "started", "source": "..." }` |
+| Already running | `409` |
+| Unknown source | `404` |
+
+```bash
+curl -X POST -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/jobs/nvd/run"
+```
+
+### Enable/disable a job
+
+```
+PATCH /api/v1/jobs/:source
+```
+
+Toggles whether the scheduler runs the job (does not affect manual runs). State is persisted in `JobConfig`.
+
+```bash
+curl -X PATCH -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+  -d '{"enabled": false}' "http://localhost:5000/api/v1/jobs/osv-npm"
+# → { "source": "osv-npm", "enabled": false }
+```
+
+`:source` is the `CollectionJob.source` (`nvd`, `kev`, `advisory-fortinet`, `osv-npm`, etc.).
+
 ## Project Structure
 
 ```
@@ -271,8 +320,15 @@ heretix-api/
 ├── src/
 │   ├── api/
 │   │   ├── routes/
-│   │   │   └── vulnerabilities.ts   # Vulnerability API endpoints
+│   │   │   ├── vulnerabilities.ts   # Vulnerability API endpoints
+│   │   │   ├── dashboard.ts         # Dashboard UI & import-status API
+│   │   │   └── jobs.ts              # Job manual-run & enable/disable API
 │   │   └── server.ts                # Fastify server configuration
+│   ├── jobs/
+│   │   ├── types.ts                 # JobDefinition / JobResult types
+│   │   ├── registry.ts              # All job definitions (STATIC_JOBS) + dynamic resolver
+│   │   ├── executor.ts              # Shared job lifecycle + concurrency lock
+│   │   └── config.ts                # Job enable/disable (JobConfig) accessors
 │   ├── db/
 │   │   └── client.ts                # Prisma client
 │   ├── scripts/
@@ -288,6 +344,8 @@ heretix-api/
 │   │   ├── validate-tomcat.ts       # Tomcat search accuracy validator
 │   │   ├── validate-apache.ts       # Apache HTTPD search accuracy validator
 │   │   ├── validate-nginx.ts        # nginx search accuracy validator
+│   │   ├── validate-openssl.ts      # OpenSSL search accuracy validator
+│   │   ├── validate-postgresql.ts   # PostgreSQL search accuracy validator
 │   │   └── clear-db.ts              # Drop all tables including Vulnerability
 │   ├── worker/
 │   │   ├── osv-fetcher.ts           # OSV API integration
@@ -310,7 +368,7 @@ heretix-api/
 │   │   ├── version.ts               # Version normalization utility
 │   │   ├── cpe.ts                   # CPE 2.3 parse utility
 │   │   └── browser.ts               # Shared Playwright stealth browser singleton
-│   ├── scheduler.ts                 # node-cron based automatic update scheduler
+│   ├── scheduler.ts                 # Iterates the job registry to register cron jobs (node-cron)
 │   └── index.ts                     # Entry point
 ├── prisma/
 │   ├── schema.prisma                # Database schema
@@ -634,7 +692,7 @@ Vendor advisory search also uses `versionStartInt` / `lastAffectedInt` (inclusiv
 
 ### Automatic scheduler
 
-When the server starts, `src/scheduler.ts` registers cron jobs:
+Job definitions (source key, label, cron, run logic) are centralized in `src/jobs/registry.ts` (`STATIC_JOBS`). On startup `src/scheduler.ts` iterates the registry to register cron jobs, checks each job's `JobConfig` enabled flag at fire time, then calls `executeJob()` from `src/jobs/executor.ts` — which handles the shared `CollectionJob` lifecycle (`running` → `completed`/`failed` + counts) and concurrency locking for every job.
 
 | Job | Schedule |
 |---|---|
@@ -649,10 +707,12 @@ When the server starts, `src/scheduler.ts` registers cron jobs:
 | SonicWall advisory | Daily at 12:15 UTC |
 | Oracle CPU advisory | Daily at 12:30 UTC |
 | Broadcom/VMware advisory | Daily at 13:00 UTC |
+| Red Hat RHEL 9 advisory | Daily at 13:15 UTC |
+| Red Hat RHEL 8 advisory | Daily at 13:30 UTC |
 | OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
 
-Each OSV ecosystem runs as an independent job (`osv-{ecosystem}`) so its status appears separately in the dashboard.
+Each OSV ecosystem runs as an independent job (`osv-{ecosystem}`) so its status, enable/disable toggle, and manual run appear separately in the dashboard. Jobs disabled via `JobConfig` are skipped at fire time (toggling takes effect immediately, without re-registering cron). Manual runs are also available via `POST /api/v1/jobs/:source/run` regardless of the enabled state.
 
 ## Development & Deployment
 
@@ -756,6 +816,8 @@ Scripts to measure Precision / Recall against official security advisories:
 pnpm validate:tomcat 9.0.100      # vs tomcat.apache.org
 pnpm validate:apache 2.4.62       # vs httpd.apache.org
 pnpm validate:nginx 1.24.0        # vs nginx.org
+pnpm validate:openssl 3.0.12      # vs openssl.org
+pnpm validate:postgresql 16.4     # vs postgresql.org
 ```
 
 ## Known Issues

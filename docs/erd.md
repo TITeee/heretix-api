@@ -150,6 +150,13 @@ erDiagram
     DateTime updatedAt 
     }
   
+
+  "JobConfig" {
+    String source "🗝️"
+    Boolean enabled 
+    DateTime updatedAt 
+    }
+  
     "OSVVulnerability" }o--|o "Vulnerability" : "masterVuln"
     "OSVAffectedPackage" }o--|| "OSVVulnerability" : "vulnerability"
     "NVDVulnerability" |o--|o "Vulnerability" : "masterVuln"

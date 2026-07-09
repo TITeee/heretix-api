@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import vulnerabilitiesRoute from './routes/vulnerabilities.js';
 import dashboardRoute from './routes/dashboard.js';
+import jobsRoute from './routes/jobs.js';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
@@ -47,6 +48,7 @@ export async function createServer() {
       }
     });
     await app.register(vulnerabilitiesRoute, { prefix: '/api/v1' });
+    await app.register(jobsRoute, { prefix: '/api/v1' });
   });
 
   return fastify;
