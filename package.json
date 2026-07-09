@@ -29,7 +29,9 @@
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
-    "validate:apache": "node dist/scripts/validate-apache.js"
+    "validate:apache": "node dist/scripts/validate-apache.js",
+    "validate:openssl": "node dist/scripts/validate-openssl.js",
+    "validate:postgresql": "node dist/scripts/validate-postgresql.js"
   },
   "keywords": [
     "vulnerability",
