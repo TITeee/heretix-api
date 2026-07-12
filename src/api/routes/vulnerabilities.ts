@@ -336,6 +336,18 @@ async function searchAdvisory(
       OR: [
         {
           AND: [
+            // Guard: only apply range matching when the row actually carries some range
+            // info. Rows with versionStartInt/versionEndInt/lastAffectedInt all null (i.e.
+            // affectedVersions-only entries, no range data at all) must be matched solely via
+            // the affectedVersions branch below — otherwise every null-fallback in this block
+            // resolves to true and the row incorrectly matches every version.
+            {
+              OR: [
+                { versionStartInt: { not: null } },
+                { versionEndInt: { not: null } },
+                { lastAffectedInt: { not: null } },
+              ],
+            },
             { OR: [{ versionStartInt: { lte: versionInt } }, { versionStartInt: null }] },
             {
               OR: [
