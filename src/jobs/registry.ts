@@ -24,6 +24,7 @@ import { OracleCpuFetcher } from '../worker/oracle-cpu-fetcher.js';
 import { BroadcomFetcher } from '../worker/broadcom-fetcher.js';
 import { RedHatFetcher } from '../worker/redhat-fetcher.js';
 import { SplunkFetcher } from '../worker/splunk-fetcher.js';
+import { ApacheFetcher } from '../worker/apache-fetcher.js';
 import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
 
@@ -82,6 +83,7 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-redhat-rhel9', label: 'Red Hat (RHEL 9)', cron: '15 13 * * *', run: () => runAdvisory('advisory-redhat-rhel9', new RedHatFetcher('rhel9')) },
   { source: 'advisory-redhat-rhel8', label: 'Red Hat (RHEL 8)', cron: '30 13 * * *', run: () => runAdvisory('advisory-redhat-rhel8', new RedHatFetcher('rhel8')) },
   { source: 'advisory-splunk',       label: 'Splunk',           cron: '45 13 * * *', run: () => runAdvisory('advisory-splunk', new SplunkFetcher()) },
+  { source: 'advisory-apache',       label: 'Apache HTTP Server', cron: '0 14 * * *', run: () => runAdvisory('advisory-apache', new ApacheFetcher()) },
   {
     source: 'osv-mal',
     label: 'OSV / Malware',
