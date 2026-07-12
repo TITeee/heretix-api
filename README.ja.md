@@ -4,7 +4,7 @@
 
 ## 特徴
 
-- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU / Oracle Linux / Red Hat / Broadcom/VMware 等）に対応
+- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU / Oracle Linux / Red Hat / Broadcom/VMware / Splunk / Apache HTTP Server / Zabbix 等）に対応
 - **マルウェア検知**: OSV の `MAL-YYYY-NNNN` エントリ（悪意あるパッケージ）を [ossf/malicious-packages](https://github.com/ossf/malicious-packages) からインポートし、脆弱性検索エンドポイントで検索可能
 - **重複排除**: `Vulnerability` マスターテーブルが CVE ID をキーにソース間の重複を吸収
 - **CPE エイリアス対応**: NVD の CPE product 名変更（ベンダー買収等）に追従する `src/config/product-aliases.ts` で検索精度を維持
@@ -346,6 +346,9 @@ heretix-api/
 │   │   ├── import-sonicwall.ts              # SonicWall PSIRTインポートCLI
 │   │   ├── import-redhat.ts                 # Red Hat RHSA/RHBAインポートCLI
 │   │   ├── import-oracle-cpu.ts             # Oracle CPU（四半期パッチ）インポートCLI
+│   │   ├── import-splunk.ts                 # Splunk セキュリティアドバイザリインポートCLI
+│   │   ├── import-apache.ts                 # Apache HTTP Server アドバイザリインポートCLI
+│   │   ├── import-zabbix.ts                 # Zabbix セキュリティアドバイザリインポートCLI
 │   │   ├── validate-tomcat.ts               # Tomcat 検索精度検証
 │   │   ├── validate-apache.ts               # Apache HTTPD 検索精度検証
 │   │   ├── validate-nginx.ts                # nginx 検索精度検証
@@ -366,7 +369,10 @@ heretix-api/
 │   │   ├── sophos-fetcher.ts       # Sophos サイトマップ+RSS+ヘッドレスブラウザ取得
 │   │   ├── sonicwall-fetcher.ts    # SonicWall PSIRT JSON API取得・パース
 │   │   ├── oracle-cpu-fetcher.ts   # Oracle CPU CSAF 2.0取得・CVE別分割
-│   │   └── broadcom-fetcher.ts     # Broadcom/VMware VMSA JSON API+Playwright取得
+│   │   ├── broadcom-fetcher.ts     # Broadcom/VMware VMSA JSON API+Playwright取得
+│   │   ├── splunk-fetcher.ts       # Splunk セキュリティアドバイザリアーカイブHTML取得・パース
+│   │   ├── apache-fetcher.ts       # Apache HTTP Server (httpd) セキュリティページHTML取得・パース
+│   │   └── zabbix-fetcher.ts       # Zabbix セキュリティアドバイザリ検索API取得・パース
 │   ├── config/
 │   │   └── product-aliases.ts      # NVD CPE product 名エイリアスマッピング
 │   ├── utils/
@@ -794,6 +800,44 @@ pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # 最新 CPU のみ
 - 1 CPU あたり約 450 CVE（MySQL・Java SE・WebLogic・E-Business Suite 等 Oracle ソフトウェア全般を対象）
 - `advisory-oracle-linux`（ELSA）とは別データ — こちらは Oracle ソフトウェア製品の CPU
 
+### Splunk
+
+Splunk のセキュリティアドバイザリアーカイブを収集します。認証不要。
+
+```bash
+pnpm import:splunk                    # 全件（アーカイブページ、300件以上）
+```
+
+- `advisory.splunk.com/advisories` の全履歴テーブル（1ページに集約）を取得
+- CVE ID・CVSS スコア/ベクター・製品ブランチ別の影響/修正バージョン・説明・対応策・軽減策を抽出
+- 同一 SVD ID の重複行は取得時にデデュープ
+- 対象製品: Splunk Enterprise・Splunk Cloud Platform・Splunk AI Toolkit 等（ブランチごとに個別の affectedProduct として記録）
+
+### Apache HTTP Server
+
+Apache httpd 2.4 系のセキュリティアドバイザリを収集します。認証不要。
+
+```bash
+pnpm import:apache                    # 全件（httpd.apache.org/security/vulnerabilities_24.html）
+```
+
+- 公式脆弱性ページの HTML を CVE 単位のブロックに分割してパース
+- `before X` / `through X` / `>=X, <=Y` / カンマ区切りバージョンリストなど複数の "Affects" 表記に対応
+- 2.4.x 系のみを対象（2.2/2.0/1.3 系は EOL のため対象外）
+- `pnpm validate:apache` の検証対象と同一ソース（`httpd.apache.org`）
+
+### Zabbix
+
+Zabbix のセキュリティアドバイザリを収集します。認証不要（公開検索API、client-side search-only key を使用）。
+
+```bash
+pnpm import:zabbix                    # 全件（Typesense 検索API経由でページング取得）
+```
+
+- `zabbix.com` の公式アドバイザリページが内部で使用する Typesense 検索 API から直接取得
+- CVE ID（Zabbix 独自の ZBV-YYYY-MM-DD-N と併記）・深刻度・CVSS スコア・影響/修正バージョンを抽出
+- レンジ表記（`6.0.0-6.0.44`）・単一バージョン・ワイルドカード上限（`4.4.4-4.4.*`）に対応、自由記述の古いエントリはベストエフォートでスキップ
+
 ### 新規ベンダーの追加方法
 
 `AdvisoryFetcher` インターフェースを実装するだけで新規ベンダーを追加できます:
@@ -871,6 +915,9 @@ WHERE ecosystem = 'npm'
 | Broadcom/VMware アドバイザリ | 毎日 13:00 UTC |
 | Red Hat RHEL 9 アドバイザリ | 毎日 13:15 UTC |
 | Red Hat RHEL 8 アドバイザリ | 毎日 13:30 UTC |
+| Splunk アドバイザリ | 毎日 13:45 UTC |
+| Apache HTTP Server アドバイザリ | 毎日 14:00 UTC |
+| Zabbix アドバイザリ | 毎日 14:15 UTC |
 | OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
 | MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
 

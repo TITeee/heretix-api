@@ -6,7 +6,7 @@ A simple, high-performance vulnerability management API backed by PostgreSQL. It
 
 ## Features
 
-- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, and more)
+- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Zabbix, and more)
 - **Malware detection**: OSV `MAL-YYYY-NNNN` entries (malicious packages) are imported from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) and searchable via the same vulnerability search endpoint
 - **Deduplication**: A `Vulnerability` master table uses CVE ID as the primary key to merge duplicate entries across sources
 - **CPE alias support**: `src/config/product-aliases.ts` tracks CPE product name changes (e.g., post-acquisition renames) so search accuracy stays high
@@ -340,7 +340,14 @@ heretix-api/
 │   │   ├── import-pan.ts            # Palo Alto Networks PSIRT import CLI
 │   │   ├── import-cisco.ts          # Cisco PSIRT import CLI
 │   │   ├── import-oracle-linux.ts   # Oracle Linux ELSA import CLI
+│   │   ├── import-sophos.ts         # Sophos advisory import CLI
+│   │   ├── import-sonicwall.ts      # SonicWall PSIRT import CLI
+│   │   ├── import-redhat.ts         # Red Hat RHSA/RHBA import CLI
+│   │   ├── import-oracle-cpu.ts     # Oracle CPU (quarterly patch) import CLI
 │   │   ├── import-broadcom.ts       # Broadcom/VMware VMSA import CLI
+│   │   ├── import-splunk.ts         # Splunk security advisory import CLI
+│   │   ├── import-apache.ts         # Apache HTTP Server advisory import CLI
+│   │   ├── import-zabbix.ts         # Zabbix security advisory import CLI
 │   │   ├── validate-tomcat.ts       # Tomcat search accuracy validator
 │   │   ├── validate-apache.ts       # Apache HTTPD search accuracy validator
 │   │   ├── validate-nginx.ts        # nginx search accuracy validator
@@ -357,10 +364,14 @@ heretix-api/
 │   │   ├── pan-fetcher.ts           # Palo Alto Networks PSIRT CSAF fetch & parse
 │   │   ├── cisco-fetcher.ts         # Cisco PSIRT openVuln API fetch & parse
 │   │   ├── oracle-linux-fetcher.ts  # Oracle Linux OVAL XML fetch, decompress & parse
+│   │   ├── redhat-fetcher.ts        # Red Hat OVAL v2 XML fetch, decompress & parse
 │   │   ├── sophos-fetcher.ts        # Sophos sitemap + RSS + headless browser fetch
 │   │   ├── sonicwall-fetcher.ts     # SonicWall PSIRT JSON API fetch & parse
 │   │   ├── oracle-cpu-fetcher.ts    # Oracle CPU CSAF 2.0 fetch & per-CVE split
-│   │   └── broadcom-fetcher.ts      # Broadcom/VMware VMSA JSON API + Playwright fetch
+│   │   ├── broadcom-fetcher.ts      # Broadcom/VMware VMSA JSON API + Playwright fetch
+│   │   ├── splunk-fetcher.ts        # Splunk advisory archive HTML fetch & parse
+│   │   ├── apache-fetcher.ts        # Apache HTTP Server (httpd) security page HTML fetch & parse
+│   │   └── zabbix-fetcher.ts        # Zabbix security advisory search API fetch & parse
 │   ├── config/
 │   │   └── product-aliases.ts       # NVD CPE product name alias mappings
 │   ├── utils/
@@ -632,6 +643,44 @@ pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # Most recent CPU only
 - ~450 CVEs per CPU covering MySQL, Java SE, WebLogic, E-Business Suite, Fusion Middleware, etc.
 - Separate from `advisory-oracle-linux` (ELSA) — this covers Oracle software products, not OS packages
 
+### Splunk
+
+Splunk security advisory archive. No authentication required.
+
+```bash
+pnpm import:splunk                    # All advisories (300+, single archive page)
+```
+
+- Fetches the full historical table from `advisory.splunk.com/advisories` (one page covers the entire archive)
+- Extracts CVE ID, CVSS score/vector, per-branch affected/fixed versions, description, solution, and mitigations
+- Deduplicates rows sharing the same SVD ID
+- Products: Splunk Enterprise, Splunk Cloud Platform, Splunk AI Toolkit, etc. (each branch recorded as a separate affected product)
+
+### Apache HTTP Server
+
+Apache httpd 2.4 security advisories. No authentication required.
+
+```bash
+pnpm import:apache                    # All advisories (httpd.apache.org/security/vulnerabilities_24.html)
+```
+
+- Parses the official vulnerabilities page HTML into per-CVE blocks
+- Handles multiple "Affects" notations: `before X`, `through X`, `>=X, <=Y`, and comma-separated version lists
+- Covers 2.4.x only (2.2/2.0/1.3 are EOL and out of scope)
+- Same source used by `pnpm validate:apache` for accuracy validation
+
+### Zabbix
+
+Zabbix security advisories. No authentication required (public client-side search-only key).
+
+```bash
+pnpm import:zabbix                    # All advisories (paginated via Typesense search API)
+```
+
+- Fetches directly from the Typesense search API that zabbix.com's own advisory page uses internally
+- Extracts CVE ID (alongside Zabbix's own ZBV-YYYY-MM-DD-N identifier), severity, CVSS score, and affected/fixed versions
+- Handles range notation (`6.0.0-6.0.44`), single exact versions, and wildcard upper bounds (`4.4.4-4.4.*`); free-text legacy entries are skipped best-effort
+
 ### Adding a new vendor
 
 Implement the `AdvisoryFetcher` interface:
@@ -709,6 +758,9 @@ Job definitions (source key, label, cron, run logic) are centralized in `src/job
 | Broadcom/VMware advisory | Daily at 13:00 UTC |
 | Red Hat RHEL 9 advisory | Daily at 13:15 UTC |
 | Red Hat RHEL 8 advisory | Daily at 13:30 UTC |
+| Splunk advisory | Daily at 13:45 UTC |
+| Apache HTTP Server advisory | Daily at 14:00 UTC |
+| Zabbix advisory | Daily at 14:15 UTC |
 | OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
 

@@ -22,6 +22,9 @@ const ADVISORY_SOURCE_MAP: Record<string, string> = {
   'advisory-oracle-cpu': 'advisory-oracle-cpu',
   'advisory-redhat-rhel9': 'red-hat',
   'advisory-redhat-rhel8': 'red-hat',
+  'advisory-splunk':     'advisory-splunk',
+  'advisory-apache':     'advisory-apache',
+  'advisory-zabbix':     'advisory-zabbix',
 };
 
 export default async function dashboardRoute(fastify: FastifyInstance) {
