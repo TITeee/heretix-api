@@ -372,15 +372,19 @@ heretix-api/
 │   │   ├── broadcom-fetcher.ts     # Broadcom/VMware VMSA JSON API+Playwright取得
 │   │   ├── splunk-fetcher.ts       # Splunk セキュリティアドバイザリアーカイブHTML取得・パース
 │   │   ├── apache-fetcher.ts       # Apache HTTP Server (httpd) セキュリティページHTML取得・パース
-│   │   └── zabbix-fetcher.ts       # Zabbix セキュリティアドバイザリ検索API取得・パース
+│   │   ├── zabbix-fetcher.ts       # Zabbix セキュリティアドバイザリ検索API取得・パース
+│   │   └── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix, Vitest）
 │   ├── config/
-│   │   └── product-aliases.ts      # NVD CPE product 名エイリアスマッピング
+│   │   ├── product-aliases.ts      # NVD CPE product 名エイリアスマッピング
+│   │   └── product-aliases.test.ts # 単体テスト（Vitest）
 │   ├── utils/
 │   │   ├── logger.ts               # Pinoロガー設定
 │   │   ├── version.ts              # バージョン正規化ユーティリティ（semver → BigInt）
 │   │   ├── rpm-version.ts          # RPMバージョン比較（rpmvercmp アルゴリズム）
 │   │   ├── cpe.ts                  # CPE 2.3 パースユーティリティ
-│   │   └── browser.ts              # Playwright stealth ブラウザ共有シングルトン
+│   │   ├── search-helpers.ts       # 検索時の判定ロジック（dedup・エコシステム分類等、vulnerabilities.ts から抽出）
+│   │   ├── browser.ts              # Playwright stealth ブラウザ共有シングルトン
+│   │   └── *.test.ts               # 各ユーティリティの単体テスト（Vitest）
 │   ├── scheduler.ts                # node-cron ベースの自動更新スケジューラ
 │   └── index.ts                    # エントリーポイント
 ├── prisma/
@@ -388,6 +392,7 @@ heretix-api/
 │   └── migrations/                 # マイグレーションファイル
 ├── docs/
 │   └── erd.md                      # ER図 (Mermaid形式)
+├── vitest.config.ts                # テスト設定（Vitest）
 ├── package.json                    # 依存関係とスクリプト
 ├── tsconfig.json                   # TypeScript設定
 └── .env                            # 環境変数設定
@@ -895,6 +900,42 @@ WHERE ecosystem = 'npm'
 | isKev / kev* | CISA KEV（独立更新） |
 | epssScore / epssPercentile | FIRST.org EPSS（独立更新） |
 | workaround / solution / url | Advisory（ベンダー固有情報） |
+
+## テスト
+
+[Vitest](https://vitest.dev/) による単体テストを整備している。対象は「検知精度に直結する pure 関数」— バージョン比較・エコシステム分類・ベンダーアドバイザリのバージョン範囲パーサーなど、DB 非依存で振る舞いを固定できる部分。
+
+```bash
+pnpm test          # 全テストを1回実行
+pnpm test:watch    # watch モード
+```
+
+**テスト対象:**
+
+| ファイル | 内容 |
+|---|---|
+| `src/utils/version.test.ts` | `normalizeVersion`（RPM release, epoch, Broadcom `U` 形式, NVD `_update_N` 形式 等） |
+| `src/utils/rpm-version.test.ts` | `rpmvercmp`, `compareRpmVersions` |
+| `src/utils/cpe.test.ts` | `parseCPE` |
+| `src/utils/search-helpers.test.ts` | `dedup`, `versionRangeWhere`, `isDistroEcosystem`, `isLanguageEcosystem`, `rpmAdvisoryVendor`, `normalizeEcosystem`（`vulnerabilities.ts` から抽出した検索時の判定ロジック） |
+| `src/config/product-aliases.test.ts` | `expandProductAliases`（`http_server` 漏れで Apache の Recall が 27%→90% に変動した実例の再発防止を含む）、`PRODUCT_ALIASES` のデータ整合性（重複なし・空配列なし） |
+| `src/worker/apache-fetcher.test.ts` | `parseAffects`（`before X` / `through X` / `>=X,<=Y` / カンマ区切りリスト 等の表記ゆれ） |
+| `src/worker/splunk-fetcher.test.ts` | `parseAffectedVersion`, `buildAffectedProducts` |
+| `src/worker/zabbix-fetcher.test.ts` | `parseAffectsEntry`, `buildAffectedProducts`（レンジ・単一バージョン・ワイルドカード上限） |
+| `src/worker/redhat-fetcher.test.ts` / `oracle-linux-fetcher.test.ts` | `parseCriterionComment`, `parseCveElement`, `mapSeverity` 等（OVAL v2 共通パース） |
+
+ベンダーアドバイザリのバージョン範囲パーサー（`parseAffects` 系）は、正規表現の1文字のズレが CVE の大量見逃しに直結する箇所であり、優先的にテストを整備している。各ベンダーの HTML/JSON 形式が異なるため、共通パーサーへの無理な抽象化はせず、フェッチャーごとに直接テストする方針を採っている。
+
+### CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) が `push` / `pull_request` ごとに以下を実行する:
+
+1. `pnpm install --frozen-lockfile`
+2. `pnpm prisma generate`（型生成のみ。実 DB 接続は不要）
+3. `pnpm test`
+4. `pnpm build`
+
+現状のテストは全て pure 関数のみを対象としており、DB へ実際に接続するコードパスは実行時に読み込まれないため、Postgres サービスコンテナなしで完走する（DB を絡めた統合テストを追加する際は別途 CI 設定の拡張が必要）。
 
 ## 自動スケジューラ
 

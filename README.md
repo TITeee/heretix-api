@@ -371,14 +371,19 @@ heretix-api/
 │   │   ├── broadcom-fetcher.ts      # Broadcom/VMware VMSA JSON API + Playwright fetch
 │   │   ├── splunk-fetcher.ts        # Splunk advisory archive HTML fetch & parse
 │   │   ├── apache-fetcher.ts        # Apache HTTP Server (httpd) security page HTML fetch & parse
-│   │   └── zabbix-fetcher.ts        # Zabbix security advisory search API fetch & parse
+│   │   ├── zabbix-fetcher.ts        # Zabbix security advisory search API fetch & parse
+│   │   └── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix, Vitest)
 │   ├── config/
-│   │   └── product-aliases.ts       # NVD CPE product name alias mappings
+│   │   ├── product-aliases.ts       # NVD CPE product name alias mappings
+│   │   └── product-aliases.test.ts  # Unit tests (Vitest)
 │   ├── utils/
 │   │   ├── logger.ts                # Pino logger configuration
 │   │   ├── version.ts               # Version normalization utility
+│   │   ├── rpm-version.ts           # RPM version comparison (rpmvercmp algorithm)
 │   │   ├── cpe.ts                   # CPE 2.3 parse utility
-│   │   └── browser.ts               # Shared Playwright stealth browser singleton
+│   │   ├── search-helpers.ts        # Search-time decision logic (dedup, ecosystem classification, etc.), extracted from vulnerabilities.ts
+│   │   ├── browser.ts               # Shared Playwright stealth browser singleton
+│   │   └── *.test.ts                # Unit tests for each utility (Vitest)
 │   ├── scheduler.ts                 # Iterates the job registry to register cron jobs (node-cron)
 │   └── index.ts                     # Entry point
 ├── prisma/
@@ -386,6 +391,7 @@ heretix-api/
 │   └── migrations/                  # Migration files
 ├── docs/
 │   └── erd.md                       # ER diagram (Mermaid)
+├── vitest.config.ts                 # Test configuration (Vitest)
 ├── .env.example                     # Environment variable template
 ├── package.json
 └── tsconfig.json
@@ -738,6 +744,42 @@ Vendor advisory search also uses `versionStartInt` / `lastAffectedInt` (inclusiv
 | `isKev` / `kev*` | CISA KEV (updated independently) |
 | `epssScore` / `epssPercentile` | FIRST.org EPSS (updated independently) |
 | `workaround` / `solution` / `url` | Advisory (vendor-specific fields) |
+
+## Testing
+
+Unit tests run on [Vitest](https://vitest.dev/), covering the pure functions that directly gate detection accuracy — version comparison, ecosystem classification, and vendor advisory version-range parsers — all DB-independent so their behavior can be pinned down.
+
+```bash
+pnpm test          # run all tests once
+pnpm test:watch    # watch mode
+```
+
+**Coverage:**
+
+| File | Covers |
+|---|---|
+| `src/utils/version.test.ts` | `normalizeVersion` (RPM release, epoch, Broadcom `U`-format, NVD `_update_N` format, etc.) |
+| `src/utils/rpm-version.test.ts` | `rpmvercmp`, `compareRpmVersions` |
+| `src/utils/cpe.test.ts` | `parseCPE` |
+| `src/utils/search-helpers.test.ts` | `dedup`, `versionRangeWhere`, `isDistroEcosystem`, `isLanguageEcosystem`, `rpmAdvisoryVendor`, `normalizeEcosystem` (search-time decision logic extracted from `vulnerabilities.ts`) |
+| `src/config/product-aliases.test.ts` | `expandProductAliases` (includes a regression test for the missing `http_server` alias that once dropped Apache's Recall to 27%) and `PRODUCT_ALIASES` data integrity (no duplicates, no empty arrays) |
+| `src/worker/apache-fetcher.test.ts` | `parseAffects` (`before X` / `through X` / `>=X,<=Y` / comma-separated lists, and other notations) |
+| `src/worker/splunk-fetcher.test.ts` | `parseAffectedVersion`, `buildAffectedProducts` |
+| `src/worker/zabbix-fetcher.test.ts` | `parseAffectsEntry`, `buildAffectedProducts` (ranges, exact versions, wildcard upper bounds) |
+| `src/worker/redhat-fetcher.test.ts` / `oracle-linux-fetcher.test.ts` | `parseCriterionComment`, `parseCveElement`, `mapSeverity`, etc. (shared OVAL v2 parsing) |
+
+Vendor advisory version-range parsers (the `parseAffects`-style functions) are prioritized because a single off-by-one in a regex there silently causes mass false negatives across CVEs. Since each vendor's HTML/JSON format differs, we deliberately avoid forcing a shared abstraction and test each fetcher's parser directly instead.
+
+### CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every `push` / `pull_request`:
+
+1. `pnpm install --frozen-lockfile`
+2. `pnpm prisma generate` (type generation only; no live DB connection required)
+3. `pnpm test`
+4. `pnpm build`
+
+The current tests exercise pure functions only — no code path that actually connects to the database is loaded at test time — so this runs without a Postgres service container. Adding DB-backed integration tests later will require extending the CI config.
 
 ### Automatic scheduler
 

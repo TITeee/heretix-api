@@ -21,13 +21,13 @@ const SEVERITY_MAP: Record<string, string> = {
 
 // ─── Helpers ──────────────────────────────────────────────────
 
-function mapSeverity(s?: unknown): string | undefined {
+export function mapSeverity(s?: unknown): string | undefined {
   if (s === undefined || s === null || s === '') return undefined;
   const str = String(s);
   return SEVERITY_MAP[str.toLowerCase()] ?? str.toUpperCase();
 }
 
-function stripEpoch(version: string): string {
+export function stripEpoch(version: string): string {
   return version.replace(/^\d+:/, '');
 }
 
@@ -49,13 +49,13 @@ function toArray<T>(val: T | T[] | undefined | null): T[] {
   return Array.isArray(val) ? val : [val];
 }
 
-interface CveInfo {
+export interface CveInfo {
   cveId: string;
   cvssScore?: number;
   cvssVector?: string;
 }
 
-function parseCveElement(cve: unknown): CveInfo | null {
+export function parseCveElement(cve: unknown): CveInfo | null {
   if (typeof cve === 'string') {
     if (!cve.startsWith('CVE-')) return null;
     return { cveId: cve };
@@ -85,7 +85,7 @@ function parseCveElement(cve: unknown): CveInfo | null {
   return null;
 }
 
-function parseCriterionComment(comment: string): { packageName: string; versionEnd: string } | null {
+export function parseCriterionComment(comment: string): { packageName: string; versionEnd: string } | null {
   const m = comment.match(/^(.+?)\s+is earlier than\s+(.+)$/i);
   if (!m) return null;
   return {
@@ -94,7 +94,7 @@ function parseCriterionComment(comment: string): { packageName: string; versionE
   };
 }
 
-function collectCriteria(node: unknown): Record<string, unknown>[] {
+export function collectCriteria(node: unknown): Record<string, unknown>[] {
   if (!node || typeof node !== 'object') return [];
   const n = node as Record<string, unknown>;
   const results: Record<string, unknown>[] = [];

@@ -42,7 +42,7 @@ function extractCells(rowHtml: string): Record<string, string> {
   return cells;
 }
 
-function parseAffectedVersion(text: string): { versionStart?: string; versionEnd?: string; lastAffected?: string } | null {
+export function parseAffectedVersion(text: string): { versionStart?: string; versionEnd?: string; lastAffected?: string } | null {
   const below = text.match(/^Below\s+([\d.]+)/i);
   if (below) return { versionEnd: below[1] };
 
@@ -61,7 +61,7 @@ function extractProductName(productAndBranch: string): string {
   return m ? m[1] : productAndBranch;
 }
 
-function buildAffectedProducts(cells: Record<string, string>): NormalizedAdvisory['affectedProducts'] {
+export function buildAffectedProducts(cells: Record<string, string>): NormalizedAdvisory['affectedProducts'] {
   const products = splitBr(cells['Affected Product'] ?? '');
   const fixedVersions = splitBr(cells['Fixed Versions'] ?? '');
   const affectedVersions = splitBr(cells['Affected Versions'] ?? '');

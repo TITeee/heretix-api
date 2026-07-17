@@ -27,7 +27,7 @@ const SEVERITY_MAP: Record<string, string> = {
   low: 'LOW',
 };
 
-interface AffectsSpec {
+export interface AffectsSpec {
   versionStart?: string;
   versionEnd?: string;
   lastAffected?: string;
@@ -45,7 +45,7 @@ interface AffectsSpec {
  *                                                        2.2.x/2.0.x/1.3.x entries that are out
  *                                                        of scope here (2.4.x tokens only)
  */
-function parseAffects(raw: string): AffectsSpec | null {
+export function parseAffects(raw: string): AffectsSpec | null {
   const text = decodeEntities(raw);
   if (!text) return null;
 

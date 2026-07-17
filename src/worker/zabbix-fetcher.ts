@@ -7,7 +7,7 @@ const API_KEY = 'A6ZwNJS8IqnpeGqBZ3OSXcPPCjLfp6pu'; // public client-side search
 const ADVISORY_PAGE_URL = 'https://www.zabbix.com/security_advisories';
 const PER_PAGE = 250;
 
-interface ZabbixDocument {
+export interface ZabbixDocument {
   cve_id: string;            // Zabbix's own advisory ID (e.g. "ZBV-2026-05-06-3"), despite the field name
   cve_number?: string;       // actual CVE ID, or "-" when none assigned
   cvss_score?: number;
@@ -70,7 +70,7 @@ interface AffectsSpec {
  * that isn't a parseable version range — those are skipped (best-effort,
  * matching the fallback approach used by other vendor fetchers in this repo).
  */
-function parseAffectsEntry(raw: string): AffectsSpec | null {
+export function parseAffectsEntry(raw: string): AffectsSpec | null {
   const text = normalizeDash(raw);
   if (!text || text === '-') return null;
 
@@ -86,7 +86,7 @@ function parseAffectsEntry(raw: string): AffectsSpec | null {
   return null;
 }
 
-function buildAffectedProducts(doc: ZabbixDocument): NormalizedAdvisory['affectedProducts'] {
+export function buildAffectedProducts(doc: ZabbixDocument): NormalizedAdvisory['affectedProducts'] {
   const versionAffected = doc.version_affected ?? [];
   const versionFixed = doc.version_fixed ?? [];
   const affectedProducts: NormalizedAdvisory['affectedProducts'] = [];
