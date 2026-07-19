@@ -175,6 +175,28 @@ curl -H "x-api-key: $API_KEY" \
   "http://localhost:5000/api/v1/vulnerabilities/search?package=FortiOS&version=7.4.3"
 ```
 
+**Search behavior by ecosystem:**
+
+The `ecosystem` parameter changes *which sources are queried* and *how versions are compared* — not just a display filter. This trips people up, so read this table before assuming a search returned "everything":
+
+| `ecosystem` | Sources queried | Version comparison | Why |
+|---|---|---|---|
+| Language ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`) | **OSV only** | semver range | NVD/Advisory carry C-library/OS entries that share names with language packages (e.g. C `bzip2` vs. npm `bzip2`) — querying them here would produce false positives |
+| `Red Hat:*` (e.g. `Red Hat:9`) | **Vendor advisory (OVAL) only** | RPM (`rpmvercmp`), against the advisory's `versionEnd` | OSV has no Red Hat ecosystem — the vendor OVAL feed is the only source of RHEL vulnerability data |
+| Other distro ecosystems (`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`) | **OSV only** | Exact match against `affectedVersions` (dpkg/rpm version strings) | Distro advisories express "needs a patched build," not an upstream version range (see [Known Issues](#known-issues)); vendor advisory product names also overlap with distro package names |
+| Not specified | OSV (distro ecosystems excluded) + NVD + Advisory | semver range | Default — best for names not tied to a single ecosystem (e.g. `openssl`, `FortiOS`) |
+
+```bash
+# Language ecosystem — OSV only
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=lodash&version=4.17.20&ecosystem=npm"
+
+# Red Hat — RPM version comparison against OVAL advisories
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=rsync&version=3.2.4-1.el9&ecosystem=Red%20Hat:9"
+
+# Distro ecosystem — exact version-string match
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosystem=Ubuntu:20.04:LTS"
+```
+
 **Response:**
 ```json
 {
@@ -860,21 +882,9 @@ pnpm validate:postgresql 16.4     # vs postgresql.org
 
 ### Ubuntu/Debian OSV false positives (mitigated)
 
-Ubuntu/Debian OSV advisories use `introduced: "0"` + `fixed: "<ubuntu_patched_version>"` to indicate that a package update is required — not to express an upstream version range. Comparing upstream semver versions against this range causes false positives.
+Ubuntu/Debian OSV advisories use `introduced: "0"` + `fixed: "<ubuntu_patched_version>"` to indicate that a package update is required — not to express an upstream version range. Comparing upstream semver versions against this range would cause false positives, so distro ecosystems use exact-match against `affectedVersions` instead. See [Search behavior by ecosystem](#search-vulnerabilities-single) for current behavior and examples.
 
-**Current behavior:**
-- **No `ecosystem` specified**: distro-specific ecosystems (`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `Red Hat:*`, `CentOS:*`) are excluded from results
-- **`ecosystem` explicitly specified** (e.g., `ecosystem=Ubuntu:20.04:LTS`): uses `affectedVersions` exact match with dpkg/rpm-format versions; upstream versions (e.g., `5.1.1`) do not match distro-format strings, so no false positives occur
-- **Ecosystem aliases**: `composer` is automatically mapped to `Packagist` (OSV ecosystem name for PHP Composer packages)
-
-```
-# Correct (Ubuntu 20.04 package version)
-GET /api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosystem=Ubuntu:20.04:LTS
-
-# Upstream version → no match in distro ecosystem (intentional)
-GET /api/v1/vulnerabilities/search?package=xz-utils&version=5.1.1&ecosystem=Ubuntu:20.04:LTS
-→ {"results": []}
-```
+Ecosystem alias: `composer` is automatically mapped to `Packagist` (OSV's ecosystem name for PHP Composer packages).
 
 ### Go sub-module search requires exact module path
 
@@ -886,10 +896,6 @@ GET /api/v1/vulnerabilities/search?package=go.opentelemetry.io/otel/baggage&vers
 ```
 
 Dependabot and similar tools resolve the full dependency graph to find affected sub-modules. Prefix-based matching (searching `go.opentelemetry.io/otel` to also match `/baggage`) is not yet implemented.
-
-### Vendor advisory search is skipped for distro ecosystems
-
-When `ecosystem` is a distribution ecosystem (`Ubuntu:*`, `Debian:*`, `Alpine:*`, etc.), vendor advisory results (Fortinet, Cisco, Oracle Linux ELSA, Sophos, etc.) are excluded. Distro-specific package names (e.g., `curl`) overlap with vendor product names, which would cause false positives.
 
 ### Sophos advisory source has no version ranges
 
