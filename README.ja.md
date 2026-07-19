@@ -19,56 +19,66 @@
 
 ## セットアップ
 
-### 1. 依存関係のインストール
+### 方法A: Docker（推奨）
 
 ```bash
-pnpm install
+cp .env.example .env   # 値を編集、特に API_KEY
+
+# フォアグラウンドで起動（初回はログを確認しながら起動することを推奨）
+docker compose up --build
+
+# バックグラウンドで起動（デタッチモード）
+docker compose up --build -d
 ```
 
-### 2. PostgreSQLの準備
+API は `http://localhost:5000` で起動します。停止は `docker compose down`（`-v` を追加するとデータベースボリュームも削除）。Postgres と API を1コマンドでまとめて起動できます。
 
-既存のPostgreSQLを使用するか、新規にインストールしてください。
+### 方法B: 手動セットアップ（ネイティブ PostgreSQL）
 
-#### ローカルPostgreSQLの場合:
-```bash
-# PostgreSQL 15以上がインストールされていることを確認
-psql --version
+1. **依存関係のインストール**
+   ```bash
+   pnpm install
+   ```
 
-# データベース作成
-createdb vulndb
-```
+2. **PostgreSQL の準備** — 既存のインスタンスを使うか、新規にインストール:
+   ```bash
+   psql --version   # PostgreSQL 15以上がインストールされていることを確認
+   createdb vulndb
+   ```
 
-### 3. 環境変数の設定
+3. **環境変数の設定** — `.env.example` を `.env` にコピーして値を編集。詳細は下記「[環境変数](#環境変数)」参照。
 
-`.env` ファイルを編集してDATABASE_URLを設定:
+4. **データベースマイグレーション**
+   ```bash
+   pnpm db:migrate
+   ```
 
-```env
-DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public"
-PORT=3000
-NODE_ENV=development
-API_KEY=your-api-key-here   # Required. Requests without x-api-key header return 401
-NVD_API_KEY=                # Optional. Relaxes NVD rate limit from 10 → 50 req/min
-```
-
-### 4. データベースマイグレーション
-
-```bash
-pnpm db:migrate
-```
-
-### 5. 開発サーバー起動
-
-```bash
-pnpm dev
-```
-
-サーバーは http://localhost:5000 で起動します。
+5. **サーバー起動**
+   ```bash
+   pnpm dev              # 開発（自動リロードあり）
+   # または本番向け:
+   pnpm build && pnpm start
+   ```
+   サーバーは http://localhost:5000 で起動します。
 
 > **開発時のインポートスクリプト**: `pnpm import:*` コマンドはコンパイル済みの `dist/` を参照します。`pnpm dev` のみで起動している場合（ビルドなし）は、`pnpm exec tsx` で直接実行してください：
 > ```bash
 > pnpm exec tsx src/scripts/import-osv.ts update npm
 > pnpm exec tsx src/scripts/import-nvd.ts update
 > ```
+
+### 環境変数
+
+```env
+DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public"
+PORT=5000
+NODE_ENV=development                # 本番環境では "production"
+API_KEY=your-api-key-here           # 必須。x-api-key ヘッダーが一致しないリクエストは 401
+NVD_API_KEY=                        # 任意。NVD のレート制限を 10→50 req/min に緩和
+CISCO_CLIENT_ID=                    # Cisco PSIRT インポートに必須（openVuln API クライアント ID）
+CISCO_CLIENT_SECRET=                # Cisco PSIRT インポートに必須（openVuln API クライアントシークレット）
+GITHUB_TOKEN=                       # 任意。MAL インポート時の GitHub tree API 呼び出し（1回のみ）を認証する。同一 IP から1時間に60回以上実行する場合のみ必要
+```
 
 ## データベース管理
 
@@ -79,16 +89,11 @@ pnpm db:studio
 ```
 ブラウザで http://localhost:5555 が開きます。
 
-### ER図の生成
-データベーススキーマのER図を生成できます（Mermaid形式）。
-```bash
-pnpm db:erd
-```
-生成されたER図は `docs/erd.md` に保存されます。
-
 ## インポートステータス ダッシュボード
 
 `/dashboard` にアクセスすると、インポート状況の確認と収集ジョブの操作ができる Web UI が表示されます（閲覧は認証不要）。
+
+![インポートステータス ダッシュボード](docs/dashboard.png)
 
 ```
 GET /dashboard
@@ -322,6 +327,7 @@ heretix-api/
 │   ├── api/
 │   │   ├── routes/
 │   │   │   ├── vulnerabilities.ts  # 脆弱性API エンドポイント
+│   │   │   ├── vulnerabilities.integration.test.ts  # 検索ルート結合テスト（fastify.inject, Vitest）
 │   │   │   ├── dashboard.ts        # ダッシュボードUI・import-status API
 │   │   │   └── jobs.ts             # ジョブ手動実行・有効/無効切り替えAPI
 │   │   └── server.ts               # Fastifyサーバー設定
@@ -329,9 +335,12 @@ heretix-api/
 │   │   ├── types.ts                # JobDefinition / JobResult 型
 │   │   ├── registry.ts             # 全ジョブ定義（STATIC_JOBS）+ 動的リゾルバ
 │   │   ├── executor.ts             # ジョブ共通ライフサイクル + 二重実行防止
+│   │   ├── executor.integration.test.ts  # executeJob / getDeltaCursor 結合テスト（Vitest）
 │   │   └── config.ts               # ジョブ有効/無効（JobConfig）の読み書き
 │   ├── db/
 │   │   └── client.ts               # Prismaクライアント
+│   ├── test-utils/
+│   │   └── db.ts                   # resetDb() — 全テーブル truncate、結合テストの beforeEach で使用
 │   ├── scripts/
 │   │   ├── import-osv.ts                    # OSVデータインポートCLI
 │   │   ├── import-nvd.ts                    # NVDデータインポートCLI
@@ -373,7 +382,9 @@ heretix-api/
 │   │   ├── splunk-fetcher.ts       # Splunk セキュリティアドバイザリアーカイブHTML取得・パース
 │   │   ├── apache-fetcher.ts       # Apache HTTP Server (httpd) セキュリティページHTML取得・パース
 │   │   ├── zabbix-fetcher.ts       # Zabbix セキュリティアドバイザリ検索API取得・パース
-│   │   └── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix, Vitest）
+│   │   ├── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix, Vitest）
+│   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData 結合テスト（Vitest、TEST_DATABASE_URL 必須）
+│   │   └── osv-fetcher.integration.test.ts       # importOSVData 結合テスト（孤立マスター行の回帰テスト）
 │   ├── config/
 │   │   ├── product-aliases.ts      # NVD CPE product 名エイリアスマッピング
 │   │   └── product-aliases.test.ts # 単体テスト（Vitest）
@@ -390,9 +401,8 @@ heretix-api/
 ├── prisma/
 │   ├── schema.prisma               # データベーススキーマ定義
 │   └── migrations/                 # マイグレーションファイル
-├── docs/
-│   └── erd.md                      # ER図 (Mermaid形式)
-├── vitest.config.ts                # テスト設定（Vitest）
+├── vitest.config.ts                # 単体テスト設定（Vitest、DB不要）
+├── vitest.integration.config.ts    # 結合テスト設定（Vitest、TEST_DATABASE_URL 必須）
 ├── package.json                    # 依存関係とスクリプト
 ├── tsconfig.json                   # TypeScript設定
 └── .env                            # 環境変数設定
@@ -487,6 +497,23 @@ Vulnerability (マスター)
 - `criterion` のコメント文（"X is earlier than Y"）から `versionEnd`（exclusive）を抽出
 - `ol9` / `ol8` / `ol7` 等のバリアント別フィードに対応
 - RPM リリース番号（例: `2.9.13-6.el9`）は `normalizeVersion()` で4番目のコンポーネントとして正規化
+
+#### CPEマッピングについて
+
+NVDはCPE (Common Platform Enumeration) 形式で影響製品を記述します。本APIでは `cpe:2.3:a:` (application) および `cpe:2.3:o:` (OS) の `<product>` 部分をパッケージ名として使用し、`<vendor>` からエコシステムを推定します（ベストエフォート）。`cpe:2.3:h:` (hardware) はバージョンが常に `-` のため対象外です。
+
+CPE にはバージョン範囲フィールド（`versionStartIncluding` 等）と、URI 自体にバージョンが直接埋め込まれる2種類があります。後者（例: `cpe:2.3:a:vendor:product:3.0:*:*:*:*:*:*:*`）は「特定バージョンのみ影響あり」として `introduced = lastAffected = 3.0` に変換します。
+
+| vendor | 推定 ecosystem |
+|---|---|
+| `python` / `pypi` | `PyPI` |
+| `nodejs` / `npm` | `npm` |
+| `redhat` | `Red Hat` |
+| `almalinux` | `AlmaLinux` |
+| `centos` | `CentOS` |
+| `rockylinux` | `Rocky` |
+| `golang` | `Go` |
+| `rubygems` | `RubyGems` |
 
 ## NVDデータ収集
 
@@ -903,39 +930,19 @@ WHERE ecosystem = 'npm'
 
 ## テスト
 
-[Vitest](https://vitest.dev/) による単体テストを整備している。対象は「検知精度に直結する pure 関数」— バージョン比較・エコシステム分類・ベンダーアドバイザリのバージョン範囲パーサーなど、DB 非依存で振る舞いを固定できる部分。
-
 ```bash
-pnpm test          # 全テストを1回実行
-pnpm test:watch    # watch モード
+pnpm test               # 単体テスト（DB 不要）
+pnpm test:integration   # 結合テスト（TEST_DATABASE_URL が必要。開発用 DB とは別の使い捨て DB を指定すること）
 ```
 
-**テスト対象:**
+`TEST_DATABASE_URL` の初回セットアップ:
+```bash
+createdb heretix_test
+# .env に TEST_DATABASE_URL="postgresql://user:password@localhost:5432/heretix_test" を追記
+TEST_DATABASE_URL="postgresql://...heretix_test" pnpm exec prisma migrate deploy
+```
 
-| ファイル | 内容 |
-|---|---|
-| `src/utils/version.test.ts` | `normalizeVersion`（RPM release, epoch, Broadcom `U` 形式, NVD `_update_N` 形式 等） |
-| `src/utils/rpm-version.test.ts` | `rpmvercmp`, `compareRpmVersions` |
-| `src/utils/cpe.test.ts` | `parseCPE` |
-| `src/utils/search-helpers.test.ts` | `dedup`, `versionRangeWhere`, `isDistroEcosystem`, `isLanguageEcosystem`, `rpmAdvisoryVendor`, `normalizeEcosystem`（`vulnerabilities.ts` から抽出した検索時の判定ロジック） |
-| `src/config/product-aliases.test.ts` | `expandProductAliases`（`http_server` 漏れで Apache の Recall が 27%→90% に変動した実例の再発防止を含む）、`PRODUCT_ALIASES` のデータ整合性（重複なし・空配列なし） |
-| `src/worker/apache-fetcher.test.ts` | `parseAffects`（`before X` / `through X` / `>=X,<=Y` / カンマ区切りリスト 等の表記ゆれ） |
-| `src/worker/splunk-fetcher.test.ts` | `parseAffectedVersion`, `buildAffectedProducts` |
-| `src/worker/zabbix-fetcher.test.ts` | `parseAffectsEntry`, `buildAffectedProducts`（レンジ・単一バージョン・ワイルドカード上限） |
-| `src/worker/redhat-fetcher.test.ts` / `oracle-linux-fetcher.test.ts` | `parseCriterionComment`, `parseCveElement`, `mapSeverity` 等（OVAL v2 共通パース） |
-
-ベンダーアドバイザリのバージョン範囲パーサー（`parseAffects` 系）は、正規表現の1文字のズレが CVE の大量見逃しに直結する箇所であり、優先的にテストを整備している。各ベンダーの HTML/JSON 形式が異なるため、共通パーサーへの無理な抽象化はせず、フェッチャーごとに直接テストする方針を採っている。
-
-### CI
-
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) が `push` / `pull_request` ごとに以下を実行する:
-
-1. `pnpm install --frozen-lockfile`
-2. `pnpm prisma generate`（型生成のみ。実 DB 接続は不要）
-3. `pnpm test`
-4. `pnpm build`
-
-現状のテストは全て pure 関数のみを対象としており、DB へ実際に接続するコードパスは実行時に読み込まれないため、Postgres サービスコンテナなしで完走する（DB を絡めた統合テストを追加する際は別途 CI 設定の拡張が必要）。
+`push`/`pull_request` ごとに CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）が両方を実行する。テスト対象の詳細・設計判断は [SPEC.md](SPEC.md) を参照。
 
 ## 自動スケジューラ
 
@@ -965,66 +972,6 @@ pnpm test:watch    # watch モード
 OSV はエコシステムごとに独立したジョブ（`osv-{ecosystem}`）として実行されるため、ダッシュボードでエコシステム単位のステータス確認・ON/OFF・手動実行ができます。
 
 ジョブ定義（ソースキー・ラベル・cron・実処理）は `src/jobs/registry.ts` に集約され、`src/jobs/executor.ts` が全ジョブ共通で `CollectionJob` のライフサイクル（`running` → `completed`/`failed` + 件数記録）と二重実行防止を扱います。スケジューラはレジストリを反復して cron を登録し、発火時に `JobConfig` の有効/無効を確認します（無効なジョブはスキップ）。トグルの変更は cron の再登録なしで次回発火時に即反映されます。
-
-## 開発・デプロイガイド
-
-### Docker（推奨）
-
-```bash
-# 環境変数ファイルを作成・編集
-cp .env.example .env
-
-# フォアグラウンドで起動（初回はログを確認しながら起動することを推奨）
-API_KEY=your-api-key docker compose up --build
-
-# バックグラウンドで起動（デタッチモード）
-API_KEY=your-api-key docker compose up --build -d
-```
-
-API は `http://localhost:5000` で起動します。
-
-停止は `docker compose down`。`-v` を追加するとデータベースボリュームも削除されます。
-
-### 手動
-
-#### ビルド
-```bash
-pnpm build
-```
-
-#### 本番環境での起動
-```bash
-pnpm start
-```
-
-### 環境変数
-```env
-DATABASE_URL="postgresql://user:password@host:5432/dbname?schema=public"
-PORT=3001
-NODE_ENV=production
-API_KEY=your-api-key-here   # Required. Requests without x-api-key header return 401
-NVD_API_KEY=                # Optional. Relaxes NVD rate limit from 10 → 50 req/min
-CISCO_CLIENT_ID=            # Required for Cisco PSIRT import (openVuln API client ID)
-CISCO_CLIENT_SECRET=        # Required for Cisco PSIRT import (openVuln API client secret)
-GITHUB_TOKEN=               # Optional. MAL インポート時の GitHub tree API 呼び出し（1回のみ）を認証する。同一 IP から1時間に60回以上実行する場合のみ必要。
-```
-
-### CPEマッピングについて
-
-NVDはCPE (Common Platform Enumeration) 形式で影響製品を記述します。本APIでは `cpe:2.3:a:` (application) および `cpe:2.3:o:` (OS) の `<product>` 部分をパッケージ名として使用し、`<vendor>` からエコシステムを推定します（ベストエフォート）。`cpe:2.3:h:` (hardware) はバージョンが常に `-` のため対象外です。
-
-CPE にはバージョン範囲フィールド（`versionStartIncluding` 等）と、URI 自体にバージョンが直接埋め込まれる2種類があります。後者（例: `cpe:2.3:a:vendor:product:3.0:*:*:*:*:*:*:*`）は「特定バージョンのみ影響あり」として `introduced = lastAffected = 3.0` に変換します。
-
-| vendor | 推定 ecosystem |
-|---|---|
-| `python` / `pypi` | `PyPI` |
-| `nodejs` / `npm` | `npm` |
-| `redhat` | `Red Hat` |
-| `almalinux` | `AlmaLinux` |
-| `centos` | `CentOS` |
-| `rockylinux` | `Rocky` |
-| `golang` | `Go` |
-| `rubygems` | `RubyGems` |
 
 ## 既知の問題・制限事項
 
