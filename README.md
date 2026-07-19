@@ -20,58 +20,67 @@ A simple, high-performance vulnerability management API backed by PostgreSQL. It
 
 ## Setup
 
-### 1. Install dependencies
+### Option A: Docker (recommended)
 
 ```bash
-pnpm install
+cp .env.example .env   # edit values, especially API_KEY
+
+# Foreground (recommended for first run — shows logs)
+docker compose up --build
+
+# Or background (detached mode)
+docker compose up --build -d
 ```
 
-### 2. Prepare PostgreSQL
+The API is available at `http://localhost:5000`. `docker compose down` to stop (add `-v` to also remove the database volume). This runs the full stack — Postgres and the API — with a single command.
 
-Use an existing PostgreSQL instance or install a new one.
+### Option B: Manual (native PostgreSQL)
 
-**Local PostgreSQL:**
-```bash
-# Verify PostgreSQL 15+ is installed
-psql --version
+1. **Install dependencies**
+   ```bash
+   pnpm install
+   ```
 
-# Create the database
-createdb vulndb
-```
+2. **Prepare PostgreSQL** — use an existing instance or install one locally:
+   ```bash
+   psql --version   # verify PostgreSQL 15+ is installed
+   createdb vulndb
+   ```
+   Remote PostgreSQL (Supabase, Neon, Railway, AWS RDS, etc.) also works — just point `DATABASE_URL` at it.
 
-**Remote PostgreSQL:** Supabase, Neon, Railway, AWS RDS, etc. are all supported.
+3. **Configure environment variables** — copy `.env.example` to `.env` and fill in the values. See [Environment variables](#environment-variables) below.
 
-### 3. Configure environment variables
+4. **Run database migrations**
+   ```bash
+   pnpm db:migrate
+   ```
 
-Copy `.env.example` to `.env` and fill in the values:
-
-```env
-DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public"
-PORT=5000
-NODE_ENV=development
-API_KEY=your-api-key-here   # Required. Requests without x-api-key header return 401
-NVD_API_KEY=                # Optional. Relaxes NVD rate limit from 10 → 50 req/min
-```
-
-### 4. Run database migrations
-
-```bash
-pnpm db:migrate
-```
-
-### 5. Start the development server
-
-```bash
-pnpm dev
-```
-
-The server starts at http://localhost:5000.
+5. **Start the server**
+   ```bash
+   pnpm dev      # development, with auto-reload
+   # or, for production:
+   pnpm build && pnpm start
+   ```
+   The server starts at http://localhost:5000.
 
 > **Import scripts in dev mode**: `pnpm import:*` commands run against the compiled `dist/` output. When running `pnpm dev` without a prior build, use `pnpm exec tsx src/scripts/<script>.ts` instead:
 > ```bash
 > pnpm exec tsx src/scripts/import-osv.ts update npm
 > pnpm exec tsx src/scripts/import-nvd.ts update
 > ```
+
+### Environment variables
+
+```env
+DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public"
+PORT=5000
+NODE_ENV=development                # use "production" for a production deployment
+API_KEY=your-api-key-here           # Required. Requests without x-api-key header return 401
+NVD_API_KEY=                        # Optional. Relaxes NVD rate limit from 10 → 50 req/min
+CISCO_CLIENT_ID=                    # Required for Cisco PSIRT import (openVuln API client ID)
+CISCO_CLIENT_SECRET=                # Required for Cisco PSIRT import (openVuln API client secret)
+GITHUB_TOKEN=                       # Optional. Authenticates the single GitHub tree API call used by MAL import/update. Only needed if running MAL commands more than 60 times/hr from the same IP.
+```
 
 ## Database Management
 
@@ -83,17 +92,11 @@ pnpm db:studio
 ```
 Opens http://localhost:5555 in your browser.
 
-### Generate ER diagram
-
-Generate a Mermaid ER diagram of the schema:
-```bash
-pnpm db:erd
-```
-Output is saved to `docs/erd.md`.
-
 ## Import Status Dashboard
 
 A lightweight web dashboard is available at `/dashboard` (viewing requires no authentication).
+
+![Import Status Dashboard](docs/dashboard.png)
 
 ```
 GET /dashboard
@@ -321,6 +324,7 @@ heretix-api/
 │   ├── api/
 │   │   ├── routes/
 │   │   │   ├── vulnerabilities.ts   # Vulnerability API endpoints
+│   │   │   ├── vulnerabilities.integration.test.ts  # search route integration test (fastify.inject, Vitest)
 │   │   │   ├── dashboard.ts         # Dashboard UI & import-status API
 │   │   │   └── jobs.ts              # Job manual-run & enable/disable API
 │   │   └── server.ts                # Fastify server configuration
@@ -328,9 +332,12 @@ heretix-api/
 │   │   ├── types.ts                 # JobDefinition / JobResult types
 │   │   ├── registry.ts              # All job definitions (STATIC_JOBS) + dynamic resolver
 │   │   ├── executor.ts              # Shared job lifecycle + concurrency lock
+│   │   ├── executor.integration.test.ts  # executeJob / getDeltaCursor integration test (Vitest)
 │   │   └── config.ts                # Job enable/disable (JobConfig) accessors
 │   ├── db/
 │   │   └── client.ts                # Prisma client
+│   ├── test-utils/
+│   │   └── db.ts                    # resetDb() — truncates all tables, used by integration test beforeEach()
 │   ├── scripts/
 │   │   ├── import-osv.ts            # OSV import CLI
 │   │   ├── import-nvd.ts            # NVD import CLI
@@ -372,7 +379,9 @@ heretix-api/
 │   │   ├── splunk-fetcher.ts        # Splunk advisory archive HTML fetch & parse
 │   │   ├── apache-fetcher.ts        # Apache HTTP Server (httpd) security page HTML fetch & parse
 │   │   ├── zabbix-fetcher.ts        # Zabbix security advisory search API fetch & parse
-│   │   └── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix, Vitest)
+│   │   ├── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix, Vitest)
+│   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData integration test (Vitest, requires TEST_DATABASE_URL)
+│   │   └── osv-fetcher.integration.test.ts       # importOSVData integration test — orphaned-master-row regression
 │   ├── config/
 │   │   ├── product-aliases.ts       # NVD CPE product name alias mappings
 │   │   └── product-aliases.test.ts  # Unit tests (Vitest)
@@ -389,9 +398,8 @@ heretix-api/
 ├── prisma/
 │   ├── schema.prisma                # Database schema
 │   └── migrations/                  # Migration files
-├── docs/
-│   └── erd.md                       # ER diagram (Mermaid)
-├── vitest.config.ts                 # Test configuration (Vitest)
+├── vitest.config.ts                 # Unit test configuration (Vitest, no DB)
+├── vitest.integration.config.ts     # Integration test configuration (Vitest, requires TEST_DATABASE_URL)
 ├── .env.example                     # Environment variable template
 ├── package.json
 └── tsconfig.json
@@ -486,6 +494,54 @@ Semantic versions are converted to integers for fast range queries:
 - Uses `criterion` comment text ("X is earlier than Y") to extract `versionEnd` (exclusive) per package
 - Per-variant feeds supported: `ol9`, `ol8`, `ol7`, etc.
 - RPM release numbers (e.g. `2.9.13-6.el9`) are handled by `normalizeVersion()` for accurate range queries
+
+### CPE mapping notes
+
+NVD describes affected products in CPE 2.3 format. This API uses the `<product>` field of `cpe:2.3:a:` (application) and `cpe:2.3:o:` (OS) entries as the package name, and infers the ecosystem from `<vendor>`. Hardware CPEs (`cpe:2.3:h:`) are excluded because their version is always `-`.
+
+CPEs come in two forms: version range fields (`versionStartIncluding`, etc.) and versions embedded directly in the URI. The latter (e.g., `cpe:2.3:a:vendor:product:3.0:*:*:*:*:*:*:*`) is stored as `introduced = lastAffected = 3.0`.
+
+Old-style CPEs encode version detail in the `<update>` field (parts[6]) rather than the version field. NVD range fields only reflect the base version, losing the qualifier. Two patterns are recovered automatically at import time:
+
+| Pattern | Example CPE update field | Stored as | Query format |
+|---|---|---|---|
+| `update_N` | `update21` | `1.5.0_21` | `version=1.5.0_21` |
+| `rcN` | `rc3` | `4.19.0-rc3` | `version=4.19.0-rc3` |
+
+The following patterns are **not** recovered (version range ordering breaks due to how `normalizeVersion` strips non-numeric characters):
+
+| Pattern | Affected products | Impact |
+|---|---|---|
+| `rN` / `rN-sN` | Juniper Junos (~63k entries) | Version ordering incorrect |
+| `spN` | Windows Server Service Pack (~23k entries) | Version ordering incorrect |
+| `pN` | FreeBSD/OpenBSD patches (~25k entries) | Treated as equivalent to `.N` patch release |
+
+| vendor | Inferred ecosystem |
+|---|---|
+| `python` / `pypi` | `PyPI` |
+| `nodejs` / `npm` | `npm` |
+| `redhat` / `almalinux` | `AlmaLinux` |
+| `golang` | `Go` |
+| `rubygems` | `RubyGems` |
+
+### NVD product name aliases
+
+NVD sometimes uses multiple CPE product names for the same software (e.g., after vendor acquisitions). `src/config/product-aliases.ts` maps search terms to all known CPE product names. Aliases are verified against actual `NVDAffectedPackage` counts in the database.
+
+| Search term | CPE product names searched | Reason |
+|---|---|---|
+| `nginx` | `nginx`, `nginx_open_source`, `nginx_open_source_subscription` | F5 acquisition renamed the product |
+| `java` / `jre` / `jdk` | `jre`, `jdk` | Sun/Oracle uses both names interchangeably |
+| `openjdk` | `openjdk` | Kept separate — old entries have unbounded wildcard ranges |
+| `acrobat` / `acrobat_reader` | `acrobat`, `acrobat_dc`, `acrobat_reader`, `acrobat_reader_dc` | Four product names across generations |
+| `opera` | `opera`, `opera_browser` | Two distinct product names in NVD |
+| `macos` / `mac_os_x` | `macos`, `mac_os_x` | Apple renamed macOS |
+| `joomla` | `joomla`, `joomla!` | Exclamation mark variant in older NVD entries |
+| `curl` | `curl`, `libcurl` | Both names used in NVD |
+| `tomcat` | `tomcat` | Version-specific names (tomcat7/8/9/10) absent from DB |
+| `postgres` | `postgresql` | Common abbreviation |
+| `spring` / `spring_framework` | `spring_framework` | NVD uses full name only |
+| `k8s` | `kubernetes` | Common abbreviation |
 
 ## Data Collection
 
@@ -747,39 +803,19 @@ Vendor advisory search also uses `versionStartInt` / `lastAffectedInt` (inclusiv
 
 ## Testing
 
-Unit tests run on [Vitest](https://vitest.dev/), covering the pure functions that directly gate detection accuracy — version comparison, ecosystem classification, and vendor advisory version-range parsers — all DB-independent so their behavior can be pinned down.
-
 ```bash
-pnpm test          # run all tests once
-pnpm test:watch    # watch mode
+pnpm test               # unit tests (no DB required)
+pnpm test:integration   # integration tests (requires TEST_DATABASE_URL — use a disposable DB, separate from your dev DB)
 ```
 
-**Coverage:**
+One-time setup for `TEST_DATABASE_URL`:
+```bash
+createdb heretix_test
+# add TEST_DATABASE_URL="postgresql://user:password@localhost:5432/heretix_test" to .env
+TEST_DATABASE_URL="postgresql://...heretix_test" pnpm exec prisma migrate deploy
+```
 
-| File | Covers |
-|---|---|
-| `src/utils/version.test.ts` | `normalizeVersion` (RPM release, epoch, Broadcom `U`-format, NVD `_update_N` format, etc.) |
-| `src/utils/rpm-version.test.ts` | `rpmvercmp`, `compareRpmVersions` |
-| `src/utils/cpe.test.ts` | `parseCPE` |
-| `src/utils/search-helpers.test.ts` | `dedup`, `versionRangeWhere`, `isDistroEcosystem`, `isLanguageEcosystem`, `rpmAdvisoryVendor`, `normalizeEcosystem` (search-time decision logic extracted from `vulnerabilities.ts`) |
-| `src/config/product-aliases.test.ts` | `expandProductAliases` (includes a regression test for the missing `http_server` alias that once dropped Apache's Recall to 27%) and `PRODUCT_ALIASES` data integrity (no duplicates, no empty arrays) |
-| `src/worker/apache-fetcher.test.ts` | `parseAffects` (`before X` / `through X` / `>=X,<=Y` / comma-separated lists, and other notations) |
-| `src/worker/splunk-fetcher.test.ts` | `parseAffectedVersion`, `buildAffectedProducts` |
-| `src/worker/zabbix-fetcher.test.ts` | `parseAffectsEntry`, `buildAffectedProducts` (ranges, exact versions, wildcard upper bounds) |
-| `src/worker/redhat-fetcher.test.ts` / `oracle-linux-fetcher.test.ts` | `parseCriterionComment`, `parseCveElement`, `mapSeverity`, etc. (shared OVAL v2 parsing) |
-
-Vendor advisory version-range parsers (the `parseAffects`-style functions) are prioritized because a single off-by-one in a regex there silently causes mass false negatives across CVEs. Since each vendor's HTML/JSON format differs, we deliberately avoid forcing a shared abstraction and test each fetcher's parser directly instead.
-
-### CI
-
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every `push` / `pull_request`:
-
-1. `pnpm install --frozen-lockfile`
-2. `pnpm prisma generate` (type generation only; no live DB connection required)
-3. `pnpm test`
-4. `pnpm build`
-
-The current tests exercise pure functions only — no code path that actually connects to the database is loaded at test time — so this runs without a Postgres service container. Adding DB-backed integration tests later will require extending the CI config.
+Both run on every `push`/`pull_request` via CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). See [SPEC.md](SPEC.md) for test coverage details and design rationale.
 
 ### Automatic scheduler
 
@@ -807,100 +843,6 @@ Job definitions (source key, label, cron, run logic) are centralized in `src/job
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
 
 Each OSV ecosystem runs as an independent job (`osv-{ecosystem}`) so its status, enable/disable toggle, and manual run appear separately in the dashboard. Jobs disabled via `JobConfig` are skipped at fire time (toggling takes effect immediately, without re-registering cron). Manual runs are also available via `POST /api/v1/jobs/:source/run` regardless of the enabled state.
-
-## Development & Deployment
-
-### Docker (recommended)
-
-```bash
-# Copy and edit environment variables
-cp .env.example .env
-
-# Start in foreground (recommended for first run — shows logs)
-API_KEY=your-api-key docker compose up --build
-
-# Start in background (detached mode)
-API_KEY=your-api-key docker compose up --build -d
-```
-
-The API will be available at `http://localhost:5000`.
-
-`docker compose down` to stop. Add `-v` to also remove the database volume.
-
-### Manual
-
-#### Build
-
-```bash
-pnpm build
-```
-
-#### Start production server
-
-```bash
-pnpm start
-```
-
-### Production environment variables
-
-```env
-DATABASE_URL="postgresql://user:password@host:5432/dbname?schema=public"
-PORT=5000
-NODE_ENV=production
-API_KEY=your-api-key-here   # Required. Requests without x-api-key header return 401
-NVD_API_KEY=                # Optional. Relaxes NVD rate limit from 10 → 50 req/min
-CISCO_CLIENT_ID=            # Required for Cisco PSIRT import (openVuln API client ID)
-CISCO_CLIENT_SECRET=        # Required for Cisco PSIRT import (openVuln API client secret)
-GITHUB_TOKEN=               # Optional. Authenticates the single GitHub tree API call used by MAL import/update. Only needed if running MAL commands more than 60 times/hr from the same IP.
-```
-
-### CPE mapping notes
-
-NVD describes affected products in CPE 2.3 format. This API uses the `<product>` field of `cpe:2.3:a:` (application) and `cpe:2.3:o:` (OS) entries as the package name, and infers the ecosystem from `<vendor>`. Hardware CPEs (`cpe:2.3:h:`) are excluded because their version is always `-`.
-
-CPEs come in two forms: version range fields (`versionStartIncluding`, etc.) and versions embedded directly in the URI. The latter (e.g., `cpe:2.3:a:vendor:product:3.0:*:*:*:*:*:*:*`) is stored as `introduced = lastAffected = 3.0`.
-
-Old-style CPEs encode version detail in the `<update>` field (parts[6]) rather than the version field. NVD range fields only reflect the base version, losing the qualifier. Two patterns are recovered automatically at import time:
-
-| Pattern | Example CPE update field | Stored as | Query format |
-|---|---|---|---|
-| `update_N` | `update21` | `1.5.0_21` | `version=1.5.0_21` |
-| `rcN` | `rc3` | `4.19.0-rc3` | `version=4.19.0-rc3` |
-
-The following patterns are **not** recovered (version range ordering breaks due to how `normalizeVersion` strips non-numeric characters):
-
-| Pattern | Affected products | Impact |
-|---|---|---|
-| `rN` / `rN-sN` | Juniper Junos (~63k entries) | Version ordering incorrect |
-| `spN` | Windows Server Service Pack (~23k entries) | Version ordering incorrect |
-| `pN` | FreeBSD/OpenBSD patches (~25k entries) | Treated as equivalent to `.N` patch release |
-
-| vendor | Inferred ecosystem |
-|---|---|
-| `python` / `pypi` | `PyPI` |
-| `nodejs` / `npm` | `npm` |
-| `redhat` / `almalinux` | `AlmaLinux` |
-| `golang` | `Go` |
-| `rubygems` | `RubyGems` |
-
-### NVD product name aliases
-
-NVD sometimes uses multiple CPE product names for the same software (e.g., after vendor acquisitions). `src/config/product-aliases.ts` maps search terms to all known CPE product names. Aliases are verified against actual `NVDAffectedPackage` counts in the database.
-
-| Search term | CPE product names searched | Reason |
-|---|---|---|
-| `nginx` | `nginx`, `nginx_open_source`, `nginx_open_source_subscription` | F5 acquisition renamed the product |
-| `java` / `jre` / `jdk` | `jre`, `jdk` | Sun/Oracle uses both names interchangeably |
-| `openjdk` | `openjdk` | Kept separate — old entries have unbounded wildcard ranges |
-| `acrobat` / `acrobat_reader` | `acrobat`, `acrobat_dc`, `acrobat_reader`, `acrobat_reader_dc` | Four product names across generations |
-| `opera` | `opera`, `opera_browser` | Two distinct product names in NVD |
-| `macos` / `mac_os_x` | `macos`, `mac_os_x` | Apple renamed macOS |
-| `joomla` | `joomla`, `joomla!` | Exclamation mark variant in older NVD entries |
-| `curl` | `curl`, `libcurl` | Both names used in NVD |
-| `tomcat` | `tomcat` | Version-specific names (tomcat7/8/9/10) absent from DB |
-| `postgres` | `postgresql` | Common abbreviation |
-| `spring` / `spring_framework` | `spring_framework` | NVD uses full name only |
-| `k8s` | `kubernetes` | Common abbreviation |
 
 ## Accuracy Validation
 

@@ -10,11 +10,11 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "start": "node dist/index.js",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
-    "db:erd": "prisma generate && echo \"ER diagram generated at docs/erd.md\"",
     "import:osv": "node dist/scripts/import-osv.js",
     "import:nvd": "node dist/scripts/import-nvd.js",
     "import:kev": "node dist/scripts/import-kev.js",
@@ -84,7 +84,6 @@
       "fast-uri": ">=3.1.2",
       "ip-address": ">=10.2.0",
       "ws": ">=8.20.1",
-      "mermaid": ">=11.15.0",
       "esbuild": ">=0.28.1",
       "js-yaml": ">=4.2.0",
       "form-data": ">=4.0.6"
@@ -97,12 +96,10 @@
     ]
   },
   "devDependencies": {
-    "@mermaid-js/mermaid-cli": "^11.12.0",
     "@types/adm-zip": "^0.5.7",
     "@types/node": "^25.0.8",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.16.0",
-    "prisma-erd-generator": "^2.4.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
