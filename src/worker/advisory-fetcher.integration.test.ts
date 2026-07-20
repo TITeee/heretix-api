@@ -104,4 +104,20 @@ describe('importAdvisoryData', () => {
     expect(masters).toHaveLength(1);
     expect(masters[0].severity).toBe('LOW');
   });
+
+  it('persists the raw lastAffected string, not just its normalized BigInt (regression: was silently dropped)', async () => {
+    const adv = makeAdvisory({
+      affectedProducts: [
+        { vendor: 'apache', product: 'tomcat', versionStart: '9.0.71', lastAffected: '9.0.73' },
+      ],
+    });
+    await importAdvisoryData(adv, 'advisory-tomcat');
+
+    const advisory = await prisma.advisoryVulnerability.findUnique({
+      where: { source_externalId: { source: 'advisory-tomcat', externalId: 'FG-IR-26-001' } },
+      include: { affectedProducts: true },
+    });
+    expect(advisory?.affectedProducts[0].lastAffected).toBe('9.0.73');
+    expect(advisory?.affectedProducts[0].lastAffectedInt).not.toBeNull();
+  });
 });

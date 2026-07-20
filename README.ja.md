@@ -4,7 +4,7 @@
 
 ## 特徴
 
-- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU / Oracle Linux / Red Hat / Broadcom/VMware / Splunk / Apache HTTP Server / Zabbix 等）に対応
+- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU / Oracle Linux / Red Hat / Broadcom/VMware / Splunk / Apache HTTP Server / Apache Tomcat / nginx / Zabbix 等）に対応
 - **マルウェア検知**: OSV の `MAL-YYYY-NNNN` エントリ（悪意あるパッケージ）を [ossf/malicious-packages](https://github.com/ossf/malicious-packages) からインポートし、脆弱性検索エンドポイントで検索可能
 - **重複排除**: `Vulnerability` マスターテーブルが CVE ID をキーにソース間の重複を吸収
 - **CPE エイリアス対応**: NVD の CPE product 名変更（ベンダー買収等）に追従する `src/config/product-aliases.ts` で検索精度を維持
@@ -380,6 +380,8 @@ heretix-api/
 │   │   ├── import-splunk.ts                 # Splunk セキュリティアドバイザリインポートCLI
 │   │   ├── import-apache.ts                 # Apache HTTP Server アドバイザリインポートCLI
 │   │   ├── import-zabbix.ts                 # Zabbix セキュリティアドバイザリインポートCLI
+│   │   ├── import-tomcat.ts                 # Apache Tomcat アドバイザリインポートCLI
+│   │   ├── import-nginx.ts                  # nginx アドバイザリインポートCLI
 │   │   ├── validate-tomcat.ts               # Tomcat 検索精度検証
 │   │   ├── validate-apache.ts               # Apache HTTPD 検索精度検証
 │   │   ├── validate-nginx.ts                # nginx 検索精度検証
@@ -404,7 +406,9 @@ heretix-api/
 │   │   ├── splunk-fetcher.ts       # Splunk セキュリティアドバイザリアーカイブHTML取得・パース
 │   │   ├── apache-fetcher.ts       # Apache HTTP Server (httpd) セキュリティページHTML取得・パース
 │   │   ├── zabbix-fetcher.ts       # Zabbix セキュリティアドバイザリ検索API取得・パース
-│   │   ├── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix, Vitest）
+│   │   ├── tomcat-fetcher.ts       # Apache Tomcat 複数ブランチページ取得・パース
+│   │   ├── nginx-fetcher.ts        # nginx セキュリティアドバイザリページ取得・パース
+│   │   ├── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx, Vitest）
 │   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData 結合テスト（Vitest、TEST_DATABASE_URL 必須）
 │   │   └── osv-fetcher.integration.test.ts       # importOSVData 結合テスト（孤立マスター行の回帰テスト）
 │   ├── config/
@@ -892,6 +896,30 @@ pnpm import:zabbix                    # 全件（Typesense 検索API経由でペ
 - CVE ID（Zabbix 独自の ZBV-YYYY-MM-DD-N と併記）・深刻度・CVSS スコア・影響/修正バージョンを抽出
 - レンジ表記（`6.0.0-6.0.44`）・単一バージョン・ワイルドカード上限（`4.4.4-4.4.*`）に対応、自由記述の古いエントリはベストエフォートでスキップ
 
+### Apache Tomcat
+
+Apache Tomcat のセキュリティアドバイザリを収集します。認証不要。
+
+```bash
+pnpm import:tomcat                    # 全メジャーブランチページを対象に全件取得
+```
+
+- tomcat.apache.org はメジャーバージョンブランチごとにページが分かれている（`security-8.html`, `security-9.html` 等）。既知のブランチページを全て取得し、存在しないページ（将来/廃止ブランチ）はスキップする
+- 同一 CVE が複数ブランチに異なるバージョン範囲で載っているケースが多いため、重複行に分割せず1つのアドバイザリに `affectedProducts` の複数要素としてマージする
+- CVE ID は見出し部分からのみ抽出し、本文中の CVE 言及（例:「CVE-YYYY の修正が不完全だった」）による誤マッチを防ぐ
+- `pnpm validate:tomcat` の検証対象と同一ソース
+
+### nginx
+
+nginx のセキュリティアドバイザリを収集します。認証不要。
+
+```bash
+pnpm import:nginx                     # 全件（nginx.org/en/security_advisories.html）
+```
+
+- 公式セキュリティアドバイザリページを解析。カンマ区切りの複数レンジ表記（例: `"0.6.18-1.25.2, 1.21.0-1.25.1"`）は1つのアドバイザリ内の複数 `affectedProducts` として扱う
+- `pnpm validate:nginx` の検証対象と同一ソース
+
 ### 新規ベンダーの追加方法
 
 `AdvisoryFetcher` インターフェースを実装するだけで新規ベンダーを追加できます:
@@ -988,6 +1016,8 @@ TEST_DATABASE_URL="postgresql://...heretix_test" pnpm exec prisma migrate deploy
 | Splunk アドバイザリ | 毎日 13:45 UTC |
 | Apache HTTP Server アドバイザリ | 毎日 14:00 UTC |
 | Zabbix アドバイザリ | 毎日 14:15 UTC |
+| Apache Tomcat アドバイザリ | 毎日 14:30 UTC |
+| nginx アドバイザリ | 毎日 14:45 UTC |
 | OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
 | MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
 
