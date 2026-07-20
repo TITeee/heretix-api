@@ -154,6 +154,7 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
           versionStart: prod.versionStart ?? null,
           versionEnd: prod.versionEnd ?? null,
           versionFixed: prod.versionFixed ?? null,
+          lastAffected: prod.lastAffected ?? null,
           versionStartInt,
           versionEndInt,
           lastAffectedInt,

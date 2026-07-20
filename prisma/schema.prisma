@@ -258,6 +258,7 @@ model AdvisoryAffectedProduct {
   versionStart  String?               // 影響開始バージョン（inclusive）
   versionEnd    String?               // 影響終了バージョン（exclusive）
   versionFixed  String?               // 修正済みバージョン
+  lastAffected  String?               // 影響終了バージョン（inclusive、versionEnd がない場合用）
 
   // 数値化されたバージョン（semver 互換の場合のみ、高速検索用）
   versionStartInt BigInt?
