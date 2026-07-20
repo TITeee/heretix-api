@@ -6,7 +6,7 @@ A simple, high-performance vulnerability management API backed by PostgreSQL. It
 
 ## Features
 
-- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Zabbix, and more)
+- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, and more)
 - **Malware detection**: OSV `MAL-YYYY-NNNN` entries (malicious packages) are imported from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) and searchable via the same vulnerability search endpoint
 - **Deduplication**: A `Vulnerability` master table uses CVE ID as the primary key to merge duplicate entries across sources
 - **CPE alias support**: `src/config/product-aliases.ts` tracks CPE product name changes (e.g., post-acquisition renames) so search accuracy stays high
@@ -377,6 +377,8 @@ heretix-api/
 │   │   ├── import-splunk.ts         # Splunk security advisory import CLI
 │   │   ├── import-apache.ts         # Apache HTTP Server advisory import CLI
 │   │   ├── import-zabbix.ts         # Zabbix security advisory import CLI
+│   │   ├── import-tomcat.ts         # Apache Tomcat advisory import CLI
+│   │   ├── import-nginx.ts          # nginx advisory import CLI
 │   │   ├── validate-tomcat.ts       # Tomcat search accuracy validator
 │   │   ├── validate-apache.ts       # Apache HTTPD search accuracy validator
 │   │   ├── validate-nginx.ts        # nginx search accuracy validator
@@ -401,7 +403,9 @@ heretix-api/
 │   │   ├── splunk-fetcher.ts        # Splunk advisory archive HTML fetch & parse
 │   │   ├── apache-fetcher.ts        # Apache HTTP Server (httpd) security page HTML fetch & parse
 │   │   ├── zabbix-fetcher.ts        # Zabbix security advisory search API fetch & parse
-│   │   ├── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix, Vitest)
+│   │   ├── tomcat-fetcher.ts        # Apache Tomcat multi-branch security page fetch & parse
+│   │   ├── nginx-fetcher.ts         # nginx security advisories page fetch & parse
+│   │   ├── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx, Vitest)
 │   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData integration test (Vitest, requires TEST_DATABASE_URL)
 │   │   └── osv-fetcher.integration.test.ts       # importOSVData integration test — orphaned-master-row regression
 │   ├── config/
@@ -765,6 +769,30 @@ pnpm import:zabbix                    # All advisories (paginated via Typesense 
 - Extracts CVE ID (alongside Zabbix's own ZBV-YYYY-MM-DD-N identifier), severity, CVSS score, and affected/fixed versions
 - Handles range notation (`6.0.0-6.0.44`), single exact versions, and wildcard upper bounds (`4.4.4-4.4.*`); free-text legacy entries are skipped best-effort
 
+### Apache Tomcat
+
+Apache Tomcat security advisories. No authentication required.
+
+```bash
+pnpm import:tomcat                    # All advisories across all major branch pages
+```
+
+- tomcat.apache.org publishes one security page per major version branch (`security-8.html`, `security-9.html`, ...); fetches all known branch pages and skips ones that don't exist (future/retired branches)
+- The same CVE often affects multiple branches with different version ranges — these are merged into a single advisory with one `affectedProducts` entry per branch, rather than being split across duplicate rows
+- CVE IDs are extracted from the advisory heading only, to avoid false matches from CVE mentions in description text (e.g. "the fix for CVE-YYYY was incomplete")
+- Same source used by `pnpm validate:tomcat` for accuracy validation
+
+### nginx
+
+nginx security advisories. No authentication required.
+
+```bash
+pnpm import:nginx                     # All advisories (nginx.org/en/security_advisories.html)
+```
+
+- Parses the official security advisories page; handles comma-separated multi-range notation (e.g. `"0.6.18-1.25.2, 1.21.0-1.25.1"`) as separate `affectedProducts` entries under one advisory
+- Same source used by `pnpm validate:nginx` for accuracy validation
+
 ### Adding a new vendor
 
 Implement the `AdvisoryFetcher` interface:
@@ -861,6 +889,8 @@ Job definitions (source key, label, cron, run logic) are centralized in `src/job
 | Splunk advisory | Daily at 13:45 UTC |
 | Apache HTTP Server advisory | Daily at 14:00 UTC |
 | Zabbix advisory | Daily at 14:15 UTC |
+| Apache Tomcat advisory | Daily at 14:30 UTC |
+| nginx advisory | Daily at 14:45 UTC |
 | OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
 

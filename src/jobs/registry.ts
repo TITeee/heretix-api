@@ -26,6 +26,8 @@ import { RedHatFetcher } from '../worker/redhat-fetcher.js';
 import { SplunkFetcher } from '../worker/splunk-fetcher.js';
 import { ApacheFetcher } from '../worker/apache-fetcher.js';
 import { ZabbixFetcher } from '../worker/zabbix-fetcher.js';
+import { TomcatFetcher } from '../worker/tomcat-fetcher.js';
+import { NginxFetcher } from '../worker/nginx-fetcher.js';
 import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
 
@@ -86,6 +88,8 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-splunk',       label: 'Splunk',           cron: '45 13 * * *', run: () => runAdvisory('advisory-splunk', new SplunkFetcher()) },
   { source: 'advisory-apache',       label: 'Apache HTTP Server', cron: '0 14 * * *', run: () => runAdvisory('advisory-apache', new ApacheFetcher()) },
   { source: 'advisory-zabbix',       label: 'Zabbix',             cron: '15 14 * * *', run: () => runAdvisory('advisory-zabbix', new ZabbixFetcher()) },
+  { source: 'advisory-tomcat',       label: 'Tomcat',             cron: '30 14 * * *', run: () => runAdvisory('advisory-tomcat', new TomcatFetcher()) },
+  { source: 'advisory-nginx',        label: 'Nginx',              cron: '45 14 * * *', run: () => runAdvisory('advisory-nginx', new NginxFetcher()) },
   {
     source: 'osv-mal',
     label: 'OSV / Malware',

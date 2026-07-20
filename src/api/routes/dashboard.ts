@@ -25,6 +25,8 @@ const ADVISORY_SOURCE_MAP: Record<string, string> = {
   'advisory-splunk':     'advisory-splunk',
   'advisory-apache':     'advisory-apache',
   'advisory-zabbix':     'advisory-zabbix',
+  'advisory-tomcat':     'advisory-tomcat',
+  'advisory-nginx':      'advisory-nginx',
 };
 
 export default async function dashboardRoute(fastify: FastifyInstance) {
@@ -105,7 +107,9 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
     // Main sources: driven by the registry so every job has a row (even if it
     // has never run). OSV per-ecosystem entries and Malware are shown separately.
-    const sources = STATIC_JOBS
+    // Split into core sources (NVD/KEV/EPSS) and vendor advisories so the
+    // dashboard can render them as two distinct tables.
+    const allSources = STATIC_JOBS
       .filter((def) => !isOsvEcosystemSource(def.source))
       .map((def) => {
         const j = latestBySource.get(def.source);
@@ -124,8 +128,12 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         };
       });
 
+    const coreSources = allSources.filter((s) => !s.source.startsWith('advisory-'));
+    const advisorySources = allSources.filter((s) => s.source.startsWith('advisory-'));
+
     return {
-      sources,
+      coreSources,
+      advisorySources,
       osvEcosystems,
       recordCounts: { nvd: nvdCount, osv: osvCount, kev: kevCount, advisories: advisoryCount },
     };
@@ -206,10 +214,11 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-pulse h-24"></div>
     </div>
 
-    <!-- Import Status Table -->
+    <!-- Core Sources Table -->
     <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl mb-8 overflow-hidden">
       <div class="px-4 py-4 border-b border-[var(--border)]">
-        <h2 class="text-lg font-semibold text-[var(--card-foreground)]">Import Status</h2>
+        <h2 class="text-lg font-semibold text-[var(--card-foreground)]">Core Sources</h2>
+        <p class="text-[var(--muted-foreground)] text-xs mt-0.5">NVD, CISA KEV, and FIRST.org EPSS</p>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
@@ -225,7 +234,34 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
               <th class="px-4 py-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
-          <tbody id="sources-tbody">
+          <tbody id="core-tbody">
+            <tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Vendor Advisories Table -->
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl mb-8 overflow-hidden">
+      <div class="px-4 py-4 border-b border-[var(--border)]">
+        <h2 class="text-lg font-semibold text-[var(--card-foreground)]">Vendor Advisories</h2>
+        <p class="text-[var(--muted-foreground)] text-xs mt-0.5">Per-vendor advisory feed import status</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
+              <th class="px-4 py-3 font-medium">Vendor</th>
+              <th class="px-4 py-3 font-medium">Status</th>
+              <th class="px-4 py-3 font-medium">Last Completed</th>
+              <th class="px-4 py-3 font-medium text-right">Records</th>
+              <th class="px-4 py-3 font-medium text-right">Inserted</th>
+              <th class="px-4 py-3 font-medium text-right">Updated</th>
+              <th class="px-4 py-3 font-medium">Error</th>
+              <th class="px-4 py-3 font-medium text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="advisory-tbody">
             <tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
           </tbody>
         </table>
@@ -395,45 +431,28 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       ).join('');
     }
 
-    function renderSources(sources) {
-      if (!sources.length) {
-        document.getElementById('sources-tbody').innerHTML =
-          '<tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No import jobs found.</td></tr>';
+    // Shared renderer for the three status tables (Core Sources, Vendor
+    // Advisories, OSV Ecosystems) — all share the same 8-column layout.
+    function renderTable(tbodyId, rows, getName, options) {
+      options = options || {};
+      const tbody = document.getElementById(tbodyId);
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">' +
+          (options.emptyMessage || 'No data found.') + '</td></tr>';
         return;
       }
-      const sorted = [...sources].sort((a, b) => a.label.localeCompare(b.label));
-      document.getElementById('sources-tbody').innerHTML = sorted.map(s =>
+      const ordered = options.sort ? [...rows].sort((a, b) => getName(a).localeCompare(getName(b))) : rows;
+      tbody.innerHTML = ordered.map(r =>
         '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors' +
-          (s.enabled === false ? ' opacity-50' : '') + '">' +
-          '<td class="px-4 py-4 font-medium text-[var(--foreground)]">' + s.label + '</td>' +
-          '<td class="px-4 py-4">' + statusBadge(s.status) + '</td>' +
-          '<td class="px-4 py-4 text-[var(--muted-foreground)]">' + relativeTime(s.completedAt) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.recordCount) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalInserted) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(s.totalUpdated) + '</td>' +
-          '<td class="px-4 py-4">' + errorCell(s.errorMessage) + '</td>' +
-          '<td class="px-4 py-4">' + actionCell(s) + '</td>' +
-        '</tr>'
-      ).join('');
-    }
-
-    function renderOsvEcosystems(ecosystems) {
-      if (!ecosystems.length) {
-        document.getElementById('osv-tbody').innerHTML =
-          '<tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">No OSV ecosystems imported yet.</td></tr>';
-        return;
-      }
-      document.getElementById('osv-tbody').innerHTML = ecosystems.map(e =>
-        '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors' +
-          (e.enabled === false ? ' opacity-50' : '') + '">' +
-          '<td class="px-4 py-4 font-medium text-[var(--foreground)]">' + e.ecosystem + '</td>' +
-          '<td class="px-4 py-4">' + statusBadge(e.status) + '</td>' +
-          '<td class="px-4 py-4 text-[var(--muted-foreground)]">' + relativeTime(e.completedAt) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.recordCount) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.totalInserted) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(e.totalUpdated) + '</td>' +
-          '<td class="px-4 py-4">' + errorCell(e.errorMessage) + '</td>' +
-          '<td class="px-4 py-4">' + actionCell(e) + '</td>' +
+          (r.enabled === false ? ' opacity-50' : '') + '">' +
+          '<td class="px-4 py-4 font-medium text-[var(--foreground)]">' + getName(r) + '</td>' +
+          '<td class="px-4 py-4">' + statusBadge(r.status) + '</td>' +
+          '<td class="px-4 py-4 text-[var(--muted-foreground)]">' + relativeTime(r.completedAt) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(r.recordCount) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(r.totalInserted) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(r.totalUpdated) + '</td>' +
+          '<td class="px-4 py-4">' + errorCell(r.errorMessage) + '</td>' +
+          '<td class="px-4 py-4">' + actionCell(r) + '</td>' +
         '</tr>'
       ).join('');
     }
@@ -444,13 +463,15 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         renderCards(data.recordCounts);
-        renderSources(data.sources);
-        renderOsvEcosystems(data.osvEcosystems);
+        renderTable('core-tbody', data.coreSources, s => s.label, { sort: true, emptyMessage: 'No import jobs found.' });
+        renderTable('advisory-tbody', data.advisorySources, s => s.label, { sort: true, emptyMessage: 'No vendor advisories found.' });
+        renderTable('osv-tbody', data.osvEcosystems, e => e.ecosystem, { emptyMessage: 'No OSV ecosystems imported yet.' });
         document.getElementById('last-updated').textContent =
           'Updated ' + new Date().toLocaleTimeString();
       } catch (err) {
         const msg = '<tr><td colspan="8" class="px-6 py-8 text-center text-[var(--destructive)]">Failed to load: ' + err.message + '</td></tr>';
-        document.getElementById('sources-tbody').innerHTML = msg;
+        document.getElementById('core-tbody').innerHTML = msg;
+        document.getElementById('advisory-tbody').innerHTML = msg;
         document.getElementById('osv-tbody').innerHTML = msg;
       }
     }

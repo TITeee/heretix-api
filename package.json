@@ -31,6 +31,8 @@
     "import:splunk": "node dist/scripts/import-splunk.js",
     "import:apache": "node dist/scripts/import-apache.js",
     "import:zabbix": "node dist/scripts/import-zabbix.js",
+    "import:tomcat": "node dist/scripts/import-tomcat.js",
+    "import:nginx": "node dist/scripts/import-nginx.js",
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
