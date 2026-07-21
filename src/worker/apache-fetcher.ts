@@ -68,14 +68,14 @@ export function parseAffects(raw: string): AffectsSpec | null {
   return null;
 }
 
-interface AdvisoryBlock {
+export interface AdvisoryBlock {
   cveId: string;
   severity: string;
   title: string;
   block: string;
 }
 
-function findAdvisoryBlocks(html: string): AdvisoryBlock[] {
+export function findAdvisoryBlocks(html: string): AdvisoryBlock[] {
   const headingRe = /<dt><h3 id="(CVE-\d{4}-\d+)">([a-z/]+): <name[^>]*>([^<]*)<\/name>/g;
   const hits: { index: number; cveId: string; severity: string; title: string }[] = [];
   let m: RegExpExecArray | null;

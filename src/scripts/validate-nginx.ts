@@ -11,6 +11,9 @@
 import 'dotenv/config';
 import axios from 'axios';
 import { normalizeVersion } from '../utils/version.js';
+import { bumpPatch, aggregateSweep, printSweepReport, filterBySource, type SweepEntry } from './lib/accuracy-sweep.js';
+
+const TARGET_SOURCE = 'advisory-nginx';
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
 
@@ -49,11 +52,13 @@ interface ComparisonResult {
 
 // ─── Argument Parsing ─────────────────────────────────────────────────────────
 
-function parseArgs(): string {
+function parseArgs(): string | null {
   const [, , version] = process.argv;
-  if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
-    console.error('Usage: pnpm validate:nginx <version>');
+  if (!version) return null; // sweep mode: derive boundary versions from every advisory
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    console.error('Usage: pnpm validate:nginx [version]');
     console.error('Example: pnpm validate:nginx 1.24.0');
+    console.error('(omit the version to run a boundary-value sweep across every advisory)');
     process.exit(1);
   }
   return version;
@@ -338,6 +343,55 @@ function printReport(
   console.log('');
 }
 
+// ─── Boundary-Value Sweep ──────────────────────────────────────────────────────
+
+/** For every advisory range, derive the introduced/lastAffected edges and one patch past lastAffected. */
+function collectBoundaryVersions(advisories: NginxAdvisory[]): Map<string, string[]> {
+  const points = new Map<string, string[]>();
+  const add = (version: string, reason: string) => {
+    const list = points.get(version) ?? [];
+    list.push(reason);
+    points.set(version, list);
+  };
+
+  for (const adv of advisories) {
+    for (const range of adv.ranges) {
+      add(range.introduced, `${adv.cveId}: introduced (expect affected)`);
+      if (range.lastAffected !== null) {
+        add(range.lastAffected, `${adv.cveId}: lastAffected exact (expect affected)`);
+        const after = bumpPatch(range.lastAffected, 1);
+        if (after) add(after, `${adv.cveId}: lastAffected+1 (expect NOT affected)`);
+      }
+    }
+  }
+
+  return points;
+}
+
+async function runSweep(baseUrl: string, advisories: NginxAdvisory[]): Promise<void> {
+  const points = collectBoundaryVersions(advisories);
+  console.log(`Sweeping ${points.size} boundary versions derived from ${advisories.length} advisory entries...`);
+
+  const entries: SweepEntry[] = [];
+  for (const [version, reasons] of points) {
+    const expected = filterExpectedCVEs(version, advisories);
+    const { allResults } = await queryLocalAPI(baseUrl, version);
+    const actual = filterBySource(allResults, TARGET_SOURCE);
+    const result = compareResults(expected, actual, version, []);
+    entries.push({
+      version,
+      reasons,
+      tp: result.truePositives.length,
+      fp: result.falsePositives.length,
+      fn: result.falseNegatives.length,
+      fpDetail: result.falsePositives,
+      fnDetail: result.falseNegatives,
+    });
+  }
+
+  printSweepReport('nginx', entries, aggregateSweep(entries));
+}
+
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 async function main() {
@@ -348,6 +402,11 @@ async function main() {
   const html = await fetchNginxAdvisoryPage();
   const advisories = parseNginxAdvisories(html);
   console.log(`Parsed ${advisories.length} advisory entries from nginx.org`);
+
+  if (version === null) {
+    await runSweep(baseUrl, advisories);
+    return;
+  }
 
   const groundTruthCVEs = filterExpectedCVEs(version, advisories);
   console.log(`Ground truth for nginx ${version}: ${groundTruthCVEs.size} CVEs should match`);

@@ -134,11 +134,35 @@ export class NginxFetcher implements AdvisoryFetcher {
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching nginx security advisories');
-    const { data: html } = await axios.get<string>(PAGE_URL, {
-      timeout: 30000,
-      headers: { 'User-Agent': 'heretix-api/1.0' },
-      responseType: 'text',
-    });
+
+    const maxRetries = 3;
+    let html: string | undefined;
+    let lastErr: unknown;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const { data } = await axios.get<string>(PAGE_URL, {
+          timeout: 30000,
+          headers: { 'User-Agent': 'heretix-api/1.0' },
+          responseType: 'text',
+          // nginx.org's IPv6 endpoint is unreachable from some networks, which makes
+          // Node's dual-stack (Happy Eyeballs) connection attempt fail fast with
+          // ETIMEDOUT even though the IPv4 path works fine. Force IPv4 to avoid it.
+          family: 4,
+        });
+        html = data;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxRetries) {
+          const wait = 3000 * attempt;
+          logger.warn({ attempt, wait }, 'nginx advisory fetch failed, retrying');
+          await new Promise(r => setTimeout(r, wait));
+        }
+      }
+    }
+
+    if (html === undefined) throw lastErr;
 
     const entries = parseNginxPage(html);
     const results = groupByAdvisory(entries);
