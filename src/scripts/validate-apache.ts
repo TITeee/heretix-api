@@ -12,13 +12,20 @@
 import 'dotenv/config';
 import axios from 'axios';
 import { normalizeVersion } from '../utils/version.js';
+import { bumpPatch, aggregateSweep, printSweepReport, filterBySource, type SweepEntry } from './lib/accuracy-sweep.js';
+import { parseAffects, findAdvisoryBlocks, type AffectsSpec } from '../worker/apache-fetcher.js';
+
+const TARGET_SOURCE = 'advisory-apache';
+// apache-fetcher.ts only tracks the 2.4 branch page; sweep mode mirrors that.
+const SWEEP_VERSION = '2.4.0';
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
 
 interface VulnerableRange {
   introduced: string | null;  // null = all versions (no lower bound)
   fixed: string | null;       // exclusive upper bound ("before X")
-  lastAffected: string | null; // inclusive upper bound ("through X")
+  lastAffected: string | null; // inclusive upper bound ("through X" or "<=X")
+  exact: string[] | null;      // exact version list (comma-separated notation), mutually exclusive with the above
 }
 
 interface ApacheAdvisory {
@@ -49,11 +56,13 @@ interface ComparisonResult {
 
 // ─── Argument Parsing ─────────────────────────────────────────────────────────
 
-function parseArgs(): string {
+function parseArgs(): string | null {
   const [, , version] = process.argv;
-  if (!version || !/^\d+\.\d+\.\d+/.test(version)) {
-    console.error('Usage: pnpm validate:apache <version>');
+  if (!version) return null; // sweep mode: derive boundary versions from every advisory
+  if (!/^\d+\.\d+\.\d+/.test(version)) {
+    console.error('Usage: pnpm validate:apache [version]');
     console.error('Example: pnpm validate:apache 2.4.62');
+    console.error('(omit the version to run a boundary-value sweep across every advisory)');
     process.exit(1);
   }
   return version;
@@ -78,86 +87,33 @@ async function fetchApacheAdvisoryPage(version: string): Promise<string> {
 }
 
 /**
- * Parse the text of an "Affects" section into VulnerableRange[].
- *
- * Apache httpd advisory notation examples:
- *   "2.4.30 before 2.4.66"      → { introduced:"2.4.30", fixed:"2.4.66" }       ← exclusive
- *   "from 2.4.30 before 2.4.66" → same as above
- *   "2.4.0 through 2.4.63"      → { introduced:"2.4.0", lastAffected:"2.4.63" } ← inclusive
- *   "before 2.4.66"             → { introduced:null, fixed:"2.4.66" }           ← no lower bound
+ * Convert apache-fetcher.ts's AffectsSpec into this script's VulnerableRange shape.
+ * The parsing itself (parseAffects, findAdvisoryBlocks) is imported directly from
+ * apache-fetcher.ts rather than reimplemented here — httpd.apache.org's notation is
+ * varied enough (before/through/>=/<=/exact-list, HTML-entity-encoded comparisons)
+ * that a second, independently maintained parser reliably drifts from the real one,
+ * which silently corrupts the ground truth instead of testing anything useful.
  */
-function parseAffectsText(raw: string): VulnerableRange[] {
-  const text = raw.trim();
-
-  // "X.Y.Z before A.B.C" or "from X.Y.Z before A.B.C"
-  const beforeMatch = text.match(/(?:from\s+)?([\d.]+)\s+before\s+([\d.]+)/i);
-  if (beforeMatch) {
-    return [{ introduced: beforeMatch[1], fixed: beforeMatch[2], lastAffected: null }];
-  }
-
-  // "X.Y.Z through A.B.C"
-  const throughMatch = text.match(/([\d.]+)\s+through\s+([\d.]+)/i);
-  if (throughMatch) {
-    return [{ introduced: throughMatch[1], fixed: null, lastAffected: throughMatch[2] }];
-  }
-
-  // "before A.B.C" (no lower bound)
-  const onlyBeforeMatch = text.match(/^before\s+([\d.]+)/i);
-  if (onlyBeforeMatch) {
-    return [{ introduced: null, fixed: onlyBeforeMatch[1], lastAffected: null }];
-  }
-
-  return [];
+function toRange(spec: AffectsSpec): VulnerableRange {
+  return {
+    introduced: spec.versionStart ?? null,
+    fixed: spec.versionEnd ?? null,
+    lastAffected: spec.lastAffected ?? null,
+    exact: spec.affectedVersions ?? null,
+  };
 }
 
-/**
- * Parse ApacheAdvisory[] from the HTML of httpd.apache.org.
- *
- * Each advisory contains exactly one "Affects" text.
- * The segment between consecutive "Affects" occurrences is treated as one advisory block.
- *
- * CVE IDs are extracted from <h3> heading lines only.
- * References to other CVEs in description text (e.g., "This was described as CVE-XXXX but...")
- * appear inside <p> tags and are excluded by restricting extraction to headings.
- */
+/** Parse ApacheAdvisory[] from the HTML of httpd.apache.org using the production block/Affects parser. */
 function parseApacheAdvisories(html: string): ApacheAdvisory[] {
-  // Collect all occurrences of "Affects" (including <dt>Affects</dt> etc.)
-  const affectsRegex = /Affects(?:<[^>]+>|\s)+([\d.][^<\n]*)/gi;
-  const hits: Array<{ index: number; text: string }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = affectsRegex.exec(html)) !== null) {
-    hits.push({ index: m.index, text: m[1].trim() });
-  }
-
   const advisories: ApacheAdvisory[] = [];
 
-  for (let i = 0; i < hits.length; i++) {
-    const { index, text } = hits[i];
-    const ranges = parseAffectsText(text);
-    if (ranges.length === 0) continue;
+  for (const b of findAdvisoryBlocks(html)) {
+    const affectsMatch = b.block.match(/<tr><td class="cve-header">Affects<\/td><td class="cve-value">([^<]*)<\/td><\/tr>/);
+    if (!affectsMatch) continue;
+    const spec = parseAffects(affectsMatch[1]);
+    if (!spec) continue;
 
-    // The segment from the previous Affects to the current one is one advisory block
-    const prevIndex = i > 0 ? hits[i - 1].index : 0;
-    const segment = html.slice(prevIndex, index);
-
-    // Extract CVE IDs from <h3> heading lines only
-    // (prevents incorrectly associating references to other CVEs that appear in description text)
-    const headingCVEs: string[] = [];
-    for (const hm of segment.matchAll(/<h3[^>]*>[\s\S]*?<\/h3>/gi)) {
-      for (const cm of hm[0].matchAll(/CVE-\d{4}-\d+/g)) {
-        headingCVEs.push(cm[0]);
-      }
-    }
-    if (headingCVEs.length === 0) continue;
-
-    // Severity is embedded in the leading text of <h3> (critical / important / moderate / low)
-    const headingText = segment.match(/<h3[^>]*>([\s\S]*?)<\/h3>/i)?.[1] ?? '';
-    const sevMatch = headingText.match(/\b(critical|important|moderate|low)\b/i);
-    const severity = sevMatch ? sevMatch[1].toLowerCase() : 'unknown';
-
-    for (const cveId of headingCVEs) {
-      advisories.push({ cveId, severity, ranges });
-    }
+    advisories.push({ cveId: b.cveId, severity: b.severity.toLowerCase(), ranges: [toRange(spec)] });
   }
 
   return advisories;
@@ -182,6 +138,16 @@ function filterExpectedCVEs(version: string, advisories: ApacheAdvisory[]): Set<
 
   for (const adv of advisories) {
     for (const range of adv.ranges) {
+      // Exact version list: matches the search endpoint's affectedVersions.has(version)
+      // (exact string equality, no range comparison at all).
+      if (range.exact !== null) {
+        if (range.exact.includes(version)) {
+          result.add(adv.cveId);
+          break;
+        }
+        continue;
+      }
+
       // Lower-bound check (introduced === null means no lower bound)
       if (range.introduced !== null) {
         const introducedInt = normalizeVersion(range.introduced);
@@ -325,6 +291,7 @@ function printReport(
       const sevStr = adv ? `[severity: ${adv.severity}]` : '';
       const rangeStr = adv
         ? adv.ranges.map(r => {
+            if (r.exact)        return `exact: [${r.exact.join(', ')}]`;
             if (r.fixed)        return `${r.introduced ?? '*'} before ${r.fixed}`;
             if (r.lastAffected) return `${r.introduced ?? '*'} through ${r.lastAffected}`;
             return r.introduced ?? '*';
@@ -347,12 +314,88 @@ function printReport(
   console.log('');
 }
 
+// ─── Boundary-Value Sweep ──────────────────────────────────────────────────────
+
+/**
+ * For every advisory range, derive the introduced/fixed/lastAffected edges.
+ * `introduced === null` (no lower bound) and `fixed === null` with no `lastAffected`
+ * (no upper bound at all) ranges contribute no boundary points on that side.
+ */
+function collectBoundaryVersions(advisories: ApacheAdvisory[]): Map<string, string[]> {
+  const points = new Map<string, string[]>();
+  const add = (version: string, reason: string) => {
+    const list = points.get(version) ?? [];
+    list.push(reason);
+    points.set(version, list);
+  };
+
+  for (const adv of advisories) {
+    for (const range of adv.ranges) {
+      if (range.exact !== null) {
+        for (const v of range.exact) {
+          add(v, `${adv.cveId}: exact-list entry (expect affected)`);
+        }
+        continue;
+      }
+      if (range.introduced !== null) {
+        add(range.introduced, `${adv.cveId}: introduced (expect affected)`);
+      }
+      if (range.fixed !== null) {
+        add(range.fixed, `${adv.cveId}: fixed exact (expect NOT affected)`);
+        const before = bumpPatch(range.fixed, -1);
+        if (before) add(before, `${adv.cveId}: fixed-1 (expect affected)`);
+      }
+      if (range.lastAffected !== null) {
+        add(range.lastAffected, `${adv.cveId}: lastAffected exact (expect affected)`);
+        const after = bumpPatch(range.lastAffected, 1);
+        if (after) add(after, `${adv.cveId}: lastAffected+1 (expect NOT affected)`);
+      }
+    }
+  }
+
+  return points;
+}
+
+async function runSweep(baseUrl: string, advisories: ApacheAdvisory[]): Promise<void> {
+  const points = collectBoundaryVersions(advisories);
+  console.log(`Sweeping ${points.size} boundary versions derived from ${advisories.length} advisory entries...`);
+
+  const entries: SweepEntry[] = [];
+  for (const [version, reasons] of points) {
+    const expected = filterExpectedCVEs(version, advisories);
+    const { allResults } = await queryLocalAPI(baseUrl, version);
+    const actual = filterBySource(allResults, TARGET_SOURCE);
+    const result = compareResults(expected, actual, version, []);
+    entries.push({
+      version,
+      reasons,
+      tp: result.truePositives.length,
+      fp: result.falsePositives.length,
+      fn: result.falseNegatives.length,
+      fpDetail: result.falsePositives,
+      fnDetail: result.falseNegatives,
+    });
+  }
+
+  printSweepReport('apache httpd', entries, aggregateSweep(entries));
+}
+
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 async function main() {
   const version = parseArgs();
   const baseUrl = process.env.API_BASE_URL ?? 'http://localhost:5000';
-  const branch  = version.split('.').slice(0, 2).join('.');
+
+  if (version === null) {
+    console.log(`Fetching httpd.apache.org/security/vulnerabilities_24.html...`);
+    const html = await fetchApacheAdvisoryPage(SWEEP_VERSION);
+    const advisories = parseApacheAdvisories(html);
+    console.log(`Parsed ${advisories.length} advisory entries from httpd.apache.org`);
+    await runSweep(baseUrl, advisories);
+    return;
+  }
+
+  const branch = version.split('.').slice(0, 2).join('.');
 
   console.log(`Fetching httpd.apache.org/security/vulnerabilities_${branch.replace('.', '')}.html...`);
   const html = await fetchApacheAdvisoryPage(version);

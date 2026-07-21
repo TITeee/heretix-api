@@ -14,6 +14,11 @@
 import 'dotenv/config';
 import axios from 'axios';
 import { normalizeVersion } from '../utils/version.js';
+import { bumpPatch, aggregateSweep, printSweepReport, filterBySource, type SweepEntry } from './lib/accuracy-sweep.js';
+
+const TARGET_SOURCE = 'advisory-tomcat';
+// Mirrors CANDIDATE_MAJORS in src/worker/tomcat-fetcher.ts
+const CANDIDATE_MAJORS = [8, 9, 10, 11, 12];
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
 
@@ -50,11 +55,13 @@ interface ComparisonResult {
 
 // ─── Argument Parsing ─────────────────────────────────────────────────────────
 
-function parseArgs(): string {
+function parseArgs(): string | null {
   const [, , version] = process.argv;
-  if (!version || !/^\d+\.\d+\.\d+/.test(version)) {
-    console.error('Usage: pnpm validate:tomcat <version>');
+  if (!version) return null; // sweep mode: derive boundary versions from every major branch's advisories
+  if (!/^\d+\.\d+\.\d+/.test(version)) {
+    console.error('Usage: pnpm validate:tomcat [version]');
     console.error('Example: pnpm validate:tomcat 9.0.100');
+    console.error('(omit the version to run a boundary-value sweep across every branch\'s advisories)');
     process.exit(1);
   }
   return version;
@@ -316,11 +323,81 @@ function printReport(
   console.log('');
 }
 
+// ─── Boundary-Value Sweep ──────────────────────────────────────────────────────
+
+/** For every advisory range (across every major branch page), derive the introduced/lastAffected edges. */
+function collectBoundaryVersions(advisories: TomcatAdvisory[]): Map<string, string[]> {
+  const points = new Map<string, string[]>();
+  const add = (version: string, reason: string) => {
+    const list = points.get(version) ?? [];
+    list.push(reason);
+    points.set(version, list);
+  };
+
+  for (const adv of advisories) {
+    for (const range of adv.ranges) {
+      add(range.introduced, `${adv.cveId}: introduced (expect affected)`);
+      add(range.lastAffected, `${adv.cveId}: lastAffected exact (expect affected)`);
+      const after = bumpPatch(range.lastAffected, 1);
+      if (after) add(after, `${adv.cveId}: lastAffected+1 (expect NOT affected)`);
+    }
+  }
+
+  return points;
+}
+
+async function runSweep(baseUrl: string, advisories: TomcatAdvisory[]): Promise<void> {
+  const points = collectBoundaryVersions(advisories);
+  console.log(`Sweeping ${points.size} boundary versions derived from ${advisories.length} advisory entries...`);
+
+  const entries: SweepEntry[] = [];
+  for (const [version, reasons] of points) {
+    const expected = filterExpectedCVEs(version, advisories);
+    const { allResults } = await queryLocalAPI(baseUrl, version);
+    const actual = filterBySource(allResults, TARGET_SOURCE);
+    const result = compareResults(expected, actual, version, []);
+    entries.push({
+      version,
+      reasons,
+      tp: result.truePositives.length,
+      fp: result.falsePositives.length,
+      fn: result.falseNegatives.length,
+      fpDetail: result.falsePositives,
+      fnDetail: result.falseNegatives,
+    });
+  }
+
+  printSweepReport('tomcat', entries, aggregateSweep(entries));
+}
+
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 async function main() {
   const version = parseArgs();
   const baseUrl = process.env.API_BASE_URL ?? 'http://localhost:5000';
+
+  if (version === null) {
+    // Sweep mode: pull every known major branch page and test boundaries across all of them.
+    const allAdvisories: TomcatAdvisory[] = [];
+    for (const major of CANDIDATE_MAJORS) {
+      try {
+        console.log(`Fetching tomcat.apache.org/security-${major}.html...`);
+        const html = await fetchTomcatAdvisoryPage(major);
+        const advisories = parseTomcatAdvisories(html);
+        console.log(`  Parsed ${advisories.length} advisory entries`);
+        allAdvisories.push(...advisories);
+      } catch (err: unknown) {
+        if (axios.isAxiosError(err) && err.response?.status === 404) {
+          console.log(`  security-${major}.html does not exist, skipping`);
+          continue;
+        }
+        throw err;
+      }
+    }
+    await runSweep(baseUrl, allAdvisories);
+    return;
+  }
+
   const majorVersion = parseInt(version.split('.')[0], 10);
 
   console.log(`Fetching tomcat.apache.org/security-${majorVersion}.html...`);

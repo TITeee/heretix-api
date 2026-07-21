@@ -908,6 +908,42 @@ pnpm validate:openssl 3.0.12      # vs openssl.org
 pnpm validate:postgresql 16.4     # vs postgresql.org
 ```
 
+### Boundary-value sweep (nginx / tomcat / apache)
+
+For products with a dedicated `AdvisoryFetcher` (`advisory-nginx`, `advisory-tomcat`, `advisory-apache`), running the same commands **without a version argument** switches to sweep mode: it automatically derives every advisory's range edges (`introduced`, `lastAffected`/`fixed`, and one patch step past each) from the official page, queries the search endpoint at every one of those boundary versions, and aggregates Precision/Recall/F1 — this is what actually catches off-by-one bugs, since a single hand-picked version mostly doesn't.
+
+Results are restricted to `sources` containing that product's own fetcher (e.g. `advisory-nginx`), not the raw multi-source endpoint — see [Known Issues](#known-issues) below for why.
+
+```bash
+pnpm validate:nginx     # sweep mode (no version arg)
+pnpm validate:tomcat
+pnpm validate:apache
+```
+
+| Product | Boundary versions tested | TP | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|---:|
+| nginx | 91 | 1,873 | 100.00% | 100.00% | 100.00% |
+| Apache Tomcat | 336 | 12,374 | 100.00% | 100.00% | 100.00% |
+| Apache HTTP Server | 56 | 4,112 | 100.00% | 100.00% | 100.00% |
+
+*Reproduced 2026-07-21. All 483 boundary cases passed with zero false positives/negatives against each fetcher's own data.*
+
+### Single-version spot check (openssl / PostgreSQL)
+
+OpenSSL and PostgreSQL have no dedicated `AdvisoryFetcher` — their vulnerabilities come from NVD/OSV only, so `pnpm validate:openssl`/`pnpm validate:postgresql` always require an explicit version (no sweep mode; see [Known Issues](#known-issues)).
+
+```bash
+pnpm validate:openssl 3.5.0
+pnpm validate:postgresql 16.4
+```
+
+| Product | Version | TP | FP | FN | Precision | Recall | F1 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| OpenSSL | 3.5.0 | 36 | 0 | 2 | 100.00% | 94.74% | 97.30% |
+| PostgreSQL | 16.4 | 24 | 5 | 0 | 82.76% | 100.00% | 90.57% |
+
+*Reproduced 2026-07-21. FPs are unrelated CVEs from other sources tracking their own "postgresql"/"openssl" package under a different version scheme (see below) — not misses in the official-advisory data itself. OpenSSL's 2 FNs (CVE-2025-9231/9232) are real gaps worth investigating separately.*
+
 ## Known Issues
 
 ### Ubuntu/Debian OSV false positives (mitigated)
@@ -934,6 +970,14 @@ Sophos advisories are collected via sitemap + RSS + headless browser rendering (
 ### NVD vs OSV package name discrepancies
 
 NVD uses CPE `product` as the package name, which may differ from the OSV package name (e.g., NVD=`xz`, OSV=`xz-utils`). Searching both sources simultaneously requires name normalization. (not yet implemented)
+
+### Cross-source version-namespace collisions (package=openssl / package=postgresql etc.)
+
+Some product names are tracked by multiple independent sources under different version schemes — e.g. `openssl`/`postgresql`/`nginx` are packaged separately by RHEL/Oracle Linux (RPM Epoch:Version-Release) in addition to the upstream project's own semver-like releases. Querying `package=X&version=Y` returns matches from *every* source tracking that product name, so a raw comparison against just one source's official advisories can show inflated false positives from another source's numerically-colliding, unrelated version range — this is not a bug in either source's fetcher.
+
+For products with a dedicated `AdvisoryFetcher` (nginx, Tomcat, Apache HTTP Server), the [boundary-value sweep](#boundary-value-sweep-nginx--tomcat--apache) scripts filter results to that fetcher's own `sources` entry to measure the fetcher in isolation, which is why they show 100% Precision despite this endpoint-wide characteristic.
+
+OpenSSL and PostgreSQL have no dedicated fetcher (NVD/OSV coverage only), so there's no single source to filter to, and a further limitation compounds it: NVD's CPE version-range representation cannot express "affects branches A, C, D but not the already-EOL'd branch B" — it can only express a single contiguous range — so a recent CVE affecting several actively-maintained branches simultaneously ends up numerically covering an old, already-retired branch's version numbers too. Because of this, `validate:openssl`/`validate:postgresql` intentionally have no automatic sweep mode; use the single-version check and expect some Precision noise from this endpoint-wide, upstream-data characteristic rather than a defect in these two products' own advisory ingestion.
 
 ### In-memory pagination for large result sets
 

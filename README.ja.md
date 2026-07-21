@@ -1058,6 +1058,64 @@ NVD は CPE の `product` フィールドをパッケージ名として使用す
 
 改善策として、`Vulnerability` テーブルをベースにして `AffectedPackage` を JOIN 条件として使うクエリ構造に変更することで、DB 側で正確な件数ページネーションが可能になる。（未実装）
 
+### 複数ソース間でのバージョン namespace 衝突（package=openssl / package=postgresql 等）
+
+`openssl`/`postgresql`/`nginx` のように、同じ製品名を複数のソースが別々のバージョン体系で追跡しているケースがある（RHEL/Oracle Linux は同じ製品名で RPM の Epoch:Version-Release 形式のパッケージを別途配布している）。`package=X&version=Y` で検索すると、その製品名を追跡している**全ソース**の結果が返るため、1ソースの公式アドバイザリだけを正解として比較すると、無関係な別ソースのバージョン範囲と数値的に衝突して過検知に見えることがある。これは各ソースの fetcher 自体のバグではない。
+
+専用の `AdvisoryFetcher` を持つ製品（nginx、Tomcat、Apache HTTP Server）については、[境界値スイープ](#精度検証)のスクリプトが結果を該当 fetcher 自身の `sources` に絞り込んで測定しているため、この現象があっても Precision 100% を示す。
+
+OpenSSL と PostgreSQL には専用 fetcher が無く（NVD/OSV のみでカバー）、絞り込める対象が無いことに加えてもう一段の制約が重なる。NVDのCPEバージョン範囲表現は「ブランチA・C・Dは影響を受けるが、既にEOLしたブランチBは対象外」という"歯抜け"を表現できず、単一の連続範囲でしか表せない。そのため、複数の現行ブランチに同時に影響する最近のCVEが、数値上たまたま既にEOLした古いブランチのバージョン番号まで含んでしまう。この理由により `validate:openssl`/`validate:postgresql` は意図的に自動スイープモードを持たない。単一バージョン検証を使い、この2製品自体のアドバイザリ取り込みの欠陥ではなく、エンドポイント全体に共通するこの特性由来のPrecisionノイズがあることを前提に見てほしい。
+
+---
+
+## 精度検証
+
+公式セキュリティアドバイザリを正解データとして Precision / Recall を計測するスクリプト:
+
+```bash
+pnpm validate:tomcat 9.0.100      # vs tomcat.apache.org
+pnpm validate:apache 2.4.62       # vs httpd.apache.org
+pnpm validate:nginx 1.24.0        # vs nginx.org
+pnpm validate:openssl 3.0.12      # vs openssl.org
+pnpm validate:postgresql 16.4     # vs postgresql.org
+```
+
+### 境界値スイープ（nginx / tomcat / apache）
+
+専用の `AdvisoryFetcher`（`advisory-nginx`、`advisory-tomcat`、`advisory-apache`）を持つ製品では、同じコマンドを**バージョン引数なしで**実行するとスイープモードに切り替わる。公式ページから全アドバイザリの範囲境界（`introduced`、`lastAffected`/`fixed`、およびそれぞれの1パッチ先）を自動的に導出し、その全ての境界バージョンで検索エンドポイントに問い合わせて Precision/Recall/F1 を集計する。単発の手動選定バージョンではまず引っかからない off-by-one バグを検出できるのはこの方式だからこそ。
+
+結果は raw なマルチソースのエンドポイント全体ではなく、その製品自身の fetcher を含む `sources`（例: `advisory-nginx`）に絞り込んでいる。理由は上の[既知の問題・制限事項](#既知の問題制限事項)を参照。
+
+```bash
+pnpm validate:nginx     # スイープモード（バージョン引数なし）
+pnpm validate:tomcat
+pnpm validate:apache
+```
+
+| 製品 | テストした境界バージョン数 | TP | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|---:|
+| nginx | 91 | 1,873 | 100.00% | 100.00% | 100.00% |
+| Apache Tomcat | 336 | 12,374 | 100.00% | 100.00% | 100.00% |
+| Apache HTTP Server | 56 | 4,112 | 100.00% | 100.00% | 100.00% |
+
+*2026-07-21 に再現確認。483件の境界ケース全てで、各 fetcher 自身のデータに対する偽陽性・偽陰性はゼロだった。*
+
+### 単一バージョンでの実測（openssl / PostgreSQL）
+
+OpenSSL と PostgreSQL には専用の `AdvisoryFetcher` が無い（NVD/OSV のみでカバー）ため、`pnpm validate:openssl`/`pnpm validate:postgresql` は常に明示的なバージョン指定が必要（スイープモードなし。理由は[既知の問題・制限事項](#既知の問題制限事項)を参照）。
+
+```bash
+pnpm validate:openssl 3.5.0
+pnpm validate:postgresql 16.4
+```
+
+| 製品 | バージョン | TP | FP | FN | Precision | Recall | F1 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| OpenSSL | 3.5.0 | 36 | 0 | 2 | 100.00% | 94.74% | 97.30% |
+| PostgreSQL | 16.4 | 24 | 5 | 0 | 82.76% | 100.00% | 90.57% |
+
+*2026-07-21 に再現確認。FP は別ソースが独自のバージョン体系で追跡している無関係な CVE であり（詳細は上記）、公式アドバイザリデータそのものの見逃しではない。OpenSSL の FN 2件（CVE-2025-9231/9232）は別途調査する価値のある実際のギャップ。*
+
 ---
 
 ## トラブルシューティング
