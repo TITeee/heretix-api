@@ -3,6 +3,7 @@ import {
   dedup,
   versionRangeWhere,
   isDistroEcosystem,
+  isDpkgStyleDistro,
   isLanguageEcosystem,
   normalizeEcosystem,
   rpmAdvisoryVendor,
@@ -93,8 +94,26 @@ describe('isDistroEcosystem', () => {
     expect(isDistroEcosystem('Ubuntu:22.04:LTS')).toBe(true);
   });
 
+  it('recognizes the version-less oracle-linux ecosystem', () => {
+    expect(isDistroEcosystem('oracle-linux')).toBe(true);
+  });
+
   it('rejects language ecosystems', () => {
     expect(isDistroEcosystem('npm')).toBe(false);
+  });
+});
+
+describe('isDpkgStyleDistro', () => {
+  it('recognizes Ubuntu, Debian, and Alpine', () => {
+    expect(isDpkgStyleDistro('Ubuntu:22.04:LTS')).toBe(true);
+    expect(isDpkgStyleDistro('Debian:12')).toBe(true);
+    expect(isDpkgStyleDistro('Alpine:v3.21')).toBe(true);
+  });
+
+  it('rejects RPM-based distros and non-distro ecosystems', () => {
+    expect(isDpkgStyleDistro('Red Hat:9')).toBe(false);
+    expect(isDpkgStyleDistro('oracle-linux')).toBe(false);
+    expect(isDpkgStyleDistro('npm')).toBe(false);
   });
 });
 
@@ -131,6 +150,10 @@ describe('normalizeEcosystem', () => {
 describe('rpmAdvisoryVendor', () => {
   it('maps Red Hat ecosystem to the red-hat vendor', () => {
     expect(rpmAdvisoryVendor('Red Hat:9')).toBe('red-hat');
+  });
+
+  it('maps the version-less oracle-linux ecosystem to the oracle-linux vendor', () => {
+    expect(rpmAdvisoryVendor('oracle-linux')).toBe('oracle-linux');
   });
 
   it('returns null for non-RPM ecosystems', () => {

@@ -5,11 +5,13 @@ import { normalizeVersion } from '../../utils/version.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases } from '../../config/product-aliases.js';
 import { compareRpmVersions } from '../../utils/rpm-version.js';
+import { compareDpkgVersions } from '../../utils/dpkg-version.js';
 import {
   type VulnerabilityResult,
   dedup,
   versionRangeWhere,
   isDistroEcosystem,
+  isDpkgStyleDistro,
   isLanguageEcosystem,
   normalizeEcosystem,
   rpmAdvisoryVendor,
@@ -90,6 +92,31 @@ function masterToResult(
 
 // ─── Search Functions ─────────────────────────────────────────
 
+/**
+ * Most Debian OSV entries (and a smaller fraction of Ubuntu/Alpine ones)
+ * publish only a continuous introduced/fixed range with no enumerated
+ * `versions` list at all — exact-match against affectedVersions alone
+ * silently matches nothing for those rows, regardless of what version is
+ * queried. Fall back to dpkg-style range comparison using the raw
+ * introduced/fixed/lastAffected strings when the enumerated list doesn't
+ * contain (or doesn't exist for) the queried version.
+ */
+function matchesDpkgStyleVersion(
+  row: { affectedVersions: string[]; introducedVersion: string | null; fixedVersion: string | null; lastAffectedVersion: string | null },
+  version: string,
+): boolean {
+  if (row.affectedVersions.includes(version)) return true;
+
+  const hasRange = row.introducedVersion !== null || row.fixedVersion !== null || row.lastAffectedVersion !== null;
+  if (!hasRange) return false;
+
+  if (row.introducedVersion && compareDpkgVersions(version, row.introducedVersion) < 0) return false;
+  if (row.fixedVersion && compareDpkgVersions(version, row.fixedVersion) >= 0) return false;
+  if (row.lastAffectedVersion && compareDpkgVersions(version, row.lastAffectedVersion) > 0) return false;
+
+  return true;
+}
+
 /** Search master via OSV table */
 async function searchOSV(
   packageName: string,
@@ -98,6 +125,7 @@ async function searchOSV(
   ecosystem: string | undefined,
 ): Promise<VulnerabilityResult[]> {
   const isDistro = ecosystem ? isDistroEcosystem(ecosystem) : false;
+  const useDpkgRangeFallback = !!(ecosystem && version && isDpkgStyleDistro(ecosystem));
 
   const ecosystemFilter = ecosystem
     ? { ecosystem: { startsWith: ecosystem } }
@@ -109,7 +137,11 @@ async function searchOSV(
   let approximate: boolean;
   if (isDistro) {
     approximate = false;
-    versionFilter = version ? { affectedVersions: { has: version } } : {};
+    // When the dpkg range fallback applies, the DB-level filter is dropped
+    // entirely (fetch by ecosystem+package only, then filter in JS below) —
+    // an exact-match-only DB filter would incorrectly exclude rows that only
+    // match via range.
+    versionFilter = version && !useDpkgRangeFallback ? { affectedVersions: { has: version } } : {};
   } else {
     approximate = versionInt === null;
     if (versionInt !== null) {
@@ -145,7 +177,11 @@ async function searchOSV(
     },
   });
 
-  return rows.map(r => {
+  const filteredRows = useDpkgRangeFallback
+    ? rows.filter(r => matchesDpkgStyleVersion(r, version!))
+    : rows;
+
+  return filteredRows.map(r => {
     const v = r.vulnerability;
     if (v.masterVuln) {
       return masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null);

@@ -71,10 +71,24 @@ export function versionRangeWhere(versionInt: bigint) {
 // Prefixes for distro-specific ecosystems.
 // These use dpkg/apk version strings and require a different matching strategy
 // (exact match against the versions list) instead of upstream semver range comparison.
-export const DISTRO_ECOSYSTEM_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:', 'AlmaLinux:', 'Rocky:', 'Red Hat:', 'CentOS:'];
+// 'oracle-linux' has no colon-suffixed major version (unlike 'Red Hat:9') — it's
+// matched as a bare, version-less ecosystem value per its documented usage.
+export const DISTRO_ECOSYSTEM_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:', 'AlmaLinux:', 'Rocky:', 'Red Hat:', 'CentOS:', 'oracle-linux'];
 
 export function isDistroEcosystem(eco: string): boolean {
   return DISTRO_ECOSYSTEM_PREFIXES.some(p => eco.startsWith(p));
+}
+
+// Distro ecosystems whose OSV entries frequently publish only a continuous
+// introduced/fixed range with no enumerated `versions` list at all (most
+// Debian entries; a smaller fraction of Ubuntu/Alpine ones) — exact-match
+// against affectedVersions alone silently matches nothing for those rows.
+// These ecosystems' version format is close enough to dpkg's for
+// compareDpkgVersions() to serve as a range-comparison fallback.
+const DPKG_STYLE_DISTRO_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:'];
+
+export function isDpkgStyleDistro(eco: string): boolean {
+  return DPKG_STYLE_DISTRO_PREFIXES.some(p => eco.startsWith(p));
 }
 
 // Language package ecosystems (npm, PyPI, Go, etc.) are fully covered by OSV.
@@ -98,13 +112,23 @@ export function normalizeEcosystem(eco: string | undefined): string | undefined 
   return ECOSYSTEM_ALIASES[eco.toLowerCase()] ?? eco;
 }
 
-// RPM-based distro ecosystems that have vendor advisory data.
-// Maps ecosystem prefix → AdvisoryAffectedProduct.vendor value.
+// RPM-based distro ecosystems that have vendor advisory data, routed to the
+// exact rpmvercmp comparison (searchAdvisoryRpm) instead of the lossy BigInt
+// approximation used elsewhere (see AdvisoryAffectedProduct.versionEnd — this
+// reads that same string column directly, no precomputed/backfilled data needed).
+// Maps ecosystem prefix (colon-suffixed major version, e.g. "Red Hat:9") →
+// AdvisoryAffectedProduct.vendor value.
 const RPM_ECOSYSTEM_VENDOR: Record<string, string> = {
   'Red Hat': 'red-hat',
 };
+// Ecosystems matched as an exact, version-less value instead of a colon-suffixed prefix.
+const RPM_ECOSYSTEM_VENDOR_EXACT: Record<string, string> = {
+  'oracle-linux': 'oracle-linux',
+};
 
 export function rpmAdvisoryVendor(ecosystem: string): string | null {
+  const exact = RPM_ECOSYSTEM_VENDOR_EXACT[ecosystem];
+  if (exact) return exact;
   for (const [prefix, vendor] of Object.entries(RPM_ECOSYSTEM_VENDOR)) {
     if (ecosystem.startsWith(prefix + ':')) return vendor;
   }

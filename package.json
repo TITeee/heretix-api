@@ -38,7 +38,14 @@
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
     "validate:apache": "node dist/scripts/validate-apache.js",
     "validate:openssl": "node dist/scripts/validate-openssl.js",
-    "validate:postgresql": "node dist/scripts/validate-postgresql.js"
+    "validate:postgresql": "node dist/scripts/validate-postgresql.js",
+    "validate:redhat": "node dist/scripts/validate-redhat.js",
+    "validate:oracle-linux": "node dist/scripts/validate-oracle-linux.js",
+    "validate:debian": "node dist/scripts/validate-debian.js",
+    "validate:ubuntu": "node dist/scripts/validate-ubuntu.js",
+    "validate:alpine": "node dist/scripts/validate-alpine.js",
+    "validate:fortinet": "node dist/scripts/validate-fortinet.js",
+    "validate:pan": "node dist/scripts/validate-pan.js"
   },
   "keywords": [
     "vulnerability",
