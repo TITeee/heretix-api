@@ -1,10 +1,9 @@
 import axios from 'axios';
-import { XMLParser } from 'fast-xml-parser';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
 
-const RSS_URL = 'https://filestore.fortinet.com/fortiguard/rss/ir.xml';
 const CSAF_BASE = 'https://filestore.fortinet.com/fortiguard/psirt';
+const PSIRT_LIST_URL = 'https://fortiguard.fortinet.com/psirt';
 
 // ─── CSAF 2.0 Type Definitions ────────────────────────────────
 
@@ -153,7 +152,7 @@ function findFixVersion(
 
 // ─── CSAF → NormalizedAdvisory Conversion ────────────────────
 
-function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date): NormalizedAdvisory | null {
+function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdvisory | null {
   const vulns = csaf.vulnerabilities ?? [];
   if (vulns.length === 0) return null;
 
@@ -236,10 +235,9 @@ function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date): Norm
 
   if (affectedProducts.length === 0) return null;
 
-  const publishedAt = pubDate
-    ?? (csaf.document.tracking.initial_release_date
-      ? new Date(csaf.document.tracking.initial_release_date)
-      : undefined);
+  const publishedAt = csaf.document.tracking.initial_release_date
+    ? new Date(csaf.document.tracking.initial_release_date)
+    : undefined;
 
   return {
     externalId:  advisoryId,
@@ -257,30 +255,42 @@ function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date): Norm
   };
 }
 
-// ─── RSS Fetching ─────────────────────────────────────────────
+// ─── Full PSIRT Listing (paginated) ──────────────────────────
 
-interface RssItem {
+interface AdvisoryListEntry {
+  advisoryId: string;
   title: string;
-  link:  string;
-  pubDate?: string;
 }
 
-async function fetchRssItems(): Promise<RssItem[]> {
-  const { data } = await axios.get<string>(RSS_URL, {
-    timeout: 30000,
-    headers: { 'User-Agent': 'heretix-api/1.0' },
-    responseType: 'text',
-  });
+/**
+ * Scrape every page of the PSIRT advisory listing (not just the RSS feed's
+ * rolling window of recent items). RSS is a "what's new" feed and only ever
+ * exposes ~50 recent advisories — it has no way to discover older ones. This
+ * listing page paginates through the full historical archive instead
+ * (id + title embedded directly in each row, e.g.
+ * `<b>FG-IR-23-165 Use of uninitialized resource in SSLVPN websocket</b>`),
+ * mirroring PanFetcher's fetchAllAdvisoryIds().
+ */
+async function fetchAllAdvisoryEntries(): Promise<AdvisoryListEntry[]> {
+  const entries: AdvisoryListEntry[] = [];
+  const rowPattern = /onclick="location\.href = '\/psirt\/(FG-IR-\d{2}-\d+)'">\s*<div class="col-md-3">\s*<b>FG-IR-\d{2}-\d+ ([^<]+)<\/b>/g;
 
-  const parser = new XMLParser({ ignoreAttributes: false });
-  const parsed = parser.parse(data);
-  const items = parsed?.rss?.channel?.item ?? [];
-  return Array.isArray(items) ? items : [items];
-}
+  for (let page = 1; ; page++) {
+    const { data } = await axios.get<string>(`${PSIRT_LIST_URL}?page=${page}`, {
+      timeout: 30000,
+      headers: { 'User-Agent': 'heretix-api/1.0' },
+      responseType: 'text',
+    });
 
-function extractAdvisoryId(link: string): string | null {
-  const m = link.match(/FG-IR-\d{2}-\d+/);
-  return m ? m[0] : null;
+    const matches = [...data.matchAll(rowPattern)];
+    if (matches.length === 0) break;
+
+    for (const m of matches) entries.push({ advisoryId: m[1], title: m[2].trim() });
+    logger.debug({ page, found: matches.length, total: entries.length }, 'Scraped Fortinet PSIRT listing page');
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  return entries;
 }
 
 // ─── AdvisoryFetcher Implementation ──────────────────────────
@@ -288,30 +298,23 @@ function extractAdvisoryId(link: string): string | null {
 export class FortinetFetcher implements AdvisoryFetcher {
   private readonly delayMs: number;
 
-  constructor({ delayMs = 300 } = {}) {
+  constructor({ delayMs = 300 }: { delayMs?: number } = {}) {
     this.delayMs = delayMs;
   }
 
   source(): string { return 'fortinet'; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
-    logger.info('Fetching Fortinet PSIRT RSS feed');
-    const items = await fetchRssItems();
-    logger.info({ count: items.length }, 'Fetched Fortinet RSS items');
+    logger.info('Fetching Fortinet PSIRT advisory list (all pages)');
+    const entries = await fetchAllAdvisoryEntries();
+    logger.info({ count: entries.length }, 'Fetched Fortinet advisory list entries');
 
     const results: NormalizedAdvisory[] = [];
     let skipped = 0;
     let failed  = 0;
 
-    for (const item of items) {
-      const advisoryId = extractAdvisoryId(item.link);
-      if (!advisoryId) {
-        logger.warn({ link: item.link }, 'Could not extract advisory ID from link');
-        skipped++;
-        continue;
-      }
-
-      const url = buildCsafUrl(item.title, advisoryId);
+    for (const { advisoryId, title } of entries) {
+      const url = buildCsafUrl(title, advisoryId);
       logger.debug({ advisoryId, url }, 'Fetching CSAF JSON');
 
       try {
@@ -320,8 +323,7 @@ export class FortinetFetcher implements AdvisoryFetcher {
           headers: { 'User-Agent': 'heretix-api/1.0' },
         });
 
-        const pubDate  = item.pubDate ? new Date(item.pubDate) : undefined;
-        const advisory = parseCsaf(data, advisoryId, pubDate);
+        const advisory = parseCsaf(data, advisoryId);
 
         if (advisory) {
           results.push(advisory);
@@ -339,7 +341,7 @@ export class FortinetFetcher implements AdvisoryFetcher {
     }
 
     logger.info(
-      { total: items.length, succeeded: results.length, skipped, failed },
+      { total: entries.length, succeeded: results.length, skipped, failed },
       'Fortinet PSIRT fetch complete',
     );
     return results;

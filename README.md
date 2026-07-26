@@ -497,7 +497,7 @@ Semantic versions are converted to integers for fast range queries:
 
 ### Fortinet PSIRT ([src/worker/fortinet-fetcher.ts](src/worker/fortinet-fetcher.ts))
 
-- RSS feed + CSAF 2.0 JSON (no authentication required)
+- Advisory discovery + CSAF 2.0 JSON per advisory (no authentication required). Paginates the full PSIRT advisory listing (`fortiguard.fortinet.com/psirt?page=N`) for complete historical coverage — previously discovered advisories via RSS only, which is a "what's new" feed exposing just a rolling window of recent items, not a full archive (found while building [boundary-value accuracy coverage](ACCURACY.md#boundary-value-sweep-fortinet--palo-alto-networks))
 - Covers FortiOS, FortiProxy, FortiManager, FortiAnalyzer, and more
 - Creates separate records per version branch (e.g., 7.6.x / 7.4.x / 7.2.x)
 
@@ -676,6 +676,7 @@ curl -H "x-api-key: $API_KEY" \
 
 > **ecosystem value**: `oracle-linux` (no version suffix). Range queries use RPM version strings.
 > Specify versions as `MAJOR.MINOR.PATCH-RELEASE.dist` (e.g. `3.2.5-3.el9`) or upstream `MAJOR.MINOR.PATCH` (e.g. `3.2.4`).
+> Routed to the same exact `rpmvercmp` comparison as Red Hat (see [`rpmAdvisoryVendor`](src/utils/search-helpers.ts)) — previously this ecosystem value wasn't wired up and silently fell back to the lossy BigInt approximation regardless of what this doc said; see the [boundary-value sweep](ACCURACY.md#boundary-value-sweep-rhel--oracle-linux) in ACCURACY.md.
 
 ### Sophos
 
@@ -898,57 +899,15 @@ Each OSV ecosystem runs as an independent job (`osv-{ecosystem}`) so its status,
 
 ## Accuracy Validation
 
-Scripts to measure Precision / Recall against official security advisories:
-
-```bash
-pnpm validate:tomcat 9.0.100      # vs tomcat.apache.org
-pnpm validate:apache 2.4.62       # vs httpd.apache.org
-pnpm validate:nginx 1.24.0        # vs nginx.org
-pnpm validate:openssl 3.0.12      # vs openssl.org
-pnpm validate:postgresql 16.4     # vs postgresql.org
-```
-
-### Boundary-value sweep (nginx / tomcat / apache)
-
-For products with a dedicated `AdvisoryFetcher` (`advisory-nginx`, `advisory-tomcat`, `advisory-apache`), running the same commands **without a version argument** switches to sweep mode: it automatically derives every advisory's range edges (`introduced`, `lastAffected`/`fixed`, and one patch step past each) from the official page, queries the search endpoint at every one of those boundary versions, and aggregates Precision/Recall/F1 — this is what actually catches off-by-one bugs, since a single hand-picked version mostly doesn't.
-
-Results are restricted to `sources` containing that product's own fetcher (e.g. `advisory-nginx`), not the raw multi-source endpoint — see [Known Issues](#known-issues) below for why.
-
-```bash
-pnpm validate:nginx     # sweep mode (no version arg)
-pnpm validate:tomcat
-pnpm validate:apache
-```
-
-| Product | Boundary versions tested | TP | Precision | Recall | F1 |
-|---|---:|---:|---:|---:|---:|
-| nginx | 91 | 1,873 | 100.00% | 100.00% | 100.00% |
-| Apache Tomcat | 336 | 12,374 | 100.00% | 100.00% | 100.00% |
-| Apache HTTP Server | 56 | 4,112 | 100.00% | 100.00% | 100.00% |
-
-*Reproduced 2026-07-21. All 483 boundary cases passed with zero false positives/negatives against each fetcher's own data.*
-
-### Single-version spot check (openssl / PostgreSQL)
-
-OpenSSL and PostgreSQL have no dedicated `AdvisoryFetcher` — their vulnerabilities come from NVD/OSV only, so `pnpm validate:openssl`/`pnpm validate:postgresql` always require an explicit version (no sweep mode; see [Known Issues](#known-issues)).
-
-```bash
-pnpm validate:openssl 3.5.0
-pnpm validate:postgresql 16.4
-```
-
-| Product | Version | TP | FP | FN | Precision | Recall | F1 |
-|---|---|---:|---:|---:|---:|---:|---:|
-| OpenSSL | 3.5.0 | 36 | 0 | 2 | 100.00% | 94.74% | 97.30% |
-| PostgreSQL | 16.4 | 24 | 5 | 0 | 82.76% | 100.00% | 90.57% |
-
-*Reproduced 2026-07-21. FPs are unrelated CVEs from other sources tracking their own "postgresql"/"openssl" package under a different version scheme (see below) — not misses in the official-advisory data itself. OpenSSL's 2 FNs (CVE-2025-9231/9232) are real gaps worth investigating separately.*
+Scripts measure Precision / Recall against official security advisories, including automatic boundary-value sweeps for products with a dedicated `AdvisoryFetcher`. Moved to a dedicated file since coverage keeps growing: **[ACCURACY.md](ACCURACY.md)**.
 
 ## Known Issues
 
 ### Ubuntu/Debian OSV false positives (mitigated)
 
-Ubuntu/Debian OSV advisories use `introduced: "0"` + `fixed: "<ubuntu_patched_version>"` to indicate that a package update is required — not to express an upstream version range. Comparing upstream semver versions against this range would cause false positives, so distro ecosystems use exact-match against `affectedVersions` instead. See [Search behavior by ecosystem](#search-vulnerabilities-single) for current behavior and examples.
+Ubuntu/Debian OSV advisories use `introduced: "0"` + `fixed: "<ubuntu_patched_version>"` to indicate that a package update is required — not to express an upstream version range. Comparing upstream semver versions against this range would cause false positives, so distro ecosystems primarily use exact-match against `affectedVersions` instead. See [Search behavior by ecosystem](#search-vulnerabilities-single) for current behavior and examples.
+
+Most Debian entries (and a smaller fraction of Ubuntu/Alpine ones) publish only that `introduced`/`fixed` range with no enumerated `affectedVersions` list at all — exact-match alone silently matched nothing for those rows regardless of the version queried (confirmed to affect ~68% of Debian's OSV data). Fixed by adding a `compareDpkgVersions()` ([`src/utils/dpkg-version.ts`](src/utils/dpkg-version.ts), the dpkg version-comparison algorithm) range-comparison fallback for `Ubuntu:*`/`Debian:*`/`Alpine:*` ecosystems: exact-match is tried first, and only falls back to range comparison when the enumerated list doesn't contain (or doesn't exist for) the queried version — so already-correct exact-match results are unaffected.
 
 Ecosystem alias: `composer` is automatically mapped to `Packagist` (OSV's ecosystem name for PHP Composer packages).
 
@@ -971,17 +930,11 @@ Sophos advisories are collected via sitemap + RSS + headless browser rendering (
 
 NVD uses CPE `product` as the package name, which may differ from the OSV package name (e.g., NVD=`xz`, OSV=`xz-utils`). Searching both sources simultaneously requires name normalization. (not yet implemented)
 
-### Cross-source version-namespace collisions (package=openssl / package=postgresql etc.)
-
-Some product names are tracked by multiple independent sources under different version schemes — e.g. `openssl`/`postgresql`/`nginx` are packaged separately by RHEL/Oracle Linux (RPM Epoch:Version-Release) in addition to the upstream project's own semver-like releases. Querying `package=X&version=Y` returns matches from *every* source tracking that product name, so a raw comparison against just one source's official advisories can show inflated false positives from another source's numerically-colliding, unrelated version range — this is not a bug in either source's fetcher.
-
-For products with a dedicated `AdvisoryFetcher` (nginx, Tomcat, Apache HTTP Server), the [boundary-value sweep](#boundary-value-sweep-nginx--tomcat--apache) scripts filter results to that fetcher's own `sources` entry to measure the fetcher in isolation, which is why they show 100% Precision despite this endpoint-wide characteristic.
-
-OpenSSL and PostgreSQL have no dedicated fetcher (NVD/OSV coverage only), so there's no single source to filter to, and a further limitation compounds it: NVD's CPE version-range representation cannot express "affects branches A, C, D but not the already-EOL'd branch B" — it can only express a single contiguous range — so a recent CVE affecting several actively-maintained branches simultaneously ends up numerically covering an old, already-retired branch's version numbers too. Because of this, `validate:openssl`/`validate:postgresql` intentionally have no automatic sweep mode; use the single-version check and expect some Precision noise from this endpoint-wide, upstream-data characteristic rather than a defect in these two products' own advisory ingestion.
-
 ### In-memory pagination for large result sets
 
 The current search implementation fetches all `NVDAffectedPackage` / `OSVAffectedPackage` rows without a limit, deduplicates in memory, then applies `limit`/`offset`. This is fine for most packages (~900 entries), but packages with thousands of CPE entries (e.g., `openssl`, `linux_kernel`) may see increased response time and memory usage.
+
+Two more limitations specific to the accuracy-validation scripts (cross-source version-namespace collisions, RHEL/Oracle Linux OVAL feed revisions) are documented in [ACCURACY.md](ACCURACY.md#known-limitations).
 
 ## Troubleshooting
 
