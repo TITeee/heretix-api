@@ -175,9 +175,9 @@ curl "http://localhost:3001/api/v1/vulnerabilities/search?package=FortiOS&versio
 | `ecosystem` | 検索対象ソース | バージョン比較方式 | 理由 |
 |---|---|---|---|
 | 言語エコシステム（`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`） | **OSV のみ** | semver 範囲比較 | NVD/Advisory には言語パッケージと同名の C ライブラリ/OS パッケージが含まれており（例: C の `bzip2` vs npm の `bzip2`）、検索すると誤検知になるため |
-| `Red Hat:*`（例: `Red Hat:9`） | **ベンダーアドバイザリ（OVAL）のみ** | RPM 比較（`rpmvercmp`）、アドバイザリの `versionEnd` と直接比較 | OSV に Red Hat エコシステムが存在しないため、RHEL の脆弱性情報はベンダー OVAL フィードが唯一のソース |
+| `Red Hat:*`（例: `Red Hat:9`）/ `oracle-linux` | **ベンダーアドバイザリ（OVAL）のみ** | RPM 比較（`rpmvercmp`）、アドバイザリの `versionEnd` と直接比較 | OSV に Red Hat/Oracle Linux エコシステムが存在しないため、ベンダー OVAL フィードが唯一のソース。OVALの「`X`より前は脆弱」というデータには下限がないため、RPMモジュールストリーム製品（postgresql, nodejs, mariadb, php, ruby, redis, podman, qemu-kvm, libvirt等、同一プロダクト名の下に複数バージョン系統が並行するもの）では、ある系統の修正バージョンが無関係な別系統のクエリを数値的に巻き込まないよう、ecosystemの明示指定が必要 |
 | その他ディストロ（`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`） | **OSV のみ** | `affectedVersions` との完全一致（dpkg/rpm 形式のバージョン文字列） | ディストロのアドバイザリは「パッチ適用が必要」を表現しているだけでアップストリームのバージョン範囲ではないため（詳細は [既知の問題・制限事項](#既知の問題制限事項) 参照）。ベンダーアドバイザリのプロダクト名もディストロのパッケージ名と衝突しうる |
-| 未指定 | OSV（ディストロエコシステムを除く）+ NVD + Advisory | semver 範囲比較 | デフォルト。特定エコシステムに紐づかない名前（`openssl`, `FortiOS` 等）に向く |
+| 未指定 | OSV（ディストロエコシステムを除く）+ NVD + Advisory（Red Hat/Oracle LinuxのOVALデータは除外— 上の行を参照） | semver 範囲比較 | デフォルト。特定エコシステムに紐づかない名前（`openssl`, `FortiOS` 等）に向く |
 
 ```bash
 # 言語エコシステム — OSV のみ
@@ -1035,6 +1035,12 @@ Ubuntu/Debian 系の OSV アドバイザリは `introduced: "0"` + `fixed: "<ubu
 Debianの大半のエントリ（および一部のUbuntu/Alpine）は、この`introduced`/`fixed`範囲のみを公開しており、明示的な`affectedVersions`一覧を一切持たない——完全一致方式だけでは、どんなバージョンを指定してもこれらの行が絶対にヒットしない（Debianの OSV データの約68%がこの影響を受けることを確認済み）。`compareDpkgVersions()`（[`src/utils/dpkg-version.ts`](src/utils/dpkg-version.ts)、dpkgのバージョン比較アルゴリズム）による範囲比較のフォールバックを`Ubuntu:*`/`Debian:*`/`Alpine:*`エコシステムに追加して修正した。完全一致を先に試し、一覧にバージョンが含まれない（または一覧自体が存在しない）場合のみ範囲比較にフォールバックするため、既に正しく動いていた完全一致の結果には影響しない。
 
 エコシステムエイリアス: `composer` は自動的に `Packagist`（PHP Composer パッケージの OSV エコシステム名）に変換される。
+
+### RHEL/Oracle Linuxのモジュールストリームによる偽陽性（デフォルト検索は対処済み）
+
+RHEL/Oracle Linuxは一部のソフトウェアをDNFモジュールストリーム——同一パッケージ名の下に複数のバージョン系統が並行共存する形式——で配布している（例: `postgresql:12`/`:13`/`:15`/`:16`/`:17`/`:18`、同様に`nodejs`, `mariadb`, `php`, `ruby`, `redis`, `podman`, `qemu-kvm`, `libvirt`等）。元となるOVALフィード自体が「`<package>`は`<version>`より前は脆弱」という上限のみの条件しか表現できず下限がないため、新しい系統（例: postgresql:18が`18.4-2.module+el9.8.0...`で修正）向けの行が、無関係な古い系統のクエリ（例: postgresql 16.4）まで数値的に巻き込んでしまう——上記のソフトウェア群を含む155製品名で確認済み。
+
+大半のRPMパッケージは単一のバージョン系統しか持たず、この上限のみの比較でも正しく動作するため、修正範囲は狭く絞った: `ecosystem`未指定時のデフォルト検索では、`versionEnd`にモジュールビルドのマーカーである`.module+`を含む行だけを除外し、RHEL/Oracle Linuxが追跡する9,519製品名のうち9,364はこの変更の影響を受けない。`ecosystem=Red Hat:*`/`oracle-linux`を明示指定した場合は引き続きRPM精密比較の`searchAdvisoryRpm()`経路を通るが、こちらはモジュールストリーム製品について同じ下限欠如の問題を抱えたままで今回は未修正——正しく直すにはOVALフィードにない各系統自体のバージョン下限をモジュールメタデータから推定する必要があり、より大きなバックフィル作業になるため。この問題を発見したPostgreSQLの境界値検証データは[ACCURACY.md](ACCURACY.md)を参照。
 
 ### Go サブモジュールは完全なモジュールパスで検索する必要がある
 

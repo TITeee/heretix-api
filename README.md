@@ -182,9 +182,9 @@ The `ecosystem` parameter changes *which sources are queried* and *how versions 
 | `ecosystem` | Sources queried | Version comparison | Why |
 |---|---|---|---|
 | Language ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`) | **OSV only** | semver range | NVD/Advisory carry C-library/OS entries that share names with language packages (e.g. C `bzip2` vs. npm `bzip2`) — querying them here would produce false positives |
-| `Red Hat:*` (e.g. `Red Hat:9`) | **Vendor advisory (OVAL) only** | RPM (`rpmvercmp`), against the advisory's `versionEnd` | OSV has no Red Hat ecosystem — the vendor OVAL feed is the only source of RHEL vulnerability data |
+| `Red Hat:*` (e.g. `Red Hat:9`) / `oracle-linux` | **Vendor advisory (OVAL) only** | RPM (`rpmvercmp`), against the advisory's `versionEnd` | OSV has no Red Hat/Oracle Linux ecosystem — the vendor OVAL feed is the only source of RHEL/Oracle Linux vulnerability data |
 | Other distro ecosystems (`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`) | **OSV only** | Exact match against `affectedVersions` (dpkg/rpm version strings) | Distro advisories express "needs a patched build," not an upstream version range (see [Known Issues](#known-issues)); vendor advisory product names also overlap with distro package names |
-| Not specified | OSV (distro ecosystems excluded) + NVD + Advisory | semver range | Default — best for names not tied to a single ecosystem (e.g. `openssl`, `FortiOS`) |
+| Not specified | OSV (distro ecosystems excluded) + NVD + Advisory (RPM module-stream rows excluded — see [Known Issues](#known-issues)) | semver range | Default — best for names not tied to a single ecosystem (e.g. `openssl`, `FortiOS`) |
 
 ```bash
 # Language ecosystem — OSV only
@@ -910,6 +910,12 @@ Ubuntu/Debian OSV advisories use `introduced: "0"` + `fixed: "<ubuntu_patched_ve
 Most Debian entries (and a smaller fraction of Ubuntu/Alpine ones) publish only that `introduced`/`fixed` range with no enumerated `affectedVersions` list at all — exact-match alone silently matched nothing for those rows regardless of the version queried (confirmed to affect ~68% of Debian's OSV data). Fixed by adding a `compareDpkgVersions()` ([`src/utils/dpkg-version.ts`](src/utils/dpkg-version.ts), the dpkg version-comparison algorithm) range-comparison fallback for `Ubuntu:*`/`Debian:*`/`Alpine:*` ecosystems: exact-match is tried first, and only falls back to range comparison when the enumerated list doesn't contain (or doesn't exist for) the queried version — so already-correct exact-match results are unaffected.
 
 Ecosystem alias: `composer` is automatically mapped to `Packagist` (OSV's ecosystem name for PHP Composer packages).
+
+### RHEL/Oracle Linux module-stream false positives (mitigated for the default search)
+
+RHEL/Oracle Linux distribute some software as DNF module streams — several parallel, coexisting version lineages under one package name (e.g. `postgresql:12`/`:13`/`:15`/`:16`/`:17`/`:18`, similarly for `nodejs`, `mariadb`, `php`, `ruby`, `redis`, `podman`, `qemu-kvm`, `libvirt`, and others). The underlying OVAL feed only expresses an exclusive upper bound ("`<package>` is earlier than `<version>`") with no lower bound, so a fix-version row for a *newer* stream (e.g. postgresql:18 fixed at `18.4-2.module+el9.8.0...`) has no way to exclude an unrelated, older stream's query (e.g. postgresql 16.4) from numerically matching too — confirmed to affect 155 product names across the packages above.
+
+Since most RPM packages have only a single version lineage (no module streams) and work correctly with this upper-bound-only comparison, the fix is scoped narrowly: the default (no `ecosystem` specified) search excludes only rows whose `versionEnd` contains the module-build marker `.module+`, leaving the vast majority of RHEL/Oracle Linux data (9,364 of 9,519 tracked product names) unaffected. Explicitly querying with `ecosystem=Red Hat:*`/`oracle-linux` still goes through the RPM-precise `searchAdvisoryRpm()` path, which has the same missing-lower-bound gap for module-stream products — not fixed here, since a proper fix requires inferring each stream's own version floor from module metadata the OVAL feed doesn't include, a larger backfill project. See [ACCURACY.md](ACCURACY.md) for the PostgreSQL boundary-check data that surfaced this.
 
 ### Go sub-module search requires exact module path
 

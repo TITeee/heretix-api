@@ -261,7 +261,19 @@ async function searchNVD(
   });
 }
 
-/** Search master via Advisory table (product + version) */
+/**
+ * Search master via Advisory table (product + version).
+ *
+ * Excludes RPM module-stream rows (versionEnd containing ".module+") — RHEL/
+ * Oracle Linux's OVAL data for module-stream software (postgresql, nodejs,
+ * mariadb, php, ruby, redis, podman, qemu-kvm, libvirt, etc., which ship
+ * several parallel version streams under one product name) expresses only an
+ * exclusive upper bound with no lower bound, so a newer stream's fix version
+ * numerically swallows unrelated, older stream queries. Non-module RPM rows
+ * (the vast majority — single version lineage) are unaffected and stay
+ * visible here; only ecosystem-explicit searchAdvisoryRpm() sees module rows,
+ * and it has the same missing-lower-bound gap (not fixed here — see git log).
+ */
 async function searchAdvisory(
   product: string,
   version: string | undefined,
@@ -309,7 +321,13 @@ async function searchAdvisory(
   }
 
   const rows = await prisma.advisoryAffectedProduct.findMany({
-    where: { product, ...versionWhere },
+    where: {
+      product,
+      AND: [
+        versionWhere,
+        { OR: [{ versionEnd: null }, { versionEnd: { not: { contains: '.module+' } } }] },
+      ],
+    },
     include: {
       advisory: {
         select: {
