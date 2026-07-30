@@ -184,6 +184,7 @@ The `ecosystem` parameter changes *which sources are queried* and *how versions 
 | Language ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`) | **OSV only** | semver range | NVD/Advisory carry C-library/OS entries that share names with language packages (e.g. C `bzip2` vs. npm `bzip2`) — querying them here would produce false positives |
 | `Red Hat:*` (e.g. `Red Hat:9`) / `oracle-linux` | **Vendor advisory (OVAL) only** | RPM (`rpmvercmp`), against the advisory's `versionEnd` | OSV has no Red Hat/Oracle Linux ecosystem — the vendor OVAL feed is the only source of RHEL/Oracle Linux vulnerability data |
 | Other distro ecosystems (`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`) | **OSV only** | Exact match against `affectedVersions` (dpkg/rpm version strings) | Distro advisories express "needs a patched build," not an upstream version range (see [Known Issues](#known-issues)); vendor advisory product names also overlap with distro package names |
+| `advisory` | **Vendor advisory only** (Fortinet, PAN, Apache, Tomcat, nginx, etc.) | semver range, against the advisory's own version fields | Not a real NVD/OSV ecosystem name, so both return nothing for it — searchAdvisory() itself doesn't filter by ecosystem at all, so it's unaffected and returns its full result set. Use this to search vendor advisories only, with NVD/OSV noise excluded |
 | Not specified | OSV (distro ecosystems excluded) + NVD + Advisory (RPM module-stream rows excluded — see [Known Issues](#known-issues)) | semver range | Default — best for names not tied to a single ecosystem (e.g. `openssl`, `FortiOS`) |
 
 ```bash
@@ -195,6 +196,9 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 
 # Distro ecosystem — exact version-string match
 curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosystem=Ubuntu:20.04:LTS"
+
+# advisory — vendor advisories only, NVD/OSV excluded
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=httpd&version=2.4.60&ecosystem=advisory"
 ```
 
 **Response:**

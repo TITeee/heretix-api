@@ -177,6 +177,7 @@ curl "http://localhost:3001/api/v1/vulnerabilities/search?package=FortiOS&versio
 | 言語エコシステム（`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`） | **OSV のみ** | semver 範囲比較 | NVD/Advisory には言語パッケージと同名の C ライブラリ/OS パッケージが含まれており（例: C の `bzip2` vs npm の `bzip2`）、検索すると誤検知になるため |
 | `Red Hat:*`（例: `Red Hat:9`）/ `oracle-linux` | **ベンダーアドバイザリ（OVAL）のみ** | RPM 比較（`rpmvercmp`）、アドバイザリの `versionEnd` と直接比較 | OSV に Red Hat/Oracle Linux エコシステムが存在しないため、ベンダー OVAL フィードが唯一のソース。OVALの「`X`より前は脆弱」というデータには下限がないため、RPMモジュールストリーム製品（postgresql, nodejs, mariadb, php, ruby, redis, podman, qemu-kvm, libvirt等、同一プロダクト名の下に複数バージョン系統が並行するもの）では、ある系統の修正バージョンが無関係な別系統のクエリを数値的に巻き込まないよう、ecosystemの明示指定が必要 |
 | その他ディストロ（`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`） | **OSV のみ** | `affectedVersions` との完全一致（dpkg/rpm 形式のバージョン文字列） | ディストロのアドバイザリは「パッチ適用が必要」を表現しているだけでアップストリームのバージョン範囲ではないため（詳細は [既知の問題・制限事項](#既知の問題制限事項) 参照）。ベンダーアドバイザリのプロダクト名もディストロのパッケージ名と衝突しうる |
+| `advisory` | **ベンダーアドバイザリのみ**（Fortinet, PAN, Apache, Tomcat, nginx 等） | semver 範囲比較（アドバイザリ自身のバージョンフィールドと比較） | 実在するNVD/OSVのエコシステム名ではないため両方とも空振りする一方、`searchAdvisory()`自体はecosystemで絞り込みを行わないため影響を受けず、フルの結果を返す。NVD/OSVのノイズを除いてベンダーアドバイザリだけを検索したい場合に使う |
 | 未指定 | OSV（ディストロエコシステムを除く）+ NVD + Advisory（Red Hat/Oracle LinuxのOVALデータは除外— 上の行を参照） | semver 範囲比較 | デフォルト。特定エコシステムに紐づかない名前（`openssl`, `FortiOS` 等）に向く |
 
 ```bash
@@ -188,6 +189,9 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 
 # ディストロエコシステム — バージョン文字列の完全一致
 curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosystem=Ubuntu:20.04:LTS"
+
+# advisory — ベンダーアドバイザリのみ、NVD/OSVを除外
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=httpd&version=2.4.60&ecosystem=advisory"
 ```
 
 **レスポンス例:**
