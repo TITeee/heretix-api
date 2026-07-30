@@ -303,6 +303,7 @@ export class FortinetFetcher implements AdvisoryFetcher {
   }
 
   source(): string { return 'fortinet'; }
+  isCompleteSnapshot(): boolean { return true; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching Fortinet PSIRT advisory list (all pages)');

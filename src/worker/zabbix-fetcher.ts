@@ -144,6 +144,7 @@ function parseDocument(doc: ZabbixDocument): NormalizedAdvisory | null {
 
 export class ZabbixFetcher implements AdvisoryFetcher {
   source(): string { return 'advisory-zabbix'; }
+  isCompleteSnapshot(): boolean { return true; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching Zabbix security advisories');

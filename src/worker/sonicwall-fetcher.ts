@@ -55,6 +55,7 @@ function extractVersionsFromHtml(html: string): string[] {
 
 export class SonicWallFetcher implements AdvisoryFetcher {
   source(): string { return 'advisory-sonicwall'; }
+  isCompleteSnapshot(): boolean { return true; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching SonicWall PSIRT advisories');

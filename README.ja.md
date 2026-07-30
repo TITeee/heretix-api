@@ -497,6 +497,7 @@ Vulnerability (マスター)
 - `AdvisoryFetcher` インターフェースを実装することで新規ベンダーを追加可能
 - `importAdvisoryData()` が `Vulnerability` マスターテーブルへの自動紐付けを担当
 - インポート時の優先度: CVE あり → 既存 NVD レコードにリンク / CVE なし → `advisoryId` でマスター管理
+- **消失アドバイザリの削除**: `runAdvisoryFetcher()`は、収集元から消えた（撤回・訂正された）アドバイザリを永久に残さず削除する。各`AdvisoryFetcher`は`isCompleteSnapshot(): boolean`を実装し、`fetch()`が常に**完全な現在のセット**を返す場合（全ページ再スクレイピング/全アーカイブ取得方式——Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPUの大多数がこれに該当）は`true`を、直近の一部だけを取得する設定の場合（PAN/Ciscoの`mode: 'latest'`、Oracle CPUの`latestOnly`）は`false`を返す——部分ウィンドウに対して削除判定を行うと、たまたまウィンドウ外にあるだけの正しいデータまで消してしまうため。削除対象になるのは完全スナップショット方式の実行時のみで、しかも1回消えただけでは削除せず、**3回連続**で見えなかった場合にのみハード削除する（`AdvisoryVulnerability.missingRunCount`、再度見つかれば0にリセット）——一時的なスクレイピング失敗を大量撤回と誤判定しないための猶予。フェッチ結果が0件の場合は削除判定自体を完全にスキップする（パーサー/フェッチのバグで空配列が返るケースと区別がつかないため、「全件撤回された」とは絶対に解釈しない）。アドバイザリを削除する際、そのマスター`Vulnerability`行が当該アドバイザリのみで管理されていた（CVE/OSVデータを持たない`advisoryId`管理のみ）場合は、他に参照するアドバイザリが無ければマスター行も一緒に削除する。
 
 #### Fortinet PSIRT取得 ([src/worker/fortinet-fetcher.ts](src/worker/fortinet-fetcher.ts))
 - PSIRT アドバイザリ一覧ページ (`fortiguard.fortinet.com/psirt?page=N`) を全ページスクレイピングして完全な過去アーカイブを取得。以前は RSS フィード (`https://filestore.fortinet.com/fortiguard/rss/ir.xml`) のみで新着を発見していたが、これは「新着」フィードであり直近の一部しか見えなかった（[境界値精度検証](ACCURACY.ja.md#境界値スイープfortinet--palo-alto-networks)の実装中に発見）
@@ -853,9 +854,9 @@ pnpm import:oracle-cpu                # 全履歴 CPU（RSS から全件）
 pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # 最新 CPU のみ
 ```
 
-- Oracle 公式 RSS → CSAF 2.0 JSON（四半期ごとに公開）
-- Fortinet/Cisco と同じ CSAF 2.0 形式を使用
-- 各 CPU 内の CVE を個別 Advisory エントリに分割（externalId: `cpuapr2026-CVE-XXXX-NNNN`）
+- Oracle 公式 RSS で発見（27〜28四半期分、CPUJan2020まで遡れる — Oracle自身のフィードがそれより古いものを含んでいない）
+- CSAF 2.0 JSON（CPUApr2022以降）で取得し、CSAFが存在しないCPUJan2020〜CPUApr2022は旧CVRF 1.1 XML形式にフォールバック。CPUJan2020より前はどちらの形式も存在せず未対応（対応するには旧HTMLアドバイザリページの個別スクレイピングが必要）
+- 各 CPU 内の CVE を個別 Advisory エントリに分割（externalId: `cpuapr2026-CVE-XXXX-NNNN`）する際、同じCVEが複数の`<Vulnerability>`要素（製品サブセットごとに分かれている場合がある）にまたがるケースをマージしてから1エントリにする（マージしないと後のエントリが前のエントリの製品データを上書きして消してしまう）
 - 1 CPU あたり約 450 CVE（MySQL・Java SE・WebLogic・E-Business Suite 等 Oracle ソフトウェア全般を対象）
 - `advisory-oracle-linux`（ELSA）とは別データ — こちらは Oracle ソフトウェア製品の CPU
 

@@ -353,6 +353,7 @@ export class PanFetcher implements AdvisoryFetcher {
   }
 
   source(): string { return 'paloalto'; }
+  isCompleteSnapshot(): boolean { return this.mode === 'all'; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     // Fetch the list of advisory IDs with their pubDate

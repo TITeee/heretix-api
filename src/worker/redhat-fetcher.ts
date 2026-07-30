@@ -132,6 +132,10 @@ export class RedHatFetcher implements AdvisoryFetcher {
     return 'red-hat';
   }
 
+  isCompleteSnapshot(): boolean {
+    return true;
+  }
+
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info({ url: this.feedUrl }, 'Downloading Red Hat OVAL feed');
 

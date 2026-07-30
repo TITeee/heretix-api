@@ -147,6 +147,10 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
     return 'oracle-linux';
   }
 
+  isCompleteSnapshot(): boolean {
+    return true;
+  }
+
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info({ url: this.feedUrl }, 'Downloading Oracle Linux OVAL feed');
 

@@ -161,6 +161,7 @@ function parseRow(rowHtml: string): NormalizedAdvisory | null {
 
 export class SplunkFetcher implements AdvisoryFetcher {
   source(): string { return 'advisory-splunk'; }
+  isCompleteSnapshot(): boolean { return true; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching Splunk security advisories archive');

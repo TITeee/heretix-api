@@ -131,6 +131,7 @@ export class SophosFetcher implements AdvisoryFetcher {
   }
 
   source(): string { return 'advisory-sophos'; }
+  isCompleteSnapshot(): boolean { return true; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching Sophos security advisories');

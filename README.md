@@ -494,6 +494,7 @@ Semantic versions are converted to integers for fast range queries:
 - Implement the `AdvisoryFetcher` interface to add new vendors
 - `importAdvisoryData()` handles master table linkage automatically
 - Import priority: CVE present → link to existing NVD record / no CVE → manage via `advisoryId`
+- **Stale-advisory pruning**: `runAdvisoryFetcher()` deletes advisories that have vanished from the source (retracted, corrected) rather than keeping them forever. Each `AdvisoryFetcher` implements `isCompleteSnapshot(): boolean` — `true` for fetchers whose `fetch()` always returns the *complete* current set (a full re-scrape/archive fetch, the vast majority — Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPU), `false` when configured for a partial recent window (PAN/Cisco's `mode: 'latest'`, Oracle CPU's `latestOnly`) — pruning against a partial window would delete perfectly valid advisories that just fall outside it. Only complete-snapshot runs are eligible for pruning, and even then an advisory must be missing for 3 consecutive runs (`AdvisoryVulnerability.missingRunCount`, resets to 0 whenever it's seen again) before being hard-deleted, to tolerate a transient scrape hiccup rather than treating one bad run as a mass retraction. A run that returns zero advisories at all skips pruning entirely (indistinguishable from a parser/fetch bug returning an empty array without throwing — never treated as "everything was retracted"). Deleting an advisory also deletes its master `Vulnerability` row if that row was solely `advisoryId`-managed (no CVE/OSV data) and no other advisory still references it.
 
 ### Fortinet PSIRT ([src/worker/fortinet-fetcher.ts](src/worker/fortinet-fetcher.ts))
 
@@ -720,15 +721,16 @@ pnpm import:broadcom                  # All VMSA advisories (JSON API + Playwrig
 
 ### Oracle Critical Patch Update
 
-Oracle quarterly CPU advisories in CSAF 2.0 format. No authentication required.
+Oracle quarterly CPU advisories. No authentication required.
 
 ```bash
 pnpm import:oracle-cpu                # All historical CPUs (via RSS)
 pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # Most recent CPU only
 ```
 
-- Discovers CPUs from Oracle RSS → fetches CSAF 2.0 JSON per CPU (same format as Fortinet/Cisco)
-- Each CPU is split into per-CVE advisory entries (`externalId: cpuapr2026-CVE-XXXX-NNNN`)
+- Discovers CPUs from Oracle RSS (28 quarters back to CPUJan2020 — Oracle's own feed doesn't go back further)
+- Fetches CSAF 2.0 JSON per CPU (CPUApr2022 onward), falling back to the older CVRF 1.1 XML format for CPUJan2020–CPUApr2022, where CSAF isn't published. CPUs before CPUJan2020 have neither format and aren't covered (would require scraping the legacy HTML advisory pages)
+- Each CPU is split into per-CVE advisory entries (`externalId: cpuapr2026-CVE-XXXX-NNNN`), merging affected products from every `<Vulnerability>` element sharing that CVE (a single CVE can be split across several CVRF entries, one per affected-product subset — naively taking one entry per CVE would silently drop the rest)
 - ~450 CVEs per CPU covering MySQL, Java SE, WebLogic, E-Business Suite, Fusion Middleware, etc.
 - Separate from `advisory-oracle-linux` (ELSA) — this covers Oracle software products, not OS packages
 
