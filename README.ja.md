@@ -1041,11 +1041,13 @@ Debianの大半のエントリ（および一部のUbuntu/Alpine）は、この`
 
 エコシステムエイリアス: `composer` は自動的に `Packagist`（PHP Composer パッケージの OSV エコシステム名）に変換される。
 
-### RHEL/Oracle Linuxのモジュールストリームによる偽陽性（デフォルト検索は対処済み）
+### RHEL/Oracle Linuxのモジュールストリームによる偽陽性（デフォルト検索は対処済み、PostgreSQLは正式修正済み）
 
 RHEL/Oracle Linuxは一部のソフトウェアをDNFモジュールストリーム——同一パッケージ名の下に複数のバージョン系統が並行共存する形式——で配布している（例: `postgresql:12`/`:13`/`:15`/`:16`/`:17`/`:18`、同様に`nodejs`, `mariadb`, `php`, `ruby`, `redis`, `podman`, `qemu-kvm`, `libvirt`等）。元となるOVALフィード自体が「`<package>`は`<version>`より前は脆弱」という上限のみの条件しか表現できず下限がないため、新しい系統（例: postgresql:18が`18.4-2.module+el9.8.0...`で修正）向けの行が、無関係な古い系統のクエリ（例: postgresql 16.4）まで数値的に巻き込んでしまう——上記のソフトウェア群を含む155製品名で確認済み。
 
-大半のRPMパッケージは単一のバージョン系統しか持たず、この上限のみの比較でも正しく動作するため、修正範囲は狭く絞った: `ecosystem`未指定時のデフォルト検索では、`versionEnd`にモジュールビルドのマーカーである`.module+`を含む行だけを除外し、RHEL/Oracle Linuxが追跡する9,519製品名のうち9,364はこの変更の影響を受けない。`ecosystem=Red Hat:*`/`oracle-linux`を明示指定した場合は引き続きRPM精密比較の`searchAdvisoryRpm()`経路を通るが、こちらはモジュールストリーム製品について同じ下限欠如の問題を抱えたままで今回は未修正——正しく直すにはOVALフィードにない各系統自体のバージョン下限をモジュールメタデータから推定する必要があり、より大きなバックフィル作業になるため。この問題を発見したPostgreSQLの境界値検証データは[ACCURACY.md](ACCURACY.md)を参照。
+大半のRPMパッケージは単一のバージョン系統しか持たず、この上限のみの比較でも正しく動作するため、デフォルト検索側の対処は狭く絞ってある: `ecosystem`未指定時は、`versionEnd`にモジュールビルドのマーカーである`.module+`を含む行だけを除外し、RHEL/Oracle Linuxが追跡する9,519製品名のうち9,364はこの変更の影響を受けない。
+
+`product=postgresql`に限っては、回避策ではなく本来の修正を行った: `importAdvisoryData()`（[`src/worker/advisory-helpers.ts`](src/worker/advisory-helpers.ts)）が、ベンダー側が下限を提供しないモジュールストリーム行について、自身の`versionEnd`から`versionStart`（例: `18.4-2.module+...`で修正の行なら`18.0`）を推定するようになり、`searchAdvisoryRpm()`も`versionStart`を実際にチェックするようになった（従来は値が入っていても完全に無視していた）。これはpostgresql固有に限って安全性を検証済み（実データで6系統がいずれも綺麗にX.0から始まることを確認、`pnpm validate:postgresql`で実測——[ACCURACY.md](ACCURACY.md)参照）で、デフォルト検索と`ecosystem=Red Hat:*`/`oracle-linux`明示指定の両方に適用される。上記の他のモジュールストリーム製品（同じ構造を持つが、同水準の精度検証ツールが無く、適用前に効果を実測できない）には**一般化していない**——特に`nodejs`は影響範囲が大きく（8系統・476行、加えて`npm`/`nodejs-devel`等の関連パッケージは単一製品名チェックでは対応できない）、`validate-nodejs`に相当する検証スクリプトもまだ無い。
 
 ### Go サブモジュールは完全なモジュールパスで検索する必要がある
 

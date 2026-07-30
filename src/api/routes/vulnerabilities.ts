@@ -398,7 +398,10 @@ async function searchAdvisoryRpm(
   });
 
   const filtered = version
-    ? rows.filter(r => r.versionEnd && compareRpmVersions(version, r.versionEnd) < 0)
+    ? rows.filter(r =>
+        r.versionEnd && compareRpmVersions(version, r.versionEnd) < 0 &&
+        (!r.versionStart || compareRpmVersions(version, r.versionStart) >= 0),
+      )
     : rows;
   const approximate = version === undefined;
 

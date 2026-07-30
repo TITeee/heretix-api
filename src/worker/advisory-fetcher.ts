@@ -1,6 +1,7 @@
 import { prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
 import { logger } from '../utils/logger.js';
+import { inferPostgresqlModuleVersionStart } from './advisory-helpers.js';
 import type { Prisma } from '@prisma/client';
 
 // ─── Common Interfaces ────────────────────────────────────────
@@ -143,8 +144,11 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
     await tx.advisoryAffectedProduct.deleteMany({ where: { advisoryId: advisory.id } });
 
     for (const prod of adv.affectedProducts) {
-      const versionStartInt = prod.versionStart
-        ? (normalizeVersion(prod.versionStart) ?? null)
+      const effectiveVersionStart = inferPostgresqlModuleVersionStart(
+        prod.product.trim(), prod.versionStart, prod.versionEnd,
+      );
+      const versionStartInt = effectiveVersionStart
+        ? (normalizeVersion(effectiveVersionStart) ?? null)
         : null;
       // versionFixed has the same exclusive-upper-bound semantics as versionEnd:
       // "fixed in X.Y.Z" means versions < X.Y.Z are affected → use as fallback for range queries.
@@ -161,7 +165,7 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
           advisoryId: advisory.id,
           vendor: prod.vendor.trim(),
           product: prod.product.trim(),
-          versionStart: prod.versionStart ?? null,
+          versionStart: effectiveVersionStart ?? null,
           versionEnd: prod.versionEnd ?? null,
           versionFixed: prod.versionFixed ?? null,
           lastAffected: prod.lastAffected ?? null,
@@ -194,8 +198,14 @@ const PRUNE_THRESHOLD = 3;
  * no other AdvisoryVulnerability still references it.
  */
 async function pruneStaleAdvisories(source: string, seenExternalIds: Set<string>): Promise<{ deleted: number; warned: number }> {
-  const missing = await prisma.advisoryVulnerability.findMany({
-    where: { source, externalId: { notIn: [...seenExternalIds] } },
+  // Diff in application code rather than a SQL `externalId NOT IN (...)` —
+  // large full-snapshot sources (Red Hat, Oracle Linux) can have tens of
+  // thousands of seen externalIds in one run, and binding that many
+  // parameters into a single query exceeds the driver's parameter limit
+  // (Prisma P2029). A plain per-source SELECT has exactly one parameter
+  // regardless of table size.
+  const existing = await prisma.advisoryVulnerability.findMany({
+    where: { source },
     select: {
       id: true,
       externalId: true,
@@ -204,6 +214,7 @@ async function pruneStaleAdvisories(source: string, seenExternalIds: Set<string>
       masterVuln: { select: { id: true, cveId: true, osvId: true } },
     },
   });
+  const missing = existing.filter(row => !seenExternalIds.has(row.externalId));
 
   let deleted = 0;
   let warned = 0;
