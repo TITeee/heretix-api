@@ -175,9 +175,10 @@ curl "http://localhost:3001/api/v1/vulnerabilities/search?package=FortiOS&versio
 | `ecosystem` | 検索対象ソース | バージョン比較方式 | 理由 |
 |---|---|---|---|
 | 言語エコシステム（`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`） | **OSV のみ** | semver 範囲比較 | NVD/Advisory には言語パッケージと同名の C ライブラリ/OS パッケージが含まれており（例: C の `bzip2` vs npm の `bzip2`）、検索すると誤検知になるため |
-| `Red Hat:*`（例: `Red Hat:9`） | **ベンダーアドバイザリ（OVAL）のみ** | RPM 比較（`rpmvercmp`）、アドバイザリの `versionEnd` と直接比較 | OSV に Red Hat エコシステムが存在しないため、RHEL の脆弱性情報はベンダー OVAL フィードが唯一のソース |
+| `Red Hat:*`（例: `Red Hat:9`）/ `oracle-linux` | **ベンダーアドバイザリ（OVAL）のみ** | RPM 比較（`rpmvercmp`）、アドバイザリの `versionEnd` と直接比較 | OSV に Red Hat/Oracle Linux エコシステムが存在しないため、ベンダー OVAL フィードが唯一のソース。OVALの「`X`より前は脆弱」というデータには下限がないため、RPMモジュールストリーム製品（postgresql, nodejs, mariadb, php, ruby, redis, podman, qemu-kvm, libvirt等、同一プロダクト名の下に複数バージョン系統が並行するもの）では、ある系統の修正バージョンが無関係な別系統のクエリを数値的に巻き込まないよう、ecosystemの明示指定が必要 |
 | その他ディストロ（`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`） | **OSV のみ** | `affectedVersions` との完全一致（dpkg/rpm 形式のバージョン文字列） | ディストロのアドバイザリは「パッチ適用が必要」を表現しているだけでアップストリームのバージョン範囲ではないため（詳細は [既知の問題・制限事項](#既知の問題制限事項) 参照）。ベンダーアドバイザリのプロダクト名もディストロのパッケージ名と衝突しうる |
-| 未指定 | OSV（ディストロエコシステムを除く）+ NVD + Advisory | semver 範囲比較 | デフォルト。特定エコシステムに紐づかない名前（`openssl`, `FortiOS` 等）に向く |
+| `advisory` | **ベンダーアドバイザリのみ**（Fortinet, PAN, Apache, Tomcat, nginx 等） | semver 範囲比較（アドバイザリ自身のバージョンフィールドと比較） | 実在するNVD/OSVのエコシステム名ではないため両方とも空振りする一方、`searchAdvisory()`自体はecosystemで絞り込みを行わないため影響を受けず、フルの結果を返す。NVD/OSVのノイズを除いてベンダーアドバイザリだけを検索したい場合に使う |
+| 未指定 | OSV（ディストロエコシステムを除く）+ NVD + Advisory（Red Hat/Oracle LinuxのOVALデータは除外— 上の行を参照） | semver 範囲比較 | デフォルト。特定エコシステムに紐づかない名前（`openssl`, `FortiOS` 等）に向く |
 
 ```bash
 # 言語エコシステム — OSV のみ
@@ -188,6 +189,9 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 
 # ディストロエコシステム — バージョン文字列の完全一致
 curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosystem=Ubuntu:20.04:LTS"
+
+# advisory — ベンダーアドバイザリのみ、NVD/OSVを除外
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=httpd&version=2.4.60&ecosystem=advisory"
 ```
 
 **レスポンス例:**
@@ -497,6 +501,7 @@ Vulnerability (マスター)
 - `AdvisoryFetcher` インターフェースを実装することで新規ベンダーを追加可能
 - `importAdvisoryData()` が `Vulnerability` マスターテーブルへの自動紐付けを担当
 - インポート時の優先度: CVE あり → 既存 NVD レコードにリンク / CVE なし → `advisoryId` でマスター管理
+- **消失アドバイザリの削除**: `runAdvisoryFetcher()`は、収集元から消えた（撤回・訂正された）アドバイザリを永久に残さず削除する。各`AdvisoryFetcher`は`isCompleteSnapshot(): boolean`を実装し、`fetch()`が常に**完全な現在のセット**を返す場合（全ページ再スクレイピング/全アーカイブ取得方式——Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPUの大多数がこれに該当）は`true`を、直近の一部だけを取得する設定の場合（PAN/Ciscoの`mode: 'latest'`、Oracle CPUの`latestOnly`）は`false`を返す——部分ウィンドウに対して削除判定を行うと、たまたまウィンドウ外にあるだけの正しいデータまで消してしまうため。削除対象になるのは完全スナップショット方式の実行時のみで、しかも1回消えただけでは削除せず、**3回連続**で見えなかった場合にのみハード削除する（`AdvisoryVulnerability.missingRunCount`、再度見つかれば0にリセット）——一時的なスクレイピング失敗を大量撤回と誤判定しないための猶予。フェッチ結果が0件の場合は削除判定自体を完全にスキップする（パーサー/フェッチのバグで空配列が返るケースと区別がつかないため、「全件撤回された」とは絶対に解釈しない）。アドバイザリを削除する際、そのマスター`Vulnerability`行が当該アドバイザリのみで管理されていた（CVE/OSVデータを持たない`advisoryId`管理のみ）場合は、他に参照するアドバイザリが無ければマスター行も一緒に削除する。
 
 #### Fortinet PSIRT取得 ([src/worker/fortinet-fetcher.ts](src/worker/fortinet-fetcher.ts))
 - PSIRT アドバイザリ一覧ページ (`fortiguard.fortinet.com/psirt?page=N`) を全ページスクレイピングして完全な過去アーカイブを取得。以前は RSS フィード (`https://filestore.fortinet.com/fortiguard/rss/ir.xml`) のみで新着を発見していたが、これは「新着」フィードであり直近の一部しか見えなかった（[境界値精度検証](ACCURACY.ja.md#境界値スイープfortinet--palo-alto-networks)の実装中に発見）
@@ -853,9 +858,9 @@ pnpm import:oracle-cpu                # 全履歴 CPU（RSS から全件）
 pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # 最新 CPU のみ
 ```
 
-- Oracle 公式 RSS → CSAF 2.0 JSON（四半期ごとに公開）
-- Fortinet/Cisco と同じ CSAF 2.0 形式を使用
-- 各 CPU 内の CVE を個別 Advisory エントリに分割（externalId: `cpuapr2026-CVE-XXXX-NNNN`）
+- Oracle 公式 RSS で発見（27〜28四半期分、CPUJan2020まで遡れる — Oracle自身のフィードがそれより古いものを含んでいない）
+- CSAF 2.0 JSON（CPUApr2022以降）で取得し、CSAFが存在しないCPUJan2020〜CPUApr2022は旧CVRF 1.1 XML形式にフォールバック。CPUJan2020より前はどちらの形式も存在せず未対応（対応するには旧HTMLアドバイザリページの個別スクレイピングが必要）
+- 各 CPU 内の CVE を個別 Advisory エントリに分割（externalId: `cpuapr2026-CVE-XXXX-NNNN`）する際、同じCVEが複数の`<Vulnerability>`要素（製品サブセットごとに分かれている場合がある）にまたがるケースをマージしてから1エントリにする（マージしないと後のエントリが前のエントリの製品データを上書きして消してしまう）
 - 1 CPU あたり約 450 CVE（MySQL・Java SE・WebLogic・E-Business Suite 等 Oracle ソフトウェア全般を対象）
 - `advisory-oracle-linux`（ELSA）とは別データ — こちらは Oracle ソフトウェア製品の CPU
 
@@ -1035,6 +1040,14 @@ Ubuntu/Debian 系の OSV アドバイザリは `introduced: "0"` + `fixed: "<ubu
 Debianの大半のエントリ（および一部のUbuntu/Alpine）は、この`introduced`/`fixed`範囲のみを公開しており、明示的な`affectedVersions`一覧を一切持たない——完全一致方式だけでは、どんなバージョンを指定してもこれらの行が絶対にヒットしない（Debianの OSV データの約68%がこの影響を受けることを確認済み）。`compareDpkgVersions()`（[`src/utils/dpkg-version.ts`](src/utils/dpkg-version.ts)、dpkgのバージョン比較アルゴリズム）による範囲比較のフォールバックを`Ubuntu:*`/`Debian:*`/`Alpine:*`エコシステムに追加して修正した。完全一致を先に試し、一覧にバージョンが含まれない（または一覧自体が存在しない）場合のみ範囲比較にフォールバックするため、既に正しく動いていた完全一致の結果には影響しない。
 
 エコシステムエイリアス: `composer` は自動的に `Packagist`（PHP Composer パッケージの OSV エコシステム名）に変換される。
+
+### RHEL/Oracle Linuxのモジュールストリームによる偽陽性（デフォルト検索は対処済み、PostgreSQLは正式修正済み）
+
+RHEL/Oracle Linuxは一部のソフトウェアをDNFモジュールストリーム——同一パッケージ名の下に複数のバージョン系統が並行共存する形式——で配布している（例: `postgresql:12`/`:13`/`:15`/`:16`/`:17`/`:18`、同様に`nodejs`, `mariadb`, `php`, `ruby`, `redis`, `podman`, `qemu-kvm`, `libvirt`等）。元となるOVALフィード自体が「`<package>`は`<version>`より前は脆弱」という上限のみの条件しか表現できず下限がないため、新しい系統（例: postgresql:18が`18.4-2.module+el9.8.0...`で修正）向けの行が、無関係な古い系統のクエリ（例: postgresql 16.4）まで数値的に巻き込んでしまう——上記のソフトウェア群を含む155製品名で確認済み。
+
+大半のRPMパッケージは単一のバージョン系統しか持たず、この上限のみの比較でも正しく動作するため、デフォルト検索側の対処は狭く絞ってある: `ecosystem`未指定時は、`versionEnd`にモジュールビルドのマーカーである`.module+`を含む行だけを除外し、RHEL/Oracle Linuxが追跡する9,519製品名のうち9,364はこの変更の影響を受けない。
+
+`product=postgresql`に限っては、回避策ではなく本来の修正を行った: `importAdvisoryData()`（[`src/worker/advisory-helpers.ts`](src/worker/advisory-helpers.ts)）が、ベンダー側が下限を提供しないモジュールストリーム行について、自身の`versionEnd`から`versionStart`（例: `18.4-2.module+...`で修正の行なら`18.0`）を推定するようになり、`searchAdvisoryRpm()`も`versionStart`を実際にチェックするようになった（従来は値が入っていても完全に無視していた）。これはpostgresql固有に限って安全性を検証済み（実データで6系統がいずれも綺麗にX.0から始まることを確認、`pnpm validate:postgresql`で実測——[ACCURACY.md](ACCURACY.md)参照）で、デフォルト検索と`ecosystem=Red Hat:*`/`oracle-linux`明示指定の両方に適用される。上記の他のモジュールストリーム製品（同じ構造を持つが、同水準の精度検証ツールが無く、適用前に効果を実測できない）には**一般化していない**——特に`nodejs`は影響範囲が大きく（8系統・476行、加えて`npm`/`nodejs-devel`等の関連パッケージは単一製品名チェックでは対応できない）、`validate-nodejs`に相当する検証スクリプトもまだ無い。
 
 ### Go サブモジュールは完全なモジュールパスで検索する必要がある
 

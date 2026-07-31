@@ -135,6 +135,7 @@ function parseAdvisoryBlock(b: AdvisoryBlock): NormalizedAdvisory | null {
 
 export class ApacheFetcher implements AdvisoryFetcher {
   source(): string { return 'advisory-apache'; }
+  isCompleteSnapshot(): boolean { return true; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching Apache httpd 2.4 security advisories');

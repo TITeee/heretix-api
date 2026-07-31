@@ -148,6 +148,7 @@ export function groupByAdvisory(entries: RawEntry[]): NormalizedAdvisory[] {
 
 export class TomcatFetcher implements AdvisoryFetcher {
   source(): string { return 'advisory-tomcat'; }
+  isCompleteSnapshot(): boolean { return true; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching Apache Tomcat security advisories');

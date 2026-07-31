@@ -196,6 +196,7 @@ async function fetchDetailVersions(notificationUrl: string): Promise<ProductVers
 
 export class BroadcomFetcher implements AdvisoryFetcher {
   source(): string { return 'advisory-broadcom'; }
+  isCompleteSnapshot(): boolean { return true; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching Broadcom/VMware security advisories');

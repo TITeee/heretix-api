@@ -229,6 +229,11 @@ model AdvisoryVulnerability {
   fetchedAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  // 消失検知用（全件スナップショット方式のfetcherのみ対象）
+  // フェッチ結果に含まれなかった連続回数。再度見つかれば0にリセットされる。
+  // 閾値（PRUNE_THRESHOLD、advisory-fetcher.ts）に達すると削除される。
+  missingRunCount Int @default(0)
+
   // マスターテーブルへの参照（FK）
   masterVulnId  String?
   masterVuln    Vulnerability? @relation(fields: [masterVulnId], references: [id])

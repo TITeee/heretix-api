@@ -131,6 +131,7 @@ export function groupByAdvisory(entries: RawEntry[]): NormalizedAdvisory[] {
 
 export class NginxFetcher implements AdvisoryFetcher {
   source(): string { return 'advisory-nginx'; }
+  isCompleteSnapshot(): boolean { return true; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching nginx security advisories');

@@ -182,9 +182,10 @@ The `ecosystem` parameter changes *which sources are queried* and *how versions 
 | `ecosystem` | Sources queried | Version comparison | Why |
 |---|---|---|---|
 | Language ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`) | **OSV only** | semver range | NVD/Advisory carry C-library/OS entries that share names with language packages (e.g. C `bzip2` vs. npm `bzip2`) — querying them here would produce false positives |
-| `Red Hat:*` (e.g. `Red Hat:9`) | **Vendor advisory (OVAL) only** | RPM (`rpmvercmp`), against the advisory's `versionEnd` | OSV has no Red Hat ecosystem — the vendor OVAL feed is the only source of RHEL vulnerability data |
+| `Red Hat:*` (e.g. `Red Hat:9`) / `oracle-linux` | **Vendor advisory (OVAL) only** | RPM (`rpmvercmp`), against the advisory's `versionEnd` | OSV has no Red Hat/Oracle Linux ecosystem — the vendor OVAL feed is the only source of RHEL/Oracle Linux vulnerability data |
 | Other distro ecosystems (`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`) | **OSV only** | Exact match against `affectedVersions` (dpkg/rpm version strings) | Distro advisories express "needs a patched build," not an upstream version range (see [Known Issues](#known-issues)); vendor advisory product names also overlap with distro package names |
-| Not specified | OSV (distro ecosystems excluded) + NVD + Advisory | semver range | Default — best for names not tied to a single ecosystem (e.g. `openssl`, `FortiOS`) |
+| `advisory` | **Vendor advisory only** (Fortinet, PAN, Apache, Tomcat, nginx, etc.) | semver range, against the advisory's own version fields | Not a real NVD/OSV ecosystem name, so both return nothing for it — searchAdvisory() itself doesn't filter by ecosystem at all, so it's unaffected and returns its full result set. Use this to search vendor advisories only, with NVD/OSV noise excluded |
+| Not specified | OSV (distro ecosystems excluded) + NVD + Advisory (RPM module-stream rows excluded — see [Known Issues](#known-issues)) | semver range | Default — best for names not tied to a single ecosystem (e.g. `openssl`, `FortiOS`) |
 
 ```bash
 # Language ecosystem — OSV only
@@ -195,6 +196,9 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 
 # Distro ecosystem — exact version-string match
 curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosystem=Ubuntu:20.04:LTS"
+
+# advisory — vendor advisories only, NVD/OSV excluded
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=httpd&version=2.4.60&ecosystem=advisory"
 ```
 
 **Response:**
@@ -494,6 +498,7 @@ Semantic versions are converted to integers for fast range queries:
 - Implement the `AdvisoryFetcher` interface to add new vendors
 - `importAdvisoryData()` handles master table linkage automatically
 - Import priority: CVE present → link to existing NVD record / no CVE → manage via `advisoryId`
+- **Stale-advisory pruning**: `runAdvisoryFetcher()` deletes advisories that have vanished from the source (retracted, corrected) rather than keeping them forever. Each `AdvisoryFetcher` implements `isCompleteSnapshot(): boolean` — `true` for fetchers whose `fetch()` always returns the *complete* current set (a full re-scrape/archive fetch, the vast majority — Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPU), `false` when configured for a partial recent window (PAN/Cisco's `mode: 'latest'`, Oracle CPU's `latestOnly`) — pruning against a partial window would delete perfectly valid advisories that just fall outside it. Only complete-snapshot runs are eligible for pruning, and even then an advisory must be missing for 3 consecutive runs (`AdvisoryVulnerability.missingRunCount`, resets to 0 whenever it's seen again) before being hard-deleted, to tolerate a transient scrape hiccup rather than treating one bad run as a mass retraction. A run that returns zero advisories at all skips pruning entirely (indistinguishable from a parser/fetch bug returning an empty array without throwing — never treated as "everything was retracted"). Deleting an advisory also deletes its master `Vulnerability` row if that row was solely `advisoryId`-managed (no CVE/OSV data) and no other advisory still references it.
 
 ### Fortinet PSIRT ([src/worker/fortinet-fetcher.ts](src/worker/fortinet-fetcher.ts))
 
@@ -720,15 +725,16 @@ pnpm import:broadcom                  # All VMSA advisories (JSON API + Playwrig
 
 ### Oracle Critical Patch Update
 
-Oracle quarterly CPU advisories in CSAF 2.0 format. No authentication required.
+Oracle quarterly CPU advisories. No authentication required.
 
 ```bash
 pnpm import:oracle-cpu                # All historical CPUs (via RSS)
 pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # Most recent CPU only
 ```
 
-- Discovers CPUs from Oracle RSS → fetches CSAF 2.0 JSON per CPU (same format as Fortinet/Cisco)
-- Each CPU is split into per-CVE advisory entries (`externalId: cpuapr2026-CVE-XXXX-NNNN`)
+- Discovers CPUs from Oracle RSS (28 quarters back to CPUJan2020 — Oracle's own feed doesn't go back further)
+- Fetches CSAF 2.0 JSON per CPU (CPUApr2022 onward), falling back to the older CVRF 1.1 XML format for CPUJan2020–CPUApr2022, where CSAF isn't published. CPUs before CPUJan2020 have neither format and aren't covered (would require scraping the legacy HTML advisory pages)
+- Each CPU is split into per-CVE advisory entries (`externalId: cpuapr2026-CVE-XXXX-NNNN`), merging affected products from every `<Vulnerability>` element sharing that CVE (a single CVE can be split across several CVRF entries, one per affected-product subset — naively taking one entry per CVE would silently drop the rest)
 - ~450 CVEs per CPU covering MySQL, Java SE, WebLogic, E-Business Suite, Fusion Middleware, etc.
 - Separate from `advisory-oracle-linux` (ELSA) — this covers Oracle software products, not OS packages
 
@@ -910,6 +916,14 @@ Ubuntu/Debian OSV advisories use `introduced: "0"` + `fixed: "<ubuntu_patched_ve
 Most Debian entries (and a smaller fraction of Ubuntu/Alpine ones) publish only that `introduced`/`fixed` range with no enumerated `affectedVersions` list at all — exact-match alone silently matched nothing for those rows regardless of the version queried (confirmed to affect ~68% of Debian's OSV data). Fixed by adding a `compareDpkgVersions()` ([`src/utils/dpkg-version.ts`](src/utils/dpkg-version.ts), the dpkg version-comparison algorithm) range-comparison fallback for `Ubuntu:*`/`Debian:*`/`Alpine:*` ecosystems: exact-match is tried first, and only falls back to range comparison when the enumerated list doesn't contain (or doesn't exist for) the queried version — so already-correct exact-match results are unaffected.
 
 Ecosystem alias: `composer` is automatically mapped to `Packagist` (OSV's ecosystem name for PHP Composer packages).
+
+### RHEL/Oracle Linux module-stream false positives (mitigated for the default search; fixed for PostgreSQL specifically)
+
+RHEL/Oracle Linux distribute some software as DNF module streams — several parallel, coexisting version lineages under one package name (e.g. `postgresql:12`/`:13`/`:15`/`:16`/`:17`/`:18`, similarly for `nodejs`, `mariadb`, `php`, `ruby`, `redis`, `podman`, `qemu-kvm`, `libvirt`, and others). The underlying OVAL feed only expresses an exclusive upper bound ("`<package>` is earlier than `<version>`") with no lower bound, so a fix-version row for a *newer* stream (e.g. postgresql:18 fixed at `18.4-2.module+el9.8.0...`) has no way to exclude an unrelated, older stream's query (e.g. postgresql 16.4) from numerically matching too — confirmed to affect 155 product names across the packages above.
+
+Since most RPM packages have only a single version lineage (no module streams) and work correctly with this upper-bound-only comparison, the default-search fix is scoped narrowly: no-`ecosystem` search excludes only rows whose `versionEnd` contains the module-build marker `.module+`, leaving the vast majority of RHEL/Oracle Linux data (9,364 of 9,519 tracked product names) unaffected.
+
+For `product=postgresql` specifically, the gap is properly fixed rather than worked around: `importAdvisoryData()` ([`src/worker/advisory-helpers.ts`](src/worker/advisory-helpers.ts)) infers each module-stream row's own version floor (`versionStart = "{major}.0"`, e.g. `18.0` for a row fixed at `18.4-2.module+...`) when the vendor doesn't provide one, and `searchAdvisoryRpm()` now actually checks `versionStart` (it previously ignored the column even when populated). This was verified safe specifically for postgresql — 6 cleanly-bounded parallel streams confirmed via real data, and measured with `pnpm validate:postgresql` (see [ACCURACY.md](ACCURACY.md)) — and applies to both the default search and explicit `ecosystem=Red Hat:*`/`oracle-linux` queries. It is **not** generalized to the other module-stream products listed above (same architecture, but without the same accuracy-validation tooling to confirm the heuristic actually helps before applying it) — `nodejs` in particular has a larger blast radius (8 streams, 476 rows, plus related packages `npm`/`nodejs-devel`/etc. not covered by a single product-name check) and no `validate-nodejs`-equivalent script yet to measure before/after impact.
 
 ### Go sub-module search requires exact module path
 

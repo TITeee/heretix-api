@@ -244,6 +244,7 @@ export class CiscoFetcher implements AdvisoryFetcher {
   }
 
   source(): string { return 'cisco'; }
+  isCompleteSnapshot(): boolean { return this.mode === 'all'; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     if (!this.clientId || !this.clientSecret) {
