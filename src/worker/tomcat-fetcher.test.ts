@@ -49,21 +49,57 @@ describe('parseTomcatPage', () => {
   it('returns an empty array when there is no Affects: line', () => {
     expect(parseTomcatPage('<p>no advisories here</p>', 9)).toEqual([]);
   });
+
+  it('attaches the fix version from the nearest preceding "Fixed in Apache Tomcat X" heading', () => {
+    const html = `
+      <h3 id="Fixed_in_Apache_Tomcat_9.0.121">Fixed in Apache Tomcat 9.0.121</h3>
+      <p><strong>Low: Issue A</strong> <a href="#">CVE-2026-1111</a></p>
+      <p>Affects: 9.0.89 to 9.0.120</p>
+      <h3 id="Fixed_in_Apache_Tomcat_9.0.120">Fixed in Apache Tomcat 9.0.120</h3>
+      <p><strong>Low: Issue B</strong> <a href="#">CVE-2026-2222</a></p>
+      <p>Affects: 9.0.13 to 9.0.119</p>
+      <p><strong>Low: Issue C</strong> <a href="#">CVE-2026-3333</a></p>
+      <p>Affects: 9.0.0.M1 to 9.0.119</p>
+    `;
+    const entries = parseTomcatPage(html, 9);
+    expect(entries.map(e => [e.cveId, e.versionFixed])).toEqual([
+      ['CVE-2026-1111', '9.0.121'],
+      ['CVE-2026-2222', '9.0.120'],
+      ['CVE-2026-3333', '9.0.120'],
+    ]);
+  });
+
+  it('leaves versionFixed undefined when there is no preceding heading', () => {
+    const html = `
+      <p><strong>Important: Fix bypass</strong> <a href="#">CVE-2026-1111</a></p>
+      <p>Affects: 9.0.71 to 9.0.73</p>
+    `;
+    expect(parseTomcatPage(html, 9)[0].versionFixed).toBeUndefined();
+  });
 });
 
 describe('groupByAdvisory', () => {
   it('merges entries for the same CVE across branches into one advisory with multiple affectedProducts', () => {
     const entries = [
-      { cveId: 'CVE-2026-3333', severity: 'critical', range: { introduced: '9.0.0', lastAffected: '9.0.10' }, major: 9 },
-      { cveId: 'CVE-2026-3333', severity: 'critical', range: { introduced: '10.1.0', lastAffected: '10.1.2' }, major: 10 },
+      { cveId: 'CVE-2026-3333', severity: 'critical', range: { introduced: '9.0.0', lastAffected: '9.0.10' }, major: 9, versionFixed: '9.0.11' },
+      { cveId: 'CVE-2026-3333', severity: 'critical', range: { introduced: '10.1.0', lastAffected: '10.1.2' }, major: 10, versionFixed: '10.1.3' },
     ];
     const advisories = groupByAdvisory(entries);
     expect(advisories).toHaveLength(1);
     expect(advisories[0].cveId).toBe('CVE-2026-3333');
     expect(advisories[0].severity).toBe('CRITICAL');
     expect(advisories[0].affectedProducts).toEqual([
-      { vendor: 'apache', product: 'tomcat', versionStart: '9.0.0', lastAffected: '9.0.10' },
-      { vendor: 'apache', product: 'tomcat', versionStart: '10.1.0', lastAffected: '10.1.2' },
+      { vendor: 'apache', product: 'tomcat', versionStart: '9.0.0', lastAffected: '9.0.10', versionFixed: '9.0.11', patchAvailable: true },
+      { vendor: 'apache', product: 'tomcat', versionStart: '10.1.0', lastAffected: '10.1.2', versionFixed: '10.1.3', patchAvailable: true },
+    ]);
+  });
+
+  it('sets patchAvailable to false when no fix version was found', () => {
+    const entries = [
+      { cveId: 'CVE-2026-7777', severity: 'low', range: { introduced: '9.0.0', lastAffected: '9.0.1' }, major: 9 },
+    ];
+    expect(groupByAdvisory(entries)[0].affectedProducts).toEqual([
+      { vendor: 'apache', product: 'tomcat', versionStart: '9.0.0', lastAffected: '9.0.1', versionFixed: undefined, patchAvailable: false },
     ]);
   });
 
