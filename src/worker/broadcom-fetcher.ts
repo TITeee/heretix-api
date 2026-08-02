@@ -236,7 +236,12 @@ export class BroadcomFetcher implements AdvisoryFetcher {
             ? pv.fixed.map(fixedVer => ({
                 vendor: 'broadcom',
                 product: pv.product,
-                versionEnd: fixedVer,  // normalizeVersion handles "X.Y UZw"
+                // Stored as versionFixed (not versionEnd) so it surfaces as the
+                // "Fixed" version in search results — importAdvisoryData() falls
+                // back to versionFixed for range-matching when versionEnd is
+                // absent, so this doesn't change search behavior at all.
+                // normalizeVersion handles "X.Y UZw".
+                versionFixed: fixedVer,
                 patchAvailable: true,
               }))
             : [{ vendor: 'broadcom', product: pv.product, patchAvailable: false }]
