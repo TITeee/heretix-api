@@ -45,7 +45,8 @@
     "validate:ubuntu": "node dist/scripts/validate-ubuntu.js",
     "validate:alpine": "node dist/scripts/validate-alpine.js",
     "validate:fortinet": "node dist/scripts/validate-fortinet.js",
-    "validate:pan": "node dist/scripts/validate-pan.js"
+    "validate:pan": "node dist/scripts/validate-pan.js",
+    "validate:osv-coverage": "node dist/scripts/validate-osv-coverage.js"
   },
   "keywords": [
     "vulnerability",

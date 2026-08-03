@@ -643,6 +643,12 @@ pnpm import:osv update malware       # MAL エントリの差分更新
 
 差分更新は全件 ZIP をダウンロードしますが、`modified` タイムスタンプが前回の `CollectionJob` 完了時刻以前のエントリをスキップします。初回実行時は過去30日分を対象にします。
 
+**新しいエコシステムのオンボーディング**: 日次差分ジョブ（`osv-<ecosystem>`）を動かす**前に**必ず全件取り込み（`ecosystem <name>`）を実行すること——差分側は「カーソル以降に更新されたエントリ」しか拾わないため、初回の全件取り込みがスキップされたり途中で中断されたりすると、それ以降のどの差分実行でも欠落分は二度と取り込まれない。`pnpm import:osv ecosystem <name>`は現在、専用の`osv-full-<ecosystem>`という`CollectionJob`を記録するようになった（差分ジョブの`osv-<ecosystem>`とは別キーなので、ダッシュボード上の差分ジョブの表示を上書きしない）ため、完了したかどうかを後から検証できる——以前はこのコマンドが実行記録を一切残さず、それが原因で大半の追跡対象エコシステムが（GitHub Actionsは3.7%まで）本来あるべき件数を大きく下回ったまま、差分ジョブは毎日「completed」を報告し続けていた。実際の充足率はいつでも以下でライブのOSV一括エクスポートと突き合わせて検証できる:
+```bash
+pnpm validate:osv-coverage              # 追跡中の全エコシステムをチェック
+pnpm validate:osv-coverage Go PyPI      # 指定したエコシステムのみチェック
+```
+
 ### マルウェア検知（MAL エントリ）
 
 [ossf/malicious-packages](https://github.com/ossf/malicious-packages) の悪意あるパッケージ情報をインポートします。
