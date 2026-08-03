@@ -13,6 +13,7 @@ interface RawEntry {
   cveId: string;
   severity: string;
   range: VulnerableRange;
+  versionFixed?: string;
 }
 
 /**
@@ -48,6 +49,46 @@ export function parseVulnerableText(text: string): VulnerableRange[] {
 }
 
 /**
+ * Increment the last dot-separated numeric component of a plain X.Y.Z
+ * version by one (e.g. "1.31.2" → "1.31.3"). Returns null if the last
+ * component isn't a plain integer (nginx versions always are).
+ */
+function bumpLastComponent(version: string): string | null {
+  const parts = version.split('.');
+  const last = parts[parts.length - 1];
+  if (!/^\d+$/.test(last)) return null;
+  parts[parts.length - 1] = String(Number(last) + 1);
+  return parts.join('.');
+}
+
+/**
+ * Parse a "Not vulnerable: X+, Y+, ..." line into candidate fix versions
+ * (the trailing "+" just means "this version and later").
+ */
+function parseNotVulnerableText(text: string): string[] {
+  return text
+    .split(',')
+    .map(s => s.trim().replace(/\+$/, ''))
+    .filter(v => /^\d+\.\d+/.test(v));
+}
+
+/**
+ * nginx.org lists one "Vulnerable: " range alongside a "Not vulnerable: "
+ * line naming the fix version for each currently-supported branch (e.g.
+ * "Not vulnerable: 1.31.3+, 1.30.4+" — mainline fix, then a stable-branch
+ * backport). A single range can have more fix candidates than it has direct
+ * matches (the extra ones are for other branches not represented by their
+ * own range here), so match precisely: the range's own fix is whichever
+ * candidate is exactly one patch version past its lastAffected. Returns
+ * undefined rather than guessing when no candidate lines up exactly.
+ */
+function findVersionFixed(range: VulnerableRange, candidates: string[]): string | undefined {
+  const bumped = bumpLastComponent(range.lastAffected);
+  if (!bumped) return undefined;
+  return candidates.find(c => c === bumped);
+}
+
+/**
  * Parse raw {cveId, severity, range} entries from the nginx.org security
  * advisories page. Old entries without a CVE ID are skipped.
  */
@@ -58,6 +99,9 @@ export function parseNginxPage(html: string): RawEntry[] {
   for (const block of blocks) {
     const cveMatches = [...block.matchAll(/CVE-\d{4}-\d+/g)];
     if (cveMatches.length === 0) continue;
+
+    const notVulnMatch = block.match(/Not vulnerable:\s*([^\n<]+)/i);
+    const fixCandidates = notVulnMatch ? parseNotVulnerableText(notVulnMatch[1]) : [];
 
     const withoutNotVuln = block.replace(/Not vulnerable:[^\n<]*/gi, '');
     const vulnMatch = withoutNotVuln.match(/Vulnerable:\s*([^\n<]+)/i);
@@ -71,7 +115,7 @@ export function parseNginxPage(html: string): RawEntry[] {
 
     for (const cveMatch of cveMatches) {
       for (const range of ranges) {
-        entries.push({ cveId: cveMatch[0], severity, range });
+        entries.push({ cveId: cveMatch[0], severity, range, versionFixed: findVersionFixed(range, fixCandidates) });
       }
     }
   }
@@ -111,6 +155,8 @@ export function groupByAdvisory(entries: RawEntry[]): NormalizedAdvisory[] {
         product: 'nginx',
         versionStart: g.range.introduced,
         lastAffected: g.range.lastAffected,
+        versionFixed: g.versionFixed,
+        patchAvailable: !!g.versionFixed,
       });
     }
 

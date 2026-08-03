@@ -106,15 +106,52 @@ async function main() {
         await importSampleVulnerabilities();
         break;
 
-      case 'ecosystem':
+      case 'ecosystem': {
         if (args.length < 2) {
           logger.error('Missing argument: ecosystem required');
           process.exit(1);
         }
-        // ecosystem command: streaming import of entire ecosystem (memory-efficient)
-        const ecosystemResult = await importOSVEcosystemStreaming(args[1]);
-        console.log(`Done: ${ecosystemResult.succeeded} imported, ${ecosystemResult.failed} failed (total: ${ecosystemResult.total})`);
+        const ecosystem = args[1];
+        // Tracked under a distinct 'osv-full-<ecosystem>' source (not 'osv-<ecosystem>',
+        // which is the daily delta job) so this doesn't clobber the delta job's dashboard
+        // status. Recorded so completeness can be verified later — this command used to
+        // leave no trace at all, which was the whole reason a partial/interrupted full
+        // import could silently start feeding the delta job forever without anyone
+        // noticing the initial backfill never actually finished (see ACCURACY history /
+        // validate-osv-coverage.ts).
+        const job = await prisma.collectionJob.create({
+          data: { source: `osv-full-${ecosystem}`, status: 'running', startedAt: new Date() },
+        });
+
+        try {
+          // ecosystem command: streaming import of entire ecosystem (memory-efficient)
+          const ecosystemResult = await importOSVEcosystemStreaming(ecosystem);
+
+          await prisma.collectionJob.update({
+            where: { id: job.id },
+            data: {
+              status: 'completed',
+              completedAt: new Date(),
+              totalFetched: ecosystemResult.total,
+              totalInserted: ecosystemResult.succeeded,
+              totalFailed: ecosystemResult.failed,
+            },
+          });
+
+          console.log(`Done: ${ecosystemResult.succeeded} imported, ${ecosystemResult.failed} failed (total: ${ecosystemResult.total})`);
+        } catch (err) {
+          await prisma.collectionJob.update({
+            where: { id: job.id },
+            data: {
+              status: 'failed',
+              completedAt: new Date(),
+              errorMessage: err instanceof Error ? err.message : String(err),
+            },
+          });
+          throw err;
+        }
         break;
+      }
 
       case 'package':
         if (args.length < 2) {

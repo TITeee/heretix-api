@@ -21,6 +21,7 @@ interface RawEntry {
   severity: string;
   range: VulnerableRange;
   major: number;
+  versionFixed?: string;
 }
 
 /**
@@ -54,6 +55,32 @@ export function parseAffectsText(raw: string): VulnerableRange | null {
 }
 
 /**
+ * Each branch page is organized into "Fixed in Apache Tomcat X.Y.Z" sections
+ * (<h3 id="Fixed_in_Apache_Tomcat_X.Y.Z">), each covering one or more CVEs
+ * that share that fix version. Locate every section heading's position and
+ * version so entries can be matched to "the nearest preceding heading".
+ */
+function findFixedHeadings(html: string): Array<{ index: number; version: string }> {
+  const headingRegex = /<h3 id="Fixed_in_Apache_Tomcat_([\d.A-Za-z]+)">/g;
+  const headings: Array<{ index: number; version: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = headingRegex.exec(html)) !== null) {
+    headings.push({ index: m.index, version: m[1] });
+  }
+  return headings;
+}
+
+/** Version of the nearest heading at or before `index` (headings are in ascending index order). */
+function fixedVersionAt(headings: Array<{ index: number; version: string }>, index: number): string | undefined {
+  let result: string | undefined;
+  for (const h of headings) {
+    if (h.index > index) break;
+    result = h.version;
+  }
+  return result;
+}
+
+/**
  * Parse raw {cveId, severity, range} entries out of one branch page.
  * CVE IDs are extracted only from the heading area (<strong>Severity: Title</strong> <a>CVE-XXXX</a>)
  * to avoid picking up CVE references mentioned in description paragraphs
@@ -67,6 +94,7 @@ export function parseTomcatPage(html: string, major: number): RawEntry[] {
     hits.push({ index: m.index, text: m[1].trim() });
   }
 
+  const fixedHeadings = findFixedHeadings(html);
   const entries: RawEntry[] = [];
 
   for (let i = 0; i < hits.length; i++) {
@@ -83,9 +111,10 @@ export function parseTomcatPage(html: string, major: number): RawEntry[] {
 
     const sevMatch = headingArea.match(/\b(Critical|Important|Moderate|Low)\b/i);
     const severity = sevMatch ? sevMatch[1].toLowerCase() : 'unknown';
+    const versionFixed = fixedVersionAt(fixedHeadings, index);
 
     for (const cveId of titleCVEs) {
-      entries.push({ cveId, severity, range, major });
+      entries.push({ cveId, severity, range, major, versionFixed });
     }
   }
 
@@ -128,6 +157,8 @@ export function groupByAdvisory(entries: RawEntry[]): NormalizedAdvisory[] {
         product: 'tomcat',
         versionStart: g.range.introduced,
         lastAffected: g.range.lastAffected,
+        versionFixed: g.versionFixed,
+        patchAvailable: !!g.versionFixed,
       });
     }
 

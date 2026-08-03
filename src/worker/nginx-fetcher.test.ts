@@ -35,8 +35,45 @@ describe('parseNginxPage', () => {
     `;
     const entries = parseNginxPage(html);
     expect(entries).toEqual([
-      { cveId: 'CVE-2026-1234', severity: 'medium', range: { introduced: '1.3.0', lastAffected: '1.29.4' } },
+      { cveId: 'CVE-2026-1234', severity: 'medium', range: { introduced: '1.3.0', lastAffected: '1.29.4' }, versionFixed: '1.29.5' },
     ]);
+  });
+
+  it('picks the fix candidate that is exactly one patch past the range\'s lastAffected', () => {
+    const html = `
+      <li>
+        CVE-2026-4321<br/>
+        Not vulnerable: 1.31.3+, 1.30.4+<br/>
+        Vulnerable: 0.9.6-1.31.2<br/>
+      </li>
+    `;
+    expect(parseNginxPage(html)[0].versionFixed).toBe('1.31.3');
+  });
+
+  it('matches each of multiple ranges to its own fix candidate', () => {
+    const html = `
+      <li>
+        CVE-2026-8765<br/>
+        Not vulnerable: 1.5.0+, 1.4.1+, 1.2.9+<br/>
+        Vulnerable: 1.1.4-1.2.8, 1.3.9-1.4.0<br/>
+      </li>
+    `;
+    const entries = parseNginxPage(html);
+    expect(entries.map(e => [e.range.lastAffected, e.versionFixed])).toEqual([
+      ['1.2.8', '1.2.9'],
+      ['1.4.0', '1.4.1'],
+    ]);
+  });
+
+  it('leaves versionFixed undefined when no candidate lines up exactly', () => {
+    const html = `
+      <li>
+        CVE-2026-1357<br/>
+        Not vulnerable: 2.0.0+<br/>
+        Vulnerable: 1.3.0-1.29.4<br/>
+      </li>
+    `;
+    expect(parseNginxPage(html)[0].versionFixed).toBeUndefined();
   });
 
   it('does not mistake "Not vulnerable" text for the "Vulnerable" range', () => {
@@ -67,15 +104,15 @@ describe('parseNginxPage', () => {
 describe('groupByAdvisory', () => {
   it('merges multiple ranges for the same CVE into separate affectedProducts', () => {
     const entries = [
-      { cveId: 'CVE-2026-1111', severity: 'high', range: { introduced: '0.6.18', lastAffected: '1.25.2' } },
+      { cveId: 'CVE-2026-1111', severity: 'high', range: { introduced: '0.6.18', lastAffected: '1.25.2' }, versionFixed: '1.25.3' },
       { cveId: 'CVE-2026-1111', severity: 'high', range: { introduced: '1.21.0', lastAffected: '1.25.1' } },
     ];
     const advisories = groupByAdvisory(entries);
     expect(advisories).toHaveLength(1);
     expect(advisories[0].severity).toBe('HIGH');
     expect(advisories[0].affectedProducts).toEqual([
-      { vendor: 'nginx', product: 'nginx', versionStart: '0.6.18', lastAffected: '1.25.2' },
-      { vendor: 'nginx', product: 'nginx', versionStart: '1.21.0', lastAffected: '1.25.1' },
+      { vendor: 'nginx', product: 'nginx', versionStart: '0.6.18', lastAffected: '1.25.2', versionFixed: '1.25.3', patchAvailable: true },
+      { vendor: 'nginx', product: 'nginx', versionStart: '1.21.0', lastAffected: '1.25.1', versionFixed: undefined, patchAvailable: false },
     ]);
   });
 

@@ -611,6 +611,12 @@ pnpm import:osv id CVE-2021-44228         # By CVE ID
 
 Delta updates (`update <ecosystem>`) download the full ecosystem ZIP but skip entries whose `modified` timestamp is not newer than the last completed `CollectionJob`. `update malware` makes one GitHub tree API call (60 req/hr unauthenticated); set `GITHUB_TOKEN` only if running it more than 60 times per hour.
 
+**Onboarding a new ecosystem**: always run the full `ecosystem <name>` import *before* the daily delta job (`osv-<ecosystem>`) starts running against it — the delta path only ever catches entries modified after its cursor, so if the initial backfill is skipped or interrupted partway, the missing older entries are never picked up by any later delta run. `pnpm import:osv ecosystem <name>` now records its own `osv-full-<ecosystem>` `CollectionJob` (separate from the delta job's `osv-<ecosystem>`, so it doesn't clobber that dashboard row) so a completed run is auditable — this used to leave no trace at all, which is exactly how most tracked ecosystems ended up permanently stuck well below 100% coverage (as low as 3.7% for GitHub Actions) despite their delta jobs reporting "completed" every day. Verify actual completeness against the live OSV bulk export at any time with:
+```bash
+pnpm validate:osv-coverage              # check every tracked ecosystem
+pnpm validate:osv-coverage Go PyPI      # check only the named ecosystem(s)
+```
+
 **Supported ecosystems for `ecosystem` / `update` commands:**
 
 | Ecosystem value | Language / Platform |
