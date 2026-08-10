@@ -73,7 +73,11 @@ export function versionRangeWhere(versionInt: bigint) {
 // (exact match against the versions list) instead of upstream semver range comparison.
 // 'oracle-linux' has no colon-suffixed major version (unlike 'Red Hat:9') — it's
 // matched as a bare, version-less ecosystem value per its documented usage.
-export const DISTRO_ECOSYSTEM_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:', 'AlmaLinux:', 'Rocky:', 'Red Hat:', 'CentOS:', 'oracle-linux'];
+// 'Oracle Linux:' is kept alongside it so this list stays consistent with
+// RPM_ECOSYSTEM_VENDOR's alias — without it, that ecosystem form would route through
+// searchAdvisoryRpm() (correct) but also searchNVD() (unlike every other RPM distro
+// here, which skips NVD once isDistro is true), reintroducing name-collision noise.
+export const DISTRO_ECOSYSTEM_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:', 'AlmaLinux:', 'Rocky:', 'Red Hat:', 'CentOS:', 'Oracle Linux:', 'oracle-linux'];
 
 export function isDistroEcosystem(eco: string): boolean {
   return DISTRO_ECOSYSTEM_PREFIXES.some(p => eco.startsWith(p));
@@ -118,10 +122,22 @@ export function normalizeEcosystem(eco: string | undefined): string | undefined 
 // reads that same string column directly, no precomputed/backfilled data needed).
 // Maps ecosystem prefix (colon-suffixed major version, e.g. "Red Hat:9") →
 // AdvisoryAffectedProduct.vendor value.
+//
+// 'Oracle Linux' is kept here too, as an alias of the canonical bare
+// 'oracle-linux' value below. heretix-cli briefly emitted "Oracle Linux:N" for
+// this ecosystem (2026-04-15 to 2026-08, under the mistaken assumption that all
+// RPM distros shared one prefix+version convention) before being reverted to
+// match this API's actual, documented format — any client or archived data
+// still using that form falls through silently to the lossy BigInt path
+// (searchAdvisory) without this entry, exactly the bug that alias exists to
+// prevent from recurring.
 const RPM_ECOSYSTEM_VENDOR: Record<string, string> = {
   'Red Hat': 'red-hat',
+  'Oracle Linux': 'oracle-linux',
 };
 // Ecosystems matched as an exact, version-less value instead of a colon-suffixed prefix.
+// This is the canonical form heretix-cli sends; see the alias above for the
+// no-longer-emitted "Oracle Linux:N" form.
 const RPM_ECOSYSTEM_VENDOR_EXACT: Record<string, string> = {
   'oracle-linux': 'oracle-linux',
 };
