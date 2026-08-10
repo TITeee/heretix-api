@@ -98,6 +98,10 @@ describe('isDistroEcosystem', () => {
     expect(isDistroEcosystem('oracle-linux')).toBe(true);
   });
 
+  it('recognizes the prefixed "Oracle Linux:N" alias', () => {
+    expect(isDistroEcosystem('Oracle Linux:9')).toBe(true);
+  });
+
   it('rejects language ecosystems', () => {
     expect(isDistroEcosystem('npm')).toBe(false);
   });
@@ -154,6 +158,13 @@ describe('rpmAdvisoryVendor', () => {
 
   it('maps the version-less oracle-linux ecosystem to the oracle-linux vendor', () => {
     expect(rpmAdvisoryVendor('oracle-linux')).toBe('oracle-linux');
+  });
+
+  it('maps the prefixed "Oracle Linux:N" alias to the same oracle-linux vendor', () => {
+    // Older heretix-cli builds (750b4ee..reverted) sent this form; kept as an
+    // alias so a client still emitting it doesn't silently fall back to the
+    // lossy BigInt search path.
+    expect(rpmAdvisoryVendor('Oracle Linux:9')).toBe('oracle-linux');
   });
 
   it('returns null for non-RPM ecosystems', () => {
