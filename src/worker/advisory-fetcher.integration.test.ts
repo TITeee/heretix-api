@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { prisma } from '../db/client.js';
 import { resetDb } from '../test-utils/db.js';
-import { importAdvisoryData, type NormalizedAdvisory } from './advisory-fetcher.js';
+import {
+  importAdvisoryData,
+  runAdvisoryFetcher,
+  type AdvisoryFetcher,
+  type NormalizedAdvisory,
+} from './advisory-fetcher.js';
 
 function makeAdvisory(overrides: Partial<NormalizedAdvisory> = {}): NormalizedAdvisory {
   return {
@@ -16,6 +21,27 @@ function makeAdvisory(overrides: Partial<NormalizedAdvisory> = {}): NormalizedAd
     ...overrides,
   };
 }
+
+/** Minimal AdvisoryFetcher returning a fixed result set, for driving runAdvisoryFetcher. */
+function fakeFetcher(
+  source: string,
+  advisories: NormalizedAdvisory[],
+  isCompleteSnapshot = true,
+): AdvisoryFetcher {
+  return {
+    source: () => source,
+    fetch: async () => advisories,
+    isCompleteSnapshot: () => isCompleteSnapshot,
+  };
+}
+
+const missingRunCountOf = (externalId: string) =>
+  prisma.advisoryVulnerability
+    .findFirst({ where: { externalId }, select: { missingRunCount: true } })
+    .then(r => r?.missingRunCount);
+
+const existsAdvisory = (externalId: string) =>
+  prisma.advisoryVulnerability.count({ where: { externalId } }).then(n => n > 0);
 
 describe('importAdvisoryData', () => {
   beforeEach(async () => {
@@ -119,5 +145,113 @@ describe('importAdvisoryData', () => {
     });
     expect(advisory?.affectedProducts[0].lastAffected).toBe('9.0.73');
     expect(advisory?.affectedProducts[0].lastAffectedInt).not.toBeNull();
+  });
+});
+
+describe('runAdvisoryFetcher — stale-advisory pruning', () => {
+  const KEEP = 'FG-IR-26-KEEP';
+  const STALE = 'FG-IR-26-STALE';
+  const keeper = makeAdvisory({ externalId: KEEP });
+
+  beforeEach(async () => {
+    await resetDb();
+    // Both start out present in the source.
+    await importAdvisoryData(keeper, 'fortinet');
+    await importAdvisoryData(makeAdvisory({ externalId: STALE }), 'fortinet');
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('skips pruning entirely when the fetch returns zero advisories', async () => {
+    // A parser breaking and returning [] without throwing is indistinguishable
+    // from "everything was retracted"; treating it as the latter would wipe
+    // every advisory for the source. Nothing may be touched, not even counted
+    // as missing.
+    const result = await runAdvisoryFetcher(fakeFetcher('fortinet', []));
+
+    expect(result.pruned).toBe(0);
+    expect(await existsAdvisory(STALE)).toBe(true);
+    expect(await missingRunCountOf(STALE)).toBe(0);
+  });
+
+  it('skips pruning for a fetcher reporting a partial snapshot', async () => {
+    // e.g. PAN/Cisco in mode:'latest' — absence only means "outside the
+    // recent window", not "retracted".
+    const result = await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper], false));
+
+    expect(result.pruned).toBe(0);
+    expect(await existsAdvisory(STALE)).toBe(true);
+    expect(await missingRunCountOf(STALE)).toBe(0);
+  });
+
+  it('counts a miss without deleting on the first absent run', async () => {
+    const result = await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+
+    expect(result.pruned).toBe(0);
+    expect(await existsAdvisory(STALE)).toBe(true);
+    expect(await missingRunCountOf(STALE)).toBe(1);
+  });
+
+  it('deletes only after three consecutive absent runs, leaving present advisories alone', async () => {
+    await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+    await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+    expect(await existsAdvisory(STALE)).toBe(true);
+    expect(await missingRunCountOf(STALE)).toBe(2);
+
+    const third = await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+
+    expect(third.pruned).toBe(1);
+    expect(await existsAdvisory(STALE)).toBe(false);
+    expect(await existsAdvisory(KEEP)).toBe(true);
+  });
+
+  it('resets the miss counter when an advisory reappears', async () => {
+    await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+    await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+    expect(await missingRunCountOf(STALE)).toBe(2);
+
+    // Reappears — a transient scrape hiccup, not a retraction.
+    await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper, makeAdvisory({ externalId: STALE })]));
+    expect(await missingRunCountOf(STALE)).toBe(0);
+
+    // And the count restarts, so it survives what would otherwise be the
+    // deleting run.
+    await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+    expect(await existsAdvisory(STALE)).toBe(true);
+  });
+
+  it('deletes the master row when the pruned advisory was its sole owner', async () => {
+    const before = await prisma.vulnerability.findUnique({ where: { advisoryId: STALE } });
+    expect(before).not.toBeNull();
+
+    await prisma.advisoryVulnerability.updateMany({ where: { externalId: STALE }, data: { missingRunCount: 2 } });
+    await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+
+    expect(await prisma.vulnerability.findUnique({ where: { advisoryId: STALE } })).toBeNull();
+  });
+
+  it('keeps a CVE-keyed master row, which other sources may also point at', async () => {
+    await importAdvisoryData(makeAdvisory({ externalId: 'FG-IR-26-CVE', cveId: 'CVE-2026-9999' }), 'fortinet');
+    await prisma.advisoryVulnerability.updateMany({ where: { externalId: 'FG-IR-26-CVE' }, data: { missingRunCount: 2 } });
+
+    await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+
+    expect(await existsAdvisory('FG-IR-26-CVE')).toBe(false);
+    expect(await prisma.vulnerability.findUnique({ where: { cveId: 'CVE-2026-9999' } })).not.toBeNull();
+  });
+
+  it('keeps the master row while another source still references it', async () => {
+    // Same externalId under a second source shares one advisoryId-keyed master.
+    await importAdvisoryData(makeAdvisory({ externalId: STALE }), 'advisory-other');
+    await prisma.advisoryVulnerability.updateMany({
+      where: { externalId: STALE, source: 'fortinet' }, data: { missingRunCount: 2 },
+    });
+
+    await runAdvisoryFetcher(fakeFetcher('fortinet', [keeper]));
+
+    expect(await prisma.advisoryVulnerability.count({ where: { externalId: STALE } })).toBe(1);
+    expect(await prisma.vulnerability.findUnique({ where: { advisoryId: STALE } })).not.toBeNull();
   });
 });
