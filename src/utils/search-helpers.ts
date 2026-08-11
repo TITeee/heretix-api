@@ -2,6 +2,8 @@
  * Pure search-time decision logic extracted from src/api/routes/vulnerabilities.ts
  * for unit testability. No DB dependency.
  */
+import { compareDpkgVersions } from './dpkg-version.js';
+import { compareRpmVersions } from './rpm-version.js';
 
 export type VulnerabilityResult = {
   id: string;               // Vulnerability master ID
@@ -149,4 +151,56 @@ export function rpmAdvisoryVendor(ecosystem: string): string | null {
     if (ecosystem.startsWith(prefix + ':')) return vendor;
   }
   return null;
+}
+
+// ─── Version-range predicates ────────────────────────────────
+// Applied in application code rather than SQL because both compare version
+// strings with distro-specific ordering rules (dpkg / rpmvercmp) that the
+// precomputed BigInt columns can't express.
+
+/**
+ * Most Debian OSV entries (and a smaller fraction of Ubuntu/Alpine ones)
+ * publish only a continuous introduced/fixed range with no enumerated
+ * `versions` list at all — exact-match against affectedVersions alone
+ * silently matches nothing for those rows, regardless of what version is
+ * queried. Fall back to dpkg-style range comparison using the raw
+ * introduced/fixed/lastAffected strings when the enumerated list doesn't
+ * contain (or doesn't exist for) the queried version.
+ */
+export function matchesDpkgStyleVersion(
+  row: { affectedVersions: string[]; introducedVersion: string | null; fixedVersion: string | null; lastAffectedVersion: string | null },
+  version: string,
+): boolean {
+  if (row.affectedVersions.includes(version)) return true;
+
+  const hasRange = row.introducedVersion !== null || row.fixedVersion !== null || row.lastAffectedVersion !== null;
+  if (!hasRange) return false;
+
+  if (row.introducedVersion && compareDpkgVersions(version, row.introducedVersion) < 0) return false;
+  if (row.fixedVersion && compareDpkgVersions(version, row.fixedVersion) >= 0) return false;
+  if (row.lastAffectedVersion && compareDpkgVersions(version, row.lastAffectedVersion) > 0) return false;
+
+  return true;
+}
+
+/**
+ * Row predicate for RPM-based distro advisories (searchAdvisoryRpm).
+ *
+ * `versionEnd` comes from OVAL's "<package> is earlier than <version>" and is
+ * therefore an *exclusive* upper bound — the named build is the patched one.
+ * A row with no upper bound never matches, since there is nothing to compare.
+ *
+ * `versionStart`, when present, is an inclusive floor. OVAL itself never
+ * supplies one; it is inferred for DNF module-stream products (see
+ * advisory-helpers.ts) so a newer stream's fix cannot numerically swallow a
+ * query against an older, unrelated stream.
+ */
+export function matchesRpmVersionRange(
+  row: { versionStart: string | null; versionEnd: string | null },
+  version: string,
+): boolean {
+  if (!row.versionEnd) return false;
+  if (compareRpmVersions(version, row.versionEnd) >= 0) return false;
+  if (row.versionStart && compareRpmVersions(version, row.versionStart) < 0) return false;
+  return true;
 }
