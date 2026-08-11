@@ -7,6 +7,8 @@ import {
   isLanguageEcosystem,
   normalizeEcosystem,
   rpmAdvisoryVendor,
+  matchesDpkgStyleVersion,
+  matchesRpmVersionRange,
   type VulnerabilityResult,
 } from './search-helpers.js';
 
@@ -173,5 +175,107 @@ describe('rpmAdvisoryVendor', () => {
 
   it('returns null when the prefix matches but without the colon separator', () => {
     expect(rpmAdvisoryVendor('Red Hat')).toBeNull();
+  });
+});
+
+describe('matchesDpkgStyleVersion', () => {
+  // OSVAffectedPackage column shape; only the fields this predicate reads.
+  const row = (o: Partial<Parameters<typeof matchesDpkgStyleVersion>[0]> = {}) => ({
+    affectedVersions: [],
+    introducedVersion: null,
+    fixedVersion: null,
+    lastAffectedVersion: null,
+    ...o,
+  });
+
+  it('matches a version present in the enumerated affectedVersions list', () => {
+    expect(matchesDpkgStyleVersion(
+      row({ affectedVersions: ['15.3-0+deb12u1', '15.4-1'] }), '15.4-1',
+    )).toBe(true);
+  });
+
+  it('does not match when the row carries no range info and the version is not in the list', () => {
+    // Guard: without this, a row with every range field null would fall through
+    // each null check below and match every version queried.
+    expect(matchesDpkgStyleVersion(
+      row({ affectedVersions: ['15.3-0+deb12u1'] }), '99.0',
+    )).toBe(false);
+  });
+
+  it('matches a range-only row (no enumerated list) — the ~68% of Debian OSV data that exact-match alone missed', () => {
+    expect(matchesDpkgStyleVersion(
+      row({ introducedVersion: '0', fixedVersion: '15.7-0+deb12u1' }), '15.6-0+deb12u1',
+    )).toBe(true);
+  });
+
+  it('treats fixedVersion as an exclusive upper bound', () => {
+    const r = row({ introducedVersion: '0', fixedVersion: '15.7-0+deb12u1' });
+    expect(matchesDpkgStyleVersion(r, '15.7-0+deb12u1')).toBe(false);
+    expect(matchesDpkgStyleVersion(r, '15.8-0+deb12u1')).toBe(false);
+  });
+
+  it('excludes versions below introducedVersion', () => {
+    expect(matchesDpkgStyleVersion(
+      row({ introducedVersion: '15.5-1', fixedVersion: '15.7-1' }), '15.4-1',
+    )).toBe(false);
+  });
+
+  it('treats lastAffectedVersion as an inclusive upper bound', () => {
+    const r = row({ introducedVersion: '0', lastAffectedVersion: '15.6-1' });
+    expect(matchesDpkgStyleVersion(r, '15.6-1')).toBe(true);
+    expect(matchesDpkgStyleVersion(r, '15.7-1')).toBe(false);
+  });
+
+  it('prefers the exact-match list over the range, so already-correct results are unaffected', () => {
+    // Listed as affected even though it sits at/above the fixed version.
+    expect(matchesDpkgStyleVersion(
+      row({ affectedVersions: ['15.7-0+deb12u1'], introducedVersion: '0', fixedVersion: '15.7-0+deb12u1' }),
+      '15.7-0+deb12u1',
+    )).toBe(true);
+  });
+
+  it('uses dpkg ordering, not string comparison, for "~" pre-release versions', () => {
+    // dpkg: "1.0~rc1" sorts *before* "1.0", so it is still affected.
+    expect(matchesDpkgStyleVersion(
+      row({ introducedVersion: '0', fixedVersion: '1.0' }), '1.0~rc1',
+    )).toBe(true);
+  });
+});
+
+describe('matchesRpmVersionRange', () => {
+  const row = (versionEnd: string | null, versionStart: string | null = null) => ({ versionStart, versionEnd });
+
+  it('matches a version below the fix version', () => {
+    expect(matchesRpmVersionRange(row('1.9.15-8.p5.el10_0.2'), '1.9.15-8.p5.el10_0.1')).toBe(true);
+  });
+
+  it('excludes the fix version itself (exclusive upper bound)', () => {
+    // OVAL states "sudo is earlier than 0:1.9.15-8.p5.el10_0.2" — that exact
+    // build is the patched one and must not be reported (CVE-2025-32463).
+    expect(matchesRpmVersionRange(row('1.9.15-8.p5.el10_0.2'), '1.9.15-8.p5.el10_0.2')).toBe(false);
+  });
+
+  it('excludes versions above the fix version', () => {
+    expect(matchesRpmVersionRange(row('1.9.15-8.p5.el10_0.2'), '1.9.16-1.el10')).toBe(false);
+  });
+
+  it('never matches a row with no upper bound', () => {
+    expect(matchesRpmVersionRange(row(null), '1.0-1.el9')).toBe(false);
+  });
+
+  it('respects an inferred versionStart floor so one module stream does not swallow another', () => {
+    // postgresql:18 fix must not match a postgresql:16 query (see advisory-helpers).
+    const pg18 = row('18.4-2.module+el9.8.0+24359+da7fad50', '18.0');
+    expect(matchesRpmVersionRange(pg18, '16.4')).toBe(false);
+    expect(matchesRpmVersionRange(pg18, '18.2')).toBe(true);
+  });
+
+  it('treats versionStart as inclusive', () => {
+    expect(matchesRpmVersionRange(row('18.4', '18.0'), '18.0')).toBe(true);
+  });
+
+  it('uses rpmvercmp ordering for sub-releases, not string comparison', () => {
+    // rpmvercmp: "3.2.5-3.el9" < "3.2.5-3.el9_7.2"
+    expect(matchesRpmVersionRange(row('3.2.5-3.el9_7.2'), '3.2.5-3.el9')).toBe(true);
   });
 });

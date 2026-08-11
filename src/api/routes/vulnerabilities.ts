@@ -4,8 +4,6 @@ import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases } from '../../config/product-aliases.js';
-import { compareRpmVersions } from '../../utils/rpm-version.js';
-import { compareDpkgVersions } from '../../utils/dpkg-version.js';
 import {
   type VulnerabilityResult,
   dedup,
@@ -15,6 +13,8 @@ import {
   isLanguageEcosystem,
   normalizeEcosystem,
   rpmAdvisoryVendor,
+  matchesDpkgStyleVersion,
+  matchesRpmVersionRange,
   DISTRO_ECOSYSTEM_PREFIXES,
 } from '../../utils/search-helpers.js';
 
@@ -91,31 +91,6 @@ function masterToResult(
 }
 
 // ─── Search Functions ─────────────────────────────────────────
-
-/**
- * Most Debian OSV entries (and a smaller fraction of Ubuntu/Alpine ones)
- * publish only a continuous introduced/fixed range with no enumerated
- * `versions` list at all — exact-match against affectedVersions alone
- * silently matches nothing for those rows, regardless of what version is
- * queried. Fall back to dpkg-style range comparison using the raw
- * introduced/fixed/lastAffected strings when the enumerated list doesn't
- * contain (or doesn't exist for) the queried version.
- */
-function matchesDpkgStyleVersion(
-  row: { affectedVersions: string[]; introducedVersion: string | null; fixedVersion: string | null; lastAffectedVersion: string | null },
-  version: string,
-): boolean {
-  if (row.affectedVersions.includes(version)) return true;
-
-  const hasRange = row.introducedVersion !== null || row.fixedVersion !== null || row.lastAffectedVersion !== null;
-  if (!hasRange) return false;
-
-  if (row.introducedVersion && compareDpkgVersions(version, row.introducedVersion) < 0) return false;
-  if (row.fixedVersion && compareDpkgVersions(version, row.fixedVersion) >= 0) return false;
-  if (row.lastAffectedVersion && compareDpkgVersions(version, row.lastAffectedVersion) > 0) return false;
-
-  return true;
-}
 
 /** Search master via OSV table */
 async function searchOSV(
@@ -398,10 +373,7 @@ async function searchAdvisoryRpm(
   });
 
   const filtered = version
-    ? rows.filter(r =>
-        r.versionEnd && compareRpmVersions(version, r.versionEnd) < 0 &&
-        (!r.versionStart || compareRpmVersions(version, r.versionStart) >= 0),
-      )
+    ? rows.filter(r => matchesRpmVersionRange(r, version))
     : rows;
   const approximate = version === undefined;
 
