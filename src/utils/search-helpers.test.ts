@@ -264,7 +264,8 @@ describe('matchesRpmVersionRange', () => {
   });
 
   it('respects an inferred versionStart floor so one module stream does not swallow another', () => {
-    // postgresql:18 fix must not match a postgresql:16 query (see advisory-helpers).
+    // postgresql:18 fix must not match a postgresql:16 query (versionStart now
+    // comes straight from RedHatFetcher/OracleLinuxFetcher's Module criterion parsing).
     const pg18 = row('18.4-2.module+el9.8.0+24359+da7fad50', '18.0');
     expect(matchesRpmVersionRange(pg18, '16.4')).toBe(false);
     expect(matchesRpmVersionRange(pg18, '18.2')).toBe(true);

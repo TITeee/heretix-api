@@ -34,6 +34,7 @@
     "import:tomcat": "node dist/scripts/import-tomcat.js",
     "import:nginx": "node dist/scripts/import-nginx.js",
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
+    "migrate:module-version-start": "node dist/scripts/migrate-module-version-start.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
     "validate:apache": "node dist/scripts/validate-apache.js",
@@ -46,7 +47,8 @@
     "validate:alpine": "node dist/scripts/validate-alpine.js",
     "validate:fortinet": "node dist/scripts/validate-fortinet.js",
     "validate:pan": "node dist/scripts/validate-pan.js",
-    "validate:osv-coverage": "node dist/scripts/validate-osv-coverage.js"
+    "validate:osv-coverage": "node dist/scripts/validate-osv-coverage.js",
+    "validate:nodejs": "node dist/scripts/validate-nodejs.js"
   },
   "keywords": [
     "vulnerability",

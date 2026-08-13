@@ -3,6 +3,7 @@ import { createRequire } from 'module';
 import { XMLParser } from 'fast-xml-parser';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
+import { inferBareVersionStart } from './advisory-helpers.js';
 
 // bzip2 is a CommonJS module — use createRequire in ESM context
 const require = createRequire(import.meta.url);
@@ -105,23 +106,50 @@ export function parseCriterionComment(comment: string): { packageName: string; v
   };
 }
 
+/** Extracts N from a "Module <name>:N is enabled" criterion comment (DNF module-stream gate). */
+export function extractModuleMajor(comment: string): number | null {
+  const m = comment.match(/^Module\s+\S+:(\d+)\s+is enabled$/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+export interface CollectedCriterion {
+  node: Record<string, unknown>;
+  /**
+   * Major version from an ancestor "Module <name>:N is enabled" criterion, if
+   * any. RHEL/Oracle Linux OVAL always pairs that check and the OR-of-packages
+   * it guards as sibling children of the same <criteria operator="AND">
+   * parent, so finding one at a level scopes every criterion at that level
+   * and everything nested beneath it.
+   */
+  moduleMajor: number | null;
+}
+
 /**
  * Recursively collect all <criterion> elements from a criteria tree.
  * OVAL criteria can be nested: <criteria><criteria><criterion/></criteria></criteria>
  */
-export function collectCriteria(node: unknown): Record<string, unknown>[] {
+export function collectCriteria(node: unknown, moduleMajor: number | null = null): CollectedCriterion[] {
   if (!node || typeof node !== 'object') return [];
   const n = node as Record<string, unknown>;
-  const results: Record<string, unknown>[] = [];
+  const results: CollectedCriterion[] = [];
+
+  const ownCriteria = toArray(n['criterion'] as unknown) as Record<string, unknown>[];
+
+  let scopedModuleMajor = moduleMajor;
+  for (const c of ownCriteria) {
+    const comment = c['@_comment'] as string | undefined;
+    const major = comment ? extractModuleMajor(comment) : null;
+    if (major !== null) scopedModuleMajor = major;
+  }
 
   // Direct criterion children
-  for (const c of toArray(n['criterion'] as unknown)) {
-    results.push(c as Record<string, unknown>);
+  for (const c of ownCriteria) {
+    results.push({ node: c, moduleMajor: scopedModuleMajor });
   }
 
   // Recurse into nested criteria
   for (const nested of toArray(n['criteria'] as unknown)) {
-    results.push(...collectCriteria(nested));
+    results.push(...collectCriteria(nested, scopedModuleMajor));
   }
 
   return results;
@@ -247,7 +275,7 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
       const seen = new Set<string>();
 
       for (const crit of criterionList) {
-        const comment = crit['@_comment'] as string | undefined;
+        const comment = crit.node['@_comment'] as string | undefined;
         if (!comment) continue;
 
         const parsed = parseCriterionComment(comment);
@@ -257,9 +285,14 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
         if (seen.has(key)) continue;
         seen.add(key);
 
+        const versionStart = crit.moduleMajor !== null
+          ? `${crit.moduleMajor}.0`
+          : inferBareVersionStart(parsed.packageName, parsed.versionEnd);
+
         affectedProducts.push({
           vendor: 'oracle-linux',
           product: parsed.packageName,
+          versionStart,
           versionEnd: parsed.versionEnd,
           affectedVersions: [],
         });

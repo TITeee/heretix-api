@@ -1,7 +1,6 @@
 import { prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
 import { logger } from '../utils/logger.js';
-import { inferPostgresqlModuleVersionStart } from './advisory-helpers.js';
 import type { Prisma } from '@prisma/client';
 
 // ─── Common Interfaces ────────────────────────────────────────
@@ -144,11 +143,8 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
     await tx.advisoryAffectedProduct.deleteMany({ where: { advisoryId: advisory.id } });
 
     for (const prod of adv.affectedProducts) {
-      const effectiveVersionStart = inferPostgresqlModuleVersionStart(
-        prod.product.trim(), prod.versionStart, prod.versionEnd,
-      );
-      const versionStartInt = effectiveVersionStart
-        ? (normalizeVersion(effectiveVersionStart) ?? null)
+      const versionStartInt = prod.versionStart
+        ? (normalizeVersion(prod.versionStart) ?? null)
         : null;
       // versionFixed has the same exclusive-upper-bound semantics as versionEnd:
       // "fixed in X.Y.Z" means versions < X.Y.Z are affected → use as fallback for range queries.
@@ -165,7 +161,7 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
           advisoryId: advisory.id,
           vendor: prod.vendor.trim(),
           product: prod.product.trim(),
-          versionStart: effectiveVersionStart ?? null,
+          versionStart: prod.versionStart ?? null,
           versionEnd: prod.versionEnd ?? null,
           versionFixed: prod.versionFixed ?? null,
           lastAffected: prod.lastAffected ?? null,

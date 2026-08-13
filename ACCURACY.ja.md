@@ -70,6 +70,32 @@ pnpm validate:oracle-linux    # スイープモード: Oracle Linux の全パッ
 
 *2026-07-25/26 に再現確認。残存するわずかなFP/FNはコードのバグではない——上位の該当CVEを個別に確認したところ、DBが最後にインポートされてから ground truth を取得するまでの数時間の間に、ベンダー側のライブOVALフィード自体が改訂されていた（例: あるアドバイザリの影響パッケージ一覧に追加/削除があった）ことが分かった。ライブの上流フィードと定期インポートされたスナップショットを比較する以上避けられないズレであり、検索やfetcherの欠陥ではない。Recallがほぼ完全（99.98%/100%）なのは、このスイープの初期版が `kernel` 等の大量パッチ済みパッケージ（500件超のCVEを返す）に対してページネーションをせずAPIの500件上限に引っかかっていたのを、validateスクリプト側で全ページ取得するよう修正した結果。*
 
+## 境界値スイープ（Node.jsモジュールストリーム / RHEL & Oracle Linux）
+
+ここでのground truthは意図的に`RedHatFetcher`/`OracleLinuxFetcher`自身のパース済みデータを**使わない**——fetcherが読んでいるのと同じフィードから構築した「ground truth」は本番と全く同じ死角を共有してしまい、あるDNFモジュールストリーム（例: `nodejs:22`）の修正が別の無関係なストリーム（例: `nodejs:10`）へのクエリに漏れ込むケースを原理的に検出できない。代わりに、独立した[nodejs/security-wgの脆弱性インデックス](https://github.com/nodejs/security-wg/blob/main/vuln/core/index.json)をground truthとして使う——`vulnerable`/`patched`フィールドがメジャー系統ごとのsemver範囲を表現しており、RHEL/Oracle Linuxが実際にパッケージ化しているモジュールストリームのメジャーバージョン（10/12/14/16/18/20/22/24）に絞り込んでいる。修正と残存する問題の背景は[README.jaの既知の問題](README.ja.md#rheloracle-linuxのモジュールストリームによる偽陽性根本原因を修正済みnodejspostgresql以外は一部残存)を参照。
+
+```bash
+pnpm validate:nodejs                        # スイープモード, vendor=red-hat
+pnpm validate:nodejs --vendor=oracle-linux  # スイープモード, vendor=oracle-linux
+```
+
+| ベンダー | 段階 | 境界ポイント数 | TP | FP | FN | Precision | Recall | F1 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Red Hat (RHEL 8+9) | 修正前 | 154 | 2,507 | 13,199 | 802 | 15.96% | 75.76% | 26.37% |
+| Red Hat (RHEL 8+9) | + Module criterionからのversionStart | 154 | 2,309 | 4,265 | 1,000 | 35.12% | 69.78% | 46.73% |
+| Red Hat (RHEL 8+9) | + bare行フォールバック | 154 | 2,257 | 2,157 | 1,052 | **51.13%** | 68.21% | **58.45%** |
+| Oracle Linux | 修正前 | 154 | 2,459 | 13,015 | 850 | 15.89% | 74.31% | 26.18% |
+| Oracle Linux | + Module criterionからのversionStart | 154 | 2,112 | 8,346 | 1,197 | 20.20% | 63.83% | 30.68% |
+| Oracle Linux | + bare行フォールバック | 153 | 2,042 | 2,059 | 1,267 | **49.79%** | 61.71% | **55.11%** |
+
+*2026-08-11に再現確認。修正した順に:*
+
+1. *ベースライン: 両fetcherとも`"<package> is earlier than <version>"`criterionだけをパースし、同じOVAL AND-block内の兄弟criterionである`"Module <名前>:N is enabled"`を読み捨てていた。モジュール行には`versionStart`が一切無いため、古い系統へのクエリが新しい系統の修正に数値的に一致してしまう。*
+2. *このModule criterionからインポート時点で直接`versionStart`を抽出する（両fetcherの`collectCriteria()`）ことで、Precisionはおおよそ倍になった。適用前に自己限定性を検証済み: RHEL9の実フィード中のnodejs関連`<definition>`全件で「Module criterionの有無」と「`versionEnd`に`.module+`を含むか」が完全一致（不一致0件）——つまりモジュール化されていない約9,364製品名には原理上触れられない。nodejsに限らず全DNFモジュール製品に適用した。*
+3. *残ったFPは、パッケージがモジュール化される前のアドバイザリでModule criterion自体が存在しないケース（例: RHEL9の`RHSA-2022:6595`、`nodejs 16.16.0-1.el9_0`）が原因だった。`inferBareVersionStart()`（`src/worker/advisory-helpers.ts`）がその行自身の`versionEnd`の先頭メジャー桁にフォールバックする——ただし`product="nodejs"`（と、下記のpostgresql）に厳密に絞った。modular行とbare行が混在する(製品, ベンダー)組み合わせが他に917件見つかっており、それらで同じ前提（bare行=モジュール化前の同じ系統の名残）が成り立つかは未検証のため。*
+
+*Recallは62〜70%程度で下げ止まり、上記の修正では大きく変化しなかった（過剰検知を除去するだけで検知漏れは埋めないため想定通り）。見逃した79件のユニークCVEをDBと突き合わせたところ、39件（49%）はどのメジャーでも`red-hat`/`oracle-linux`の`nodejs`行が一切存在しなかった。データの欠落ではなく、ground truth（upstreamの`nodejs/security-wg`）がディストロの実際の配布期間という概念を持たないことが原因: RHEL8の`nodejs:10`系統の最初のビルドは`10.14.1`で、CVE-2018-7161等（upstream修正`10.4.1`）はそもそも脆弱なビルドを配布したことが無く直す対象が無かった。逆にCVE-2021-3449（upstream修正`10.24.1`）は`nodejs:10`系統の最終ビルド`10.24.0`より後で、upstream Node.js 10自体の2021年4月EOLとほぼ同時にモジュールも終了しバックポートされなかった。検索やfetcherの欠陥ではなく`validate-nodejs.ts`のground truthモデルの限界——直すなら各系統の実配布範囲をDBの`versionEnd`から検証スクリプトに教える改修が必要（本番ロジックは無関係）。まだ未実装。*
+
 ## サンプリングによる実測（Ubuntu / Debian / Alpine）
 
 上記のベンダーOVAL/HTMLソースと違い、OSVデータは既に構造化されたJSONとして届くため、自前のスクレイピング・パース工程が存在しない——インポート済みの`OSVAffectedPackage`行そのものが既にground truthなので、これらのスクリプトはライブで再取得せず、DBを直接読む。これらのエコシステムは数百万行規模（Ubuntuだけで約190万行）——全数スイープが現実的な桁を大きく超えているため、網羅的ではなく**サンプリング**による検証とした: 明示的な`affectedVersions`一覧を持つ行を500件（既存の完全一致経路を検証）、一覧を持たず範囲情報のみの行を500件（下記のdpkg範囲フォールバックを検証）。
@@ -106,9 +132,11 @@ pnpm validate:postgresql 16.4
 
 *2026-07-26 に再現確認。OpenSSL の FP は別ソースが独自のバージョン体系で追跡している無関係な CVE であり（詳細は下記）、公式アドバイザリデータそのものの見逃しではない。OpenSSL の FN 2件（CVE-2025-9231/9232）は別途調査する価値のある実際のギャップ。*
 
-*PostgreSQL の数値は、今回の調査で実際に見つかった本番バグの修正を反映している——詳細は README.md の[Known Issues「RHEL/Oracle Linuxのモジュールストリームによる偽陽性」](README.md#rheloracle-linuxのモジュールストリームによる偽陽性デフォルト検索は対処済みpostgresqlは正式修正済み)を参照。当初は5件のFP・FN無し（82.76%/100.00%/90.57%）だったが、そのうち4件は下記で想定していた「クロスソースのバージョン衝突」ではなく、実際にはRHEL/Oracle LinuxのOVALデータがDNFモジュールストリーム製品のバージョン下限を持たないという本物のバグだった（新しい系統向けの修正バージョンが、無関係な古い16系統のクエリまで数値的に巻き込んでいた）。`ecosystem`未指定のデフォルト検索から、モジュールストリーム行（`versionEnd`に`.module+`を含む行）を除外して修正——これで誤検知4件は消えたが、これらのCVEにはNVD側にバージョン範囲データが一切なく他に検索可能なソースが無かったため、正しかった検知4件も失われ、新たなFNとなった。残る1件のFP（CVE-2017-8806）は無関係かつ別原因の本物のNVD製品名誤マッピング（Debianのラッパースクリプトパッケージ`postgresql-common`が製品名"postgresql"に対応付けられている）。*
+*PostgreSQL の数値は、今回の調査で見つかった本番バグの修正を反映している——詳細はREADME.mdの[Known Issues「RHEL/Oracle Linuxのモジュールストリームによる偽陽性」](README.ja.md#rheloracle-linuxのモジュールストリームによる偽陽性根本原因を修正済みnodejspostgresql以外は一部残存)参照。当初5件のFP・FN無し（82.76%/100.00%/90.57%）だったうち4件は、RHEL/Oracle LinuxのOVALデータがDNFモジュールストリーム製品のバージョン下限を持たないという本物のバグだった（新しい系統向けの修正が無関係な古い16系統のクエリまで巻き込んでいた）。まず`ecosystem`未指定のデフォルト検索からモジュールストリーム行を除外して修正（これでNVD側に代替データの無かった正しい検知4件も失われ、新たなFNになった）、その後行ごとの下限推定で正式に修正。残る1件のFP（CVE-2017-8806）は無関係な本物のNVD製品名誤マッピング（Debianのラッパースクリプトパッケージ`postgresql-common`が製品名"postgresql"に対応付けられている）。上記の表はいずれも`ecosystem=`指定クエリを検証していない（`validate:postgresql`は未指定のデフォルト経路のみ）。*
 
-*追加の修正（2026-07-30）で、`product=postgresql`については回避策ではなく根本原因を正式に修正した: `importAdvisoryData()`が、ベンダー側が下限を提供しないモジュールストリーム行について自身の`versionEnd`から`versionStart`（`{major}.0`）を推定するようになり、`searchAdvisoryRpm()`（`ecosystem=Red Hat:*`/`oracle-linux`明示指定時に使われる、上記スイープでは検証対象外の経路）も`versionStart`を実際にチェックするようになった（従来は値が入っていても無視していた）。実際に確認済み: `ecosystem=oracle-linux&package=postgresql&version=16.4`はCVE-2026-6476（PostgreSQL 17以降のみ影響）にヒットしなくなった一方、CVE-2024-7348（実際に16系統も影響）は引き続き正しく検知される。`validate:postgresql`は`ecosystem`未指定のデフォルト経路しか検証しないため、上記表のFN件数はこの修正を反映していない（変化なし）。*
+*RHEL/Oracle Linuxの`versionStart`根本修正（OVALのModule criterionから直接抽出——上記[Node.js節](#境界値スイープnodejsモジュールストリーム--rhel--oracle-linux)参照）はpostgresqlにも自動適用され、以前の製品固有ヒューリスティックを置き換えた。nodejsのbare行問題を調査した際、postgresqlにも同種のバグが見つかり、スイープではなく生クエリで確認した（`validate-postgresql.ts`には`ecosystem=`指定パスのスイープモードが無いため）: `package=postgresql&version=9.2.10&ecosystem=oracle-linux`が56件ヒットし、その中には無関係な`13.23-2.el9_7`（RHEL9）でしか記録の無いCVE-2026-2004/2005/2006が含まれていた——Module criterionを一切持たないbare行（RHEL7はDNFモジュール化以前のOS`9.2.24-9.0.7.el7_9`、RHEL9/OL9はモジュール化前ベースライン`13.23-5.el9_8`、RHEL10/OL10はpostgresqlをモジュール化せず単一配布`16.14-1.0.1.el10_2`）に依然として下限が無かったため。`inferBareVersionStart()`が`postgresql`にも対応し、同じクエリが34件に減った。*
+
+*さらに1点補正が必要だった: PostgreSQLはバージョン10より前は2桁がメジャーバージョン（`9.0`〜`9.6`、それぞれ互換性の無い別物）のため、先頭1桁だけのフロアでは`9.2.24-...`と`9.6.20-...`が同じ`9.0`に衝突していた——CVE-2019-10130（自身のRHSAが「postgresql:9.6 security update」）が`9.2.10`クエリに誤って一致することで発覚。`inferBareVersionStart()`は`9.x`系統を`9.0`ではなく完全な`9.{minor}`にフロアするよう修正した。両方の修正後、同じクエリは29件になり全て正真正銘`9.2.x`系統内に収まる。念のため`9.6.19`でクエリするとCVE-2019-10130（`9.6.20`で修正）は引き続き正しく検知され、同系統内のRecallは犠牲になっていない。*
 
 ## 既知の制限事項
 

@@ -4,6 +4,7 @@ import {
   stripEpoch,
   parseCveElement,
   parseCriterionComment,
+  extractModuleMajor,
   collectCriteria,
 } from './oracle-linux-fetcher.js';
 
@@ -71,18 +72,55 @@ describe('parseCriterionComment', () => {
   });
 });
 
+describe('extractModuleMajor', () => {
+  it('extracts the major version from a module-enabled criterion', () => {
+    expect(extractModuleMajor('Module nodejs:22 is enabled')).toBe(22);
+  });
+
+  it('returns null for non-module criteria', () => {
+    expect(extractModuleMajor('Oracle Linux 9 is installed')).toBeNull();
+  });
+});
+
 describe('collectCriteria', () => {
-  it('recurses into nested criteria', () => {
+  it('recurses into nested criteria, with no module context', () => {
     const node = {
       criterion: [{ '@_comment': 'top' }],
       criteria: {
         criterion: [{ '@_comment': 'nested' }],
       },
     };
-    expect(collectCriteria(node)).toEqual([{ '@_comment': 'top' }, { '@_comment': 'nested' }]);
+    expect(collectCriteria(node)).toEqual([
+      { node: { '@_comment': 'top' }, moduleMajor: null },
+      { node: { '@_comment': 'nested' }, moduleMajor: null },
+    ]);
   });
 
   it('returns an empty array for non-object input', () => {
     expect(collectCriteria(null)).toEqual([]);
+  });
+
+  it('propagates a "Module X:N is enabled" sibling criterion to nested descendants', () => {
+    // Mirrors the real Oracle Linux 9 OVAL shape (identical to RHEL's): a
+    // module-enabled check and the OR-of-packages it guards are siblings
+    // under the same AND parent, one extra arch-check level deep.
+    const node = {
+      criteria: {
+        criteria: {
+          criterion: [{ '@_comment': 'Module nodejs:22 is enabled' }],
+          criteria: {
+            criteria: [
+              { criterion: [{ '@_comment': 'nodejs is earlier than 1:22.23.1-2.module+el9' }] },
+              { criterion: [{ '@_comment': 'nodejs-devel is earlier than 1:22.23.1-2.module+el9' }] },
+            ],
+          },
+        },
+      },
+    };
+    const result = collectCriteria(node);
+    const nodejsCrit = result.find(r => r.node['@_comment']?.toString().startsWith('nodejs is earlier'));
+    const develCrit = result.find(r => r.node['@_comment']?.toString().startsWith('nodejs-devel'));
+    expect(nodejsCrit?.moduleMajor).toBe(22);
+    expect(develCrit?.moduleMajor).toBe(22);
   });
 });
