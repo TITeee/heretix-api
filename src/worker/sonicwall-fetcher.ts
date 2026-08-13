@@ -51,6 +51,56 @@ function extractVersionsFromHtml(html: string): string[] {
   return [...new Set(matches)].slice(0, 10);
 }
 
+/**
+ * Build one NormalizedAdvisory per CVE covered by a SonicWall advisory. A
+ * single advisory_id commonly covers several CVEs — without the split,
+ * `externalId: adv.advisory_id` + a single `cveId` field meant only the
+ * first CVE in the comma-separated `cve` field ever got linked to a
+ * Vulnerability master row and became independently searchable. Follows the
+ * same `${advisoryId}/${cveId}` composite-externalId pattern already used by
+ * redhat-fetcher.ts / oracle-linux-fetcher.ts / broadcom-fetcher.ts /
+ * sophos-fetcher.ts for the same one-advisory-many-CVEs shape. Advisories
+ * with no CVE at all keep the plain advisory_id as externalId, unchanged
+ * from before.
+ */
+export function buildSonicWallAdvisories(adv: SonicWallAdvisory): NormalizedAdvisory[] {
+  const cveIds = extractCveIds(adv.cve);
+  const severity = normalizeSeverity(adv.impact);
+  const cvssScore = adv.cvss ? parseFloat(adv.cvss) : undefined;
+  const cvssScore_ = isNaN(cvssScore ?? NaN) ? undefined : cvssScore;
+
+  // Build affected products list from structured vulnerable_products field
+  const productNames = (adv.vulnerable_products ?? []).map(p => p.name);
+
+  // Try to extract version info from HTML table (best-effort)
+  const versions = extractVersionsFromHtml(adv.affected_products);
+
+  const affectedProducts: NormalizedAdvisory['affectedProducts'] = productNames.length > 0
+    ? productNames.map(product => ({
+        vendor: 'sonicwall',
+        product,
+        affectedVersions: versions,
+        patchAvailable: true,
+      }))
+    : [{ vendor: 'sonicwall', product: 'SonicOS', affectedVersions: versions, patchAvailable: true }];
+
+  const base = {
+    summary: adv.title,
+    severity,
+    cvssScore: cvssScore_,
+    cvssVector: adv.cvss_vector || undefined,
+    url: `https://psirt.global.sonicwall.com/vuln-detail/${adv.advisory_id}`,
+    publishedAt: adv.published_when ? new Date(adv.published_when) : undefined,
+    affectedProducts,
+    rawData: adv,
+  };
+
+  if (cveIds.length === 0) {
+    return [{ externalId: adv.advisory_id, ...base }];
+  }
+  return cveIds.map(cveId => ({ externalId: `${adv.advisory_id}/${cveId}`, cveId, ...base }));
+}
+
 // ─── AdvisoryFetcher Implementation ──────────────────────────
 
 export class SonicWallFetcher implements AdvisoryFetcher {
@@ -74,39 +124,7 @@ export class SonicWallFetcher implements AdvisoryFetcher {
       // Skip non-applicable entries
       if (adv.vuln_status === 'Not Applicable') continue;
 
-      const cveIds = extractCveIds(adv.cve);
-      const severity = normalizeSeverity(adv.impact);
-      const cvssScore = adv.cvss ? parseFloat(adv.cvss) : undefined;
-      const cvssScore_ = isNaN(cvssScore ?? NaN) ? undefined : cvssScore;
-
-      // Build affected products list from structured vulnerable_products field
-      const productNames = (adv.vulnerable_products ?? []).map(p => p.name);
-      const primaryProduct = productNames[0] ?? 'SonicOS';
-
-      // Try to extract version info from HTML table (best-effort)
-      const versions = extractVersionsFromHtml(adv.affected_products);
-
-      const affectedProducts: NormalizedAdvisory['affectedProducts'] = productNames.length > 0
-        ? productNames.map(product => ({
-            vendor: 'sonicwall',
-            product,
-            affectedVersions: versions,
-            patchAvailable: true,
-          }))
-        : [{ vendor: 'sonicwall', product: 'SonicOS', affectedVersions: versions, patchAvailable: true }];
-
-      results.push({
-        externalId: adv.advisory_id,
-        cveId: cveIds[0],
-        summary: adv.title,
-        severity,
-        cvssScore: cvssScore_,
-        cvssVector: adv.cvss_vector || undefined,
-        url: `https://psirt.global.sonicwall.com/vuln-detail/${adv.advisory_id}`,
-        publishedAt: adv.published_when ? new Date(adv.published_when) : undefined,
-        affectedProducts,
-        rawData: adv,
-      });
+      results.push(...buildSonicWallAdvisories(adv));
     }
 
     logger.info({ total: data.length, imported: results.length }, 'SonicWall advisory fetch complete');
