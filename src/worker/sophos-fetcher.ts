@@ -86,8 +86,14 @@ async function fetchSitemapIds(): Promise<string[]> {
   return [...new Set(matches.map(m => m.replace('security-advisories/', '')))];
 }
 
-/** Fetch the advisory page HTML and extract CVE IDs from <title> */
-async function fetchTitleCveIds(id: string): Promise<{ cveIds: string[]; title: string | undefined }> {
+/**
+ * Fetch the advisory page HTML and extract CVE IDs from <title>.
+ * `failed` distinguishes "the request itself failed" (network error, timeout,
+ * non-2xx) from "the request succeeded but the page legitimately had no CVE
+ * in its title" -- fetch()'s "no title or CVE" skip further down needs this
+ * to avoid silently dropping an advisory that was never actually fetched.
+ */
+async function fetchTitleCveIds(id: string): Promise<{ cveIds: string[]; title: string | undefined; failed: boolean }> {
   try {
     const { data } = await axios.get<string>(`${BASE_URL}/${id}`, {
       timeout: 15000,
@@ -97,9 +103,10 @@ async function fetchTitleCveIds(id: string): Promise<{ cveIds: string[]; title: 
     const titleMatch = (data as string).match(/<title>([^<]+)<\/title>/);
     const title = titleMatch?.[1]?.replace(/\s*\|\s*Sophos\s*$/, '').trim();
     const cveIds = extractCveIds(title ?? '');
-    return { cveIds, title };
-  } catch {
-    return { cveIds: [], title: undefined };
+    return { cveIds, title, failed: false };
+  } catch (err) {
+    logger.warn({ id, err }, 'Failed to fetch Sophos advisory page title');
+    return { cveIds: [], title: undefined, failed: true };
   }
 }
 
@@ -125,6 +132,7 @@ async function fetchRenderedCveIds(id: string): Promise<string[]> {
 
 export class SophosFetcher implements AdvisoryFetcher {
   private readonly delayMs: number;
+  private fetchFailed = 0;
 
   constructor({ delayMs = 500 } = {}) {
     this.delayMs = delayMs;
@@ -132,8 +140,10 @@ export class SophosFetcher implements AdvisoryFetcher {
 
   source(): string { return 'advisory-sophos'; }
   isCompleteSnapshot(): boolean { return true; }
+  fetchFailedCount(): number { return this.fetchFailed; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
+    this.fetchFailed = 0;
     logger.info('Fetching Sophos security advisories');
 
     const [rssMap, sitemapIds] = await Promise.all([
@@ -167,7 +177,8 @@ export class SophosFetcher implements AdvisoryFetcher {
       } else {
         // Older advisory: fetch title via HTTP first (fast)
         await new Promise(r => setTimeout(r, this.delayMs));
-        const { cveIds: titleCves, title } = await fetchTitleCveIds(id);
+        const { cveIds: titleCves, title, failed: titleFetchFailed } = await fetchTitleCveIds(id);
+        if (titleFetchFailed) this.fetchFailed++;
         let cveIds = cveFromId.length > 0 ? cveFromId : titleCves;
 
         // If title exists but has no CVE, use Playwright to render the full page
@@ -215,7 +226,7 @@ export class SophosFetcher implements AdvisoryFetcher {
       });
     }
 
-    logger.info({ total: sitemapIds.length, imported: results.length }, 'Sophos advisory fetch complete');
+    logger.info({ total: sitemapIds.length, imported: results.length, failed: this.fetchFailed }, 'Sophos advisory fetch complete');
     return results;
   }
 }

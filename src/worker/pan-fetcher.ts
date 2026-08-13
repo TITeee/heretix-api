@@ -343,6 +343,7 @@ async function fetchAllAdvisoryIds(): Promise<string[]> {
 export class PanFetcher implements AdvisoryFetcher {
   private readonly delayMs: number;
   private readonly mode: 'all' | 'latest';
+  private fetchFailed = 0;
 
   constructor({ delayMs = 1000, mode = 'all' as 'all' | 'latest' }: {
     delayMs?: number;
@@ -354,8 +355,10 @@ export class PanFetcher implements AdvisoryFetcher {
 
   source(): string { return 'paloalto'; }
   isCompleteSnapshot(): boolean { return this.mode === 'all'; }
+  fetchFailedCount(): number { return this.fetchFailed; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
+    this.fetchFailed = 0;
     // Fetch the list of advisory IDs with their pubDate
     let advisoryEntries: Array<{ advisoryId: string; pubDate?: Date }>;
 
@@ -377,7 +380,6 @@ export class PanFetcher implements AdvisoryFetcher {
 
     const results: NormalizedAdvisory[] = [];
     let skipped = 0;
-    let failed  = 0;
 
     for (const { advisoryId, pubDate } of advisoryEntries) {
       const url = `${CSAF_BASE}/${advisoryId}`;
@@ -415,7 +417,7 @@ export class PanFetcher implements AdvisoryFetcher {
       }
 
       if (!fetched) {
-        failed++;
+        this.fetchFailed++;
         logger.error({ err: lastErr, advisoryId, url }, 'Failed to fetch/parse PAN CSAF after retries');
       }
 
@@ -423,7 +425,7 @@ export class PanFetcher implements AdvisoryFetcher {
     }
 
     logger.info(
-      { total: advisoryEntries.length, succeeded: results.length, skipped, failed },
+      { total: advisoryEntries.length, succeeded: results.length, skipped, failed: this.fetchFailed },
       'PAN PSIRT fetch complete',
     );
     return results;

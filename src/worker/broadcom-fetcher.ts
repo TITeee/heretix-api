@@ -92,9 +92,10 @@ function parseProductNames(raw: string): string[] {
 
 // ─── Data Fetching ─────────────────────────────────────────────
 
-async function fetchAdvisoryList(segment: string): Promise<BroadcomApiItem[]> {
+async function fetchAdvisoryList(segment: string): Promise<{ items: BroadcomApiItem[]; truncated: boolean }> {
   const all: BroadcomApiItem[] = [];
   let pageNumber = 0;
+  let truncated = false;
 
   while (true) {
     let response: BroadcomApiResponse;
@@ -116,6 +117,10 @@ async function fetchAdvisoryList(segment: string): Promise<BroadcomApiItem[]> {
       response = data;
     } catch (err) {
       logger.error({ err, segment, pageNumber }, 'Broadcom API request failed');
+      // Any later pages beyond this one are silently missing from `all` —
+      // the caller needs to know this page listing is incomplete, not just
+      // that the segment happened to have fewer pages than usual.
+      truncated = true;
       break;
     }
 
@@ -132,7 +137,7 @@ async function fetchAdvisoryList(segment: string): Promise<BroadcomApiItem[]> {
     await new Promise(r => setTimeout(r, DELAY_MS));
   }
 
-  return all;
+  return { items: all, truncated };
 }
 
 /**
@@ -142,9 +147,9 @@ async function fetchAdvisoryList(segment: string): Promise<BroadcomApiItem[]> {
  * VMSA "Response Matrix" columns:
  *   0: VMware Product | 1: Version | ... | 6: Fixed Version | ...
  */
-async function fetchDetailVersions(notificationUrl: string): Promise<ProductVersion[]> {
+async function fetchDetailVersions(notificationUrl: string): Promise<{ versions: ProductVersion[]; failed: boolean }> {
   try {
-    return await withPage(notificationUrl, async (page) => {
+    const versions = await withPage(notificationUrl, async (page) => {
       await page.waitForSelector('table', { timeout: 20000 });
       return page.evaluate(() => {
         const results: Array<{ product: string; fixed: string[] }> = [];
@@ -186,31 +191,37 @@ async function fetchDetailVersions(notificationUrl: string): Promise<ProductVers
         return results;
       });
     }, { timeout: 30000 });
+    return { versions, failed: false };
   } catch (err) {
     logger.warn({ notificationUrl, err }, 'Playwright failed for Broadcom advisory detail');
-    return [];
+    return { versions: [], failed: true };
   }
 }
 
 // ─── AdvisoryFetcher Implementation ──────────────────────────
 
 export class BroadcomFetcher implements AdvisoryFetcher {
+  private fetchFailed = 0;
+
   source(): string { return 'advisory-broadcom'; }
   isCompleteSnapshot(): boolean { return true; }
+  fetchFailedCount(): number { return this.fetchFailed; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
+    this.fetchFailed = 0;
     logger.info('Fetching Broadcom/VMware security advisories');
 
     // Collect advisories from all segments (deduplicate by documentId)
     const seen = new Map<string, BroadcomApiItem>();
     for (const segment of SEGMENTS) {
-      const items = await fetchAdvisoryList(segment);
+      const { items, truncated } = await fetchAdvisoryList(segment);
+      if (truncated) this.fetchFailed++;
       for (const item of items) {
         if (item.documentId && !seen.has(item.documentId)) {
           seen.set(item.documentId, item);
         }
       }
-      logger.info({ segment, count: items.length }, 'Broadcom segment fetched');
+      logger.info({ segment, count: items.length, truncated }, 'Broadcom segment fetched');
     }
 
     const items = [...seen.values()];
@@ -226,7 +237,8 @@ export class BroadcomFetcher implements AdvisoryFetcher {
 
       // Fetch detail page for version table (uses the direct notificationUrl)
       await new Promise(r => setTimeout(r, DELAY_MS));
-      const productVersions = await fetchDetailVersions(item.notificationUrl);
+      const { versions: productVersions, failed: detailFailed } = await fetchDetailVersions(item.notificationUrl);
+      if (detailFailed) this.fetchFailed++;
 
       let affectedProducts: NormalizedAdvisory['affectedProducts'];
 
@@ -270,7 +282,7 @@ export class BroadcomFetcher implements AdvisoryFetcher {
 
     await closeBrowser();
 
-    logger.info({ total: items.length, imported: results.length }, 'Broadcom advisory fetch complete');
+    logger.info({ total: items.length, imported: results.length, failed: this.fetchFailed }, 'Broadcom advisory fetch complete');
     return results;
   }
 }

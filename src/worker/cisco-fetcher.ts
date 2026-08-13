@@ -222,6 +222,7 @@ export class CiscoFetcher implements AdvisoryFetcher {
   private readonly delayMs:      number;
   private readonly mode:         'all' | 'latest';
   private readonly latestCount:  number;
+  private fetchFailed = 0;
 
   constructor({
     clientId     = process.env['CISCO_CLIENT_ID']     ?? '',
@@ -245,8 +246,10 @@ export class CiscoFetcher implements AdvisoryFetcher {
 
   source(): string { return 'cisco'; }
   isCompleteSnapshot(): boolean { return this.mode === 'all'; }
+  fetchFailedCount(): number { return this.fetchFailed; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
+    this.fetchFailed = 0;
     if (!this.clientId || !this.clientSecret) {
       throw new Error('CISCO_CLIENT_ID and CISCO_CLIENT_SECRET are required');
     }
@@ -273,14 +276,13 @@ export class CiscoFetcher implements AdvisoryFetcher {
     logger.info({ count: advisories.length }, 'Fetched Cisco advisory list');
 
     const results: NormalizedAdvisory[] = [];
-    let failed = 0;
 
     for (const adv of advisories) {
       try {
         const normalized = await advisoryToNormalized(adv);
         results.push(normalized);
       } catch (err) {
-        failed++;
+        this.fetchFailed++;
         logger.error({ err, advisoryId: adv.advisoryId }, 'Failed to process Cisco advisory');
       }
 
@@ -288,7 +290,7 @@ export class CiscoFetcher implements AdvisoryFetcher {
     }
 
     logger.info(
-      { total: advisories.length, succeeded: results.length, failed },
+      { total: advisories.length, succeeded: results.length, failed: this.fetchFailed },
       'Cisco PSIRT fetch complete',
     );
     return results;

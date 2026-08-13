@@ -340,6 +340,7 @@ export function parseCvrf(xml: string, cpuId: string): NormalizedAdvisory[] {
 export class OracleCpuFetcher implements AdvisoryFetcher {
   private readonly delayMs: number;
   private readonly latestOnly: boolean;
+  private fetchFailed = 0;
 
   constructor({ delayMs = 1000, latestOnly = false } = {}) {
     this.delayMs = delayMs;
@@ -348,8 +349,10 @@ export class OracleCpuFetcher implements AdvisoryFetcher {
 
   source(): string { return 'advisory-oracle-cpu'; }
   isCompleteSnapshot(): boolean { return !this.latestOnly; }
+  fetchFailedCount(): number { return this.fetchFailed; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
+    this.fetchFailed = 0;
     logger.info('Fetching Oracle CPU security advisories RSS');
     const rssItems = await fetchRssItems();
     // Filter to CPU advisories only (cpuXXXXYYYY pattern in link)
@@ -358,7 +361,6 @@ export class OracleCpuFetcher implements AdvisoryFetcher {
     logger.info({ total: rssItems.length, cpu: cpuItems.length }, 'Oracle RSS fetched');
 
     const results: NormalizedAdvisory[] = [];
-    let failed = 0;
 
     for (const item of cpuItems) {
       const csafUrl = toCsafUrl(item.link);
@@ -398,17 +400,17 @@ export class OracleCpuFetcher implements AdvisoryFetcher {
           results.push(...advisories);
           logger.info({ cpuId, count: advisories.length }, 'Oracle CPU CVRF parsed');
         } catch (err) {
-          failed++;
+          this.fetchFailed++;
           logger.warn({ cpuId, cvrfUrl, err }, 'Failed to fetch Oracle CPU CSAF/CVRF, skipping (likely pre-2020, no structured data available)');
         }
       } else {
-        failed++;
+        this.fetchFailed++;
       }
 
       await new Promise(r => setTimeout(r, this.delayMs));
     }
 
-    logger.info({ total: results.length, failed }, 'Oracle CPU fetch complete');
+    logger.info({ total: results.length, failed: this.fetchFailed }, 'Oracle CPU fetch complete');
     return results;
   }
 }
