@@ -73,8 +73,13 @@ describe('parseCriterionComment', () => {
 });
 
 describe('extractModuleMajor', () => {
-  it('extracts the major version from a module-enabled criterion', () => {
-    expect(extractModuleMajor('Module nodejs:22 is enabled')).toBe(22);
+  it('extracts an integer stream label from a module-enabled criterion', () => {
+    expect(extractModuleMajor('Module nodejs:22 is enabled')).toBe('22');
+  });
+
+  it('extracts a dotted major.minor stream label verbatim', () => {
+    expect(extractModuleMajor('Module mysql:8.4 is enabled')).toBe('8.4');
+    expect(extractModuleMajor('Module mariadb:10.11 is enabled')).toBe('10.11');
   });
 
   it('returns null for non-module criteria', () => {
@@ -120,7 +125,7 @@ describe('collectCriteria', () => {
     const result = collectCriteria(node);
     const nodejsCrit = result.find(r => r.node['@_comment']?.toString().startsWith('nodejs is earlier'));
     const develCrit = result.find(r => r.node['@_comment']?.toString().startsWith('nodejs-devel'));
-    expect(nodejsCrit?.moduleMajor).toBe(22);
-    expect(develCrit?.moduleMajor).toBe(22);
+    expect(nodejsCrit?.moduleMajor).toBe('22');
+    expect(develCrit?.moduleMajor).toBe('22');
   });
 });

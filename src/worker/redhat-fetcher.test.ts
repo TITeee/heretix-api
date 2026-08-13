@@ -98,9 +98,17 @@ describe('parseCriterionComment', () => {
 });
 
 describe('extractModuleMajor', () => {
-  it('extracts the major version from a module-enabled criterion', () => {
-    expect(extractModuleMajor('Module nodejs:20 is enabled')).toBe(20);
-    expect(extractModuleMajor('Module postgresql:16 is enabled')).toBe(16);
+  it('extracts an integer stream label from a module-enabled criterion', () => {
+    expect(extractModuleMajor('Module nodejs:20 is enabled')).toBe('20');
+    expect(extractModuleMajor('Module postgresql:16 is enabled')).toBe('16');
+  });
+
+  it('extracts a dotted major.minor stream label verbatim', () => {
+    // mysql/mariadb never use a plain integer stream -- 8.0 and 8.4 (mysql),
+    // 10.3/10.5/10.11/11.8 (mariadb) are each a distinct, mutually
+    // incompatible release line.
+    expect(extractModuleMajor('Module mysql:8.4 is enabled')).toBe('8.4');
+    expect(extractModuleMajor('Module mariadb:10.11 is enabled')).toBe('10.11');
   });
 
   it('returns null for non-module criteria', () => {
@@ -157,9 +165,9 @@ describe('collectCriteria', () => {
     const moduleCrit = result.find(r => r.node['@_comment'] === 'Module nodejs:20 is enabled');
     const nodejsCrit = result.find(r => r.node['@_comment']?.toString().startsWith('nodejs is earlier'));
     const develCrit = result.find(r => r.node['@_comment']?.toString().startsWith('nodejs-devel'));
-    expect(moduleCrit?.moduleMajor).toBe(20);
-    expect(nodejsCrit?.moduleMajor).toBe(20);
-    expect(develCrit?.moduleMajor).toBe(20);
+    expect(moduleCrit?.moduleMajor).toBe('20');
+    expect(nodejsCrit?.moduleMajor).toBe('20');
+    expect(develCrit?.moduleMajor).toBe('20');
   });
 
   it('does not leak a module major across unrelated sibling branches', () => {

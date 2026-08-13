@@ -2,29 +2,29 @@
  * One-time migration: backfill versionStart for existing DNF module-stream rows
  *
  * RedHatFetcher/OracleLinuxFetcher now extract versionStart directly from the
- * OVAL "Module <name>:N is enabled" criterion at import time (see
+ * OVAL "Module <name>:<stream> is enabled" criterion at import time (see
  * collectCriteria() in both fetchers), so newly-imported rows get it
- * automatically. This backfills rows imported before that change, plus one
- * correction pass:
+ * automatically. This backfills rows imported before that change, in two
+ * passes:
  *
- * 1. Any AdvisoryAffectedProduct with versionStart IS NULL and a versionEnd
- *    containing the DNF module-build marker (".module+") -- the row's own
- *    versionEnd already encodes its major version (e.g.
- *    "20.8.1-1.module+el9.3.0.z+..." -> major 20) -- no live OVAL re-fetch is
- *    needed, this is exactly the value the fetcher would have extracted from
- *    the Module criterion for that same build.
- * 2. product="nodejs"/"postgresql" rows with no ".module+" marker at all
- *    (pre-modularization advisories with no Module criterion to extract from
- *    in the first place -- e.g. RHSA-2022:6595 on RHEL9 for nodejs; RHEL7
- *    pre-DNF, RHEL9's pre-modularization baseline, and RHEL10's unmodularized
- *    postgresql for postgresql) -- mirrors inferBareVersionStart()
- *    (advisory-helpers.ts), scoped to these two confirmed products; not
- *    applied to other products (see that function's doc comment for why).
- * 3. product="postgresql" rows already backfilled to the coarse "9.0" floor
- *    by an earlier run of this script (before inferBareVersionStart() learned
- *    PostgreSQL's pre-10 two-component majors) -- re-derives the precise
- *    "9.{minor}" floor so e.g. postgresql:9.6-only fixes stop matching a
- *    9.2.x query.
+ * 1. product in BARE_ROW_FALLBACK_PRODUCTS (advisory-helpers.ts -- nodejs,
+ *    postgresql, httpd, and the mysql/mariadb/php families, each confirmed
+ *    safe via a live query): recomputed via inferBareVersionStart()
+ *    unconditionally, regardless of the row's current versionStart or
+ *    whether it carries the ".module+" marker. This is safe (not just a
+ *    backfill-the-nulls pass) because inferBareVersionStart()'s per-product
+ *    logic was designed to reproduce exactly what the primary
+ *    extractModuleMajor()-based extraction would derive for these products'
+ *    module rows too -- so it doubles as the correction pass for rows an
+ *    earlier, cruder version of this script (or extractModuleMajor(), before
+ *    it learned to read dotted stream labels like "8.4"/"10.11") already
+ *    wrote a too-coarse floor into.
+ * 2. Any other AdvisoryAffectedProduct with versionStart IS NULL and a
+ *    versionEnd containing the DNF module-build marker (".module+") -- for
+ *    the ~150 other module-stream products not individually verified, the
+ *    row's own versionEnd leading digit is used directly (the same
+ *    single-component guess the fetchers themselves fall back to for an
+ *    unrecognized product).
  *
  * Usage:
  *   pnpm migrate:module-version-start
@@ -32,7 +32,7 @@
 import 'dotenv/config';
 import { prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
-import { inferBareVersionStart } from '../worker/advisory-helpers.js';
+import { inferBareVersionStart, moduleStreamVersionStart, BARE_ROW_FALLBACK_PRODUCTS } from '../worker/advisory-helpers.js';
 
 async function main() {
   console.log('Finding AdvisoryAffectedProduct records a Module criterion or the bare-row fallback would now (re)cover...');
@@ -40,12 +40,11 @@ async function main() {
   const records = await prisma.advisoryAffectedProduct.findMany({
     where: {
       OR: [
+        { product: { in: [...BARE_ROW_FALLBACK_PRODUCTS] } },
         { versionStart: null, versionEnd: { contains: '.module+' } },
-        { versionStart: null, product: { in: ['nodejs', 'postgresql'] } },
-        { product: 'postgresql', versionStart: '9.0' },
       ],
     },
-    select: { id: true, product: true, versionEnd: true },
+    select: { id: true, product: true, versionEnd: true, versionStart: true },
   });
 
   console.log(`Found ${records.length} records to migrate.`);
@@ -56,17 +55,27 @@ async function main() {
 
   let updated = 0;
   let skipped = 0;
+  let unchanged = 0;
 
   for (const record of records) {
-    const versionEnd = record.versionEnd!;
-    const major = inferBareVersionStart(record.product, versionEnd) ?? versionEnd.match(/^(\d+)\./)?.[1];
-    if (!major) {
-      console.warn(`  SKIP [${record.id}] product=${record.product} versionEnd="${versionEnd}" — no leading major version`);
+    const versionEnd = record.versionEnd;
+    if (!versionEnd) {
+      console.warn(`  SKIP [${record.id}] product=${record.product} — no versionEnd`);
+      skipped++;
+      continue;
+    }
+    const stream = inferBareVersionStart(record.product, versionEnd) ?? versionEnd.match(/^(\d+)\./)?.[1];
+    if (!stream) {
+      console.warn(`  SKIP [${record.id}] product=${record.product} versionEnd="${versionEnd}" — no leading version component`);
       skipped++;
       continue;
     }
 
-    const versionStart = major.includes('.') ? major : `${major}.0`;
+    const versionStart = moduleStreamVersionStart(stream);
+    if (versionStart === record.versionStart) {
+      unchanged++;
+      continue;
+    }
     const versionStartInt = normalizeVersion(versionStart);
 
     await prisma.advisoryAffectedProduct.update({
@@ -76,7 +85,7 @@ async function main() {
     updated++;
   }
 
-  console.log(`Done: ${updated} updated, ${skipped} skipped (no parseable major version).`);
+  console.log(`Done: ${updated} updated, ${unchanged} already correct, ${skipped} skipped (no parseable leading version component).`);
 }
 
 main()

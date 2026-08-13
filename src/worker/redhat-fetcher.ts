@@ -3,7 +3,7 @@ import { createRequire } from 'module';
 import { XMLParser } from 'fast-xml-parser';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
-import { inferBareVersionStart } from './advisory-helpers.js';
+import { inferBareVersionStart, moduleStreamVersionStart } from './advisory-helpers.js';
 
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -95,25 +95,35 @@ export function parseCriterionComment(comment: string): { packageName: string; v
   };
 }
 
-/** Extracts N from a "Module <name>:N is enabled" criterion comment (DNF module-stream gate). */
-export function extractModuleMajor(comment: string): number | null {
-  const m = comment.match(/^Module\s+\S+:(\d+)\s+is enabled$/i);
-  return m ? parseInt(m[1], 10) : null;
+/**
+ * Extracts the stream label from a "Module <name>:<stream> is enabled"
+ * criterion comment (DNF module-stream gate). The stream label is whatever
+ * the vendor uses to identify the stream verbatim -- a plain integer for
+ * most products (nodejs's "20", postgresql's "16"), but a dotted
+ * major.minor for others (mysql's "8.4", mariadb's "10.11") wherever that's
+ * the product's real, mutually-incompatible release-line boundary. Returning
+ * it as-is (not parsed as an integer) is what lets the caller use it
+ * directly as a versionStart floor without needing to know which shape a
+ * given product uses.
+ */
+export function extractModuleMajor(comment: string): string | null {
+  const m = comment.match(/^Module\s+\S+:(\S+)\s+is enabled$/i);
+  return m ? m[1] : null;
 }
 
 export interface CollectedCriterion {
   node: Record<string, unknown>;
   /**
-   * Major version from an ancestor "Module <name>:N is enabled" criterion, if
-   * any. RHEL/Oracle Linux OVAL always pairs that check and the OR-of-packages
-   * it guards as sibling children of the same <criteria operator="AND">
-   * parent, so finding one at a level scopes every criterion at that level
-   * and everything nested beneath it.
+   * Stream label from an ancestor "Module <name>:<stream> is enabled"
+   * criterion, if any. RHEL/Oracle Linux OVAL always pairs that check and
+   * the OR-of-packages it guards as sibling children of the same
+   * <criteria operator="AND"> parent, so finding one at a level scopes
+   * every criterion at that level and everything nested beneath it.
    */
-  moduleMajor: number | null;
+  moduleMajor: string | null;
 }
 
-export function collectCriteria(node: unknown, moduleMajor: number | null = null): CollectedCriterion[] {
+export function collectCriteria(node: unknown, moduleMajor: string | null = null): CollectedCriterion[] {
   if (!node || typeof node !== 'object') return [];
   const n = node as Record<string, unknown>;
   const results: CollectedCriterion[] = [];
@@ -261,7 +271,7 @@ export class RedHatFetcher implements AdvisoryFetcher {
         seen.add(key);
 
         const versionStart = crit.moduleMajor !== null
-          ? `${crit.moduleMajor}.0`
+          ? moduleStreamVersionStart(crit.moduleMajor)
           : inferBareVersionStart(parsed.packageName, parsed.versionEnd);
 
         affectedProducts.push({
