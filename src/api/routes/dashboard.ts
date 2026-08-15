@@ -3,10 +3,18 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { prisma } from '../../db/client.js';
 import { STATIC_JOBS } from '../../jobs/registry.js';
-import { getEnabledMap } from '../../jobs/config.js';
+import { getEnabledMap, defaultEnabled } from '../../jobs/config.js';
 
 function isOsvEcosystemSource(source: string): boolean {
   return source.startsWith('osv-') && source !== 'osv-delta';
+}
+
+// CollectionJob has an unused `duration` column that's never populated by any
+// job runner — derive it instead from startedAt/completedAt, which every
+// runner sets around the full fetch+import run (not just the fetch() call).
+function jobDurationMs(job: { startedAt: Date | null; completedAt: Date | null } | undefined): number | null {
+  if (!job?.startedAt || !job?.completedAt) return null;
+  return job.completedAt.getTime() - job.startedAt.getTime();
 }
 
 // Maps CollectionJob.source values to the AdvisoryVulnerability.source value
@@ -51,7 +59,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     `;
 
     const enabledMap = await getEnabledMap();
-    const isSourceEnabled = (source: string): boolean => enabledMap.get(source) ?? true;
+    const isSourceEnabled = (source: string): boolean => enabledMap.get(source) ?? defaultEnabled(source);
 
     const osvEcosystems = ecosystemCounts.map((r) => {
       const eco = r.ecosystem;
@@ -64,6 +72,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         recordCount: Number(r.count),
         status: job?.status ?? null,
         completedAt: job?.completedAt ?? null,
+        durationMs: jobDurationMs(job),
         totalInserted: job?.totalInserted ?? null,
         totalUpdated: job?.totalUpdated ?? null,
         errorMessage: job?.errorMessage ?? null,
@@ -80,6 +89,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       recordCount: malCount,
       status: malJob?.status ?? null,
       completedAt: malJob?.completedAt ?? null,
+      durationMs: jobDurationMs(malJob),
       totalInserted: malJob?.totalInserted ?? null,
       totalUpdated: malJob?.totalUpdated ?? null,
       errorMessage: malJob?.errorMessage ?? null,
@@ -121,9 +131,11 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
           status: j?.status ?? null,
           startedAt: j?.startedAt ?? null,
           completedAt: j?.completedAt ?? null,
+          durationMs: jobDurationMs(j),
           totalInserted: j?.totalInserted ?? null,
           totalUpdated: j?.totalUpdated ?? null,
           totalFailed: j?.totalFailed ?? null,
+          fetchFailed: (j?.metadata as { fetchFailed?: number } | null)?.fetchFailed ?? null,
           errorMessage: j?.errorMessage ?? null,
         };
       });
@@ -227,6 +239,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
               <th class="px-4 py-3 font-medium">Source</th>
               <th class="px-4 py-3 font-medium">Status</th>
               <th class="px-4 py-3 font-medium">Last Completed</th>
+              <th class="px-4 py-3 font-medium text-right">Duration</th>
               <th class="px-4 py-3 font-medium text-right">Records</th>
               <th class="px-4 py-3 font-medium text-right">Inserted</th>
               <th class="px-4 py-3 font-medium text-right">Updated</th>
@@ -235,7 +248,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
             </tr>
           </thead>
           <tbody id="core-tbody">
-            <tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
+            <tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -254,6 +267,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
               <th class="px-4 py-3 font-medium">Vendor</th>
               <th class="px-4 py-3 font-medium">Status</th>
               <th class="px-4 py-3 font-medium">Last Completed</th>
+              <th class="px-4 py-3 font-medium text-right">Duration</th>
               <th class="px-4 py-3 font-medium text-right">Records</th>
               <th class="px-4 py-3 font-medium text-right">Inserted</th>
               <th class="px-4 py-3 font-medium text-right">Updated</th>
@@ -262,7 +276,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
             </tr>
           </thead>
           <tbody id="advisory-tbody">
-            <tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
+            <tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -281,6 +295,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
               <th class="px-4 py-3 font-medium">Ecosystem</th>
               <th class="px-4 py-3 font-medium">Status</th>
               <th class="px-4 py-3 font-medium">Last Completed</th>
+              <th class="px-4 py-3 font-medium text-right">Duration</th>
               <th class="px-4 py-3 font-medium text-right">Records</th>
               <th class="px-4 py-3 font-medium text-right">Inserted</th>
               <th class="px-4 py-3 font-medium text-right">Updated</th>
@@ -289,7 +304,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
             </tr>
           </thead>
           <tbody id="osv-tbody">
-            <tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
+            <tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -316,6 +331,17 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       return days + 'd ago';
     }
 
+    function formatDuration(ms) {
+      if (ms == null || ms < 0) return '-';
+      const totalSeconds = Math.round(ms / 1000);
+      const h = Math.floor(totalSeconds / 3600);
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      const s = totalSeconds % 60;
+      if (h > 0) return h + 'h ' + m + 'm';
+      if (m > 0) return m + 'm ' + s + 's';
+      return s + 's';
+    }
+
     function statusBadge(status) {
       const base = 'inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 rounded-4xl border px-2 py-0.5 text-xs font-medium whitespace-nowrap';
       if (!status) return '<span class="' + base + ' border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]">no jobs</span>';
@@ -330,6 +356,12 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         ? '<span class="inline-block w-2 h-2 rounded-full bg-current animate-pulse mr-1"></span>'
         : '';
       return '<span class="' + base + ' ' + cls + '">' + dot + status + '</span>';
+    }
+
+    function fetchFailedBadge(n) {
+      if (!n) return '';
+      return ' <span class="inline-flex h-5 items-center gap-1 rounded-4xl border border-transparent bg-amber-500/20 text-amber-400 px-2 py-0.5 text-xs font-medium whitespace-nowrap" title="' +
+        n + ' item(s) failed to fetch this run and are missing from the results">⚠ ' + n + '</span>';
     }
 
     function errorCell(msg) {
@@ -367,12 +399,12 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       const running = row.status === 'running';
       const runBtn = '<button onclick="runJob(\\'' + row.source + '\\')" ' +
         (running ? 'disabled ' : '') +
-        'class="px-2.5 py-1 text-xs font-medium rounded-md border border-[var(--border)] ' +
+        'class="w-[72px] px-2.5 py-1 text-xs font-medium rounded-md border border-[var(--border)] text-center ' +
         (running ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[var(--accent)]') + '">' +
         (running ? 'Running…' : 'Run') + '</button>';
       const enabled = row.enabled !== false;
       const toggleBtn = '<button onclick="toggleJob(\\'' + row.source + '\\', ' + (!enabled) + ')" ' +
-        'class="px-2.5 py-1 text-xs font-medium rounded-md border ' +
+        'class="w-[52px] px-2.5 py-1 text-xs font-medium rounded-md border text-center ' +
         (enabled
           ? 'border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--accent)]'
           : 'border-transparent bg-[var(--destructive)]/20 text-[var(--destructive)]') +
@@ -437,7 +469,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       options = options || {};
       const tbody = document.getElementById(tbodyId);
       if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-[var(--muted-foreground)]">' +
+        tbody.innerHTML = '<tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">' +
           (options.emptyMessage || 'No data found.') + '</td></tr>';
         return;
       }
@@ -446,8 +478,9 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors' +
           (r.enabled === false ? ' opacity-50' : '') + '">' +
           '<td class="px-4 py-4 font-medium text-[var(--foreground)]">' + getName(r) + '</td>' +
-          '<td class="px-4 py-4">' + statusBadge(r.status) + '</td>' +
+          '<td class="px-4 py-4">' + statusBadge(r.status) + fetchFailedBadge(r.fetchFailed) + '</td>' +
           '<td class="px-4 py-4 text-[var(--muted-foreground)]">' + relativeTime(r.completedAt) + '</td>' +
+          '<td class="px-4 py-4 text-right text-[var(--muted-foreground)] font-mono">' + formatDuration(r.durationMs) + '</td>' +
           '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(r.recordCount) + '</td>' +
           '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(r.totalInserted) + '</td>' +
           '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(r.totalUpdated) + '</td>' +
@@ -469,7 +502,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         document.getElementById('last-updated').textContent =
           'Updated ' + new Date().toLocaleTimeString();
       } catch (err) {
-        const msg = '<tr><td colspan="8" class="px-6 py-8 text-center text-[var(--destructive)]">Failed to load: ' + err.message + '</td></tr>';
+        const msg = '<tr><td colspan="9" class="px-6 py-8 text-center text-[var(--destructive)]">Failed to load: ' + err.message + '</td></tr>';
         document.getElementById('core-tbody').innerHTML = msg;
         document.getElementById('advisory-tbody').innerHTML = msg;
         document.getElementById('osv-tbody').innerHTML = msg;

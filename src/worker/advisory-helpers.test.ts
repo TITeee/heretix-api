@@ -1,21 +1,98 @@
 import { describe, it, expect } from 'vitest';
-import { inferPostgresqlModuleVersionStart } from './advisory-helpers.js';
+import { inferBareVersionStart, moduleStreamVersionStart } from './advisory-helpers.js';
 
-describe('inferPostgresqlModuleVersionStart', () => {
-  it('infers the major-version floor for a postgresql module-stream row with no versionStart', () => {
-    expect(inferPostgresqlModuleVersionStart('postgresql', undefined, '18.4-2.module+el9.8.0+24359+da7fad50')).toBe('18.0');
-    expect(inferPostgresqlModuleVersionStart('postgresql', undefined, '16.14-1.module+el9.8.0+90922+3defa420')).toBe('16.0');
+describe('moduleStreamVersionStart', () => {
+  it('appends ".0" to a plain integer stream label', () => {
+    expect(moduleStreamVersionStart('20')).toBe('20.0');
+    expect(moduleStreamVersionStart('16')).toBe('16.0');
   });
 
-  it('leaves an existing versionStart untouched', () => {
-    expect(inferPostgresqlModuleVersionStart('postgresql', '16.0', '18.4-2.module+el9.8.0+24359+da7fad50')).toBe('16.0');
+  it('passes a dotted major.minor stream label through as-is', () => {
+    expect(moduleStreamVersionStart('8.4')).toBe('8.4');
+    expect(moduleStreamVersionStart('10.11')).toBe('10.11');
+  });
+});
+
+describe('inferBareVersionStart', () => {
+  it('infers the major-version floor for a bare nodejs row (no module criterion)', () => {
+    expect(inferBareVersionStart('nodejs', '16.16.0-1.el9_0')).toBe('16.0');
   });
 
-  it('does not apply to non-postgresql products, even with a module marker', () => {
-    expect(inferPostgresqlModuleVersionStart('nodejs', undefined, '18.4-2.module+el9.8.0+24359+da7fad50')).toBeUndefined();
+  it('infers a single-component major-version floor for a bare postgresql row at version 10+', () => {
+    expect(inferBareVersionStart('postgresql', '13.23-5.el9_8')).toBe('13.0');
+    expect(inferBareVersionStart('postgresql', '16.14-1.0.1.el10_2')).toBe('16.0');
   });
 
-  it('does not apply to postgresql rows without a module marker', () => {
-    expect(inferPostgresqlModuleVersionStart('postgresql', undefined, '9.2.24-1.el7_5')).toBeUndefined();
+  it('infers a two-component floor for pre-10 postgresql majors (9.0-9.6 are distinct, incompatible majors)', () => {
+    // RHEL7's bare postgresql 9.2 line.
+    expect(inferBareVersionStart('postgresql', '9.2.24-9.0.7.el7_9')).toBe('9.2');
+    // postgresql:9.6 module stream, whose "Module postgresql:9.6 is enabled"
+    // criterion the primary extractModuleMajor() can't parse (dotted stream
+    // label) -- must not collapse to the same floor as 9.2 (regression:
+    // CVE-2019-10130 is postgresql:9.6-specific per its own RHSA title, yet
+    // a single-component "9.0" floor let it match a 9.2.10 query).
+    expect(inferBareVersionStart('postgresql', '9.6.20-1.module+el8.3.0+8938+7f0e88b6')).toBe('9.6');
+  });
+
+  it('always infers a two-component floor for httpd (Apache never used a single-integer major)', () => {
+    // RHEL5/6-era 2.2 line and RHEL7+ 2.4 line are separately maintained,
+    // mutually incompatible releases (2.2 EOL'd upstream in 2018) -- unlike
+    // postgresql, there is no version range where a single-component floor
+    // is correct, so httpd doesn't fall through to the generic branch at all.
+    expect(inferBareVersionStart('httpd', '2.2.15-15.0.1.el6_2.1')).toBe('2.2');
+    expect(inferBareVersionStart('httpd', '2.4.62-13.el9_8.1')).toBe('2.4');
+  });
+
+  it('always infers a two-component floor for the ancient pre-DNF mysql/mariadb/php lines', () => {
+    // RHEL5/6-era mysql (predates DNF modularity; mysql:8.0/8.4 module
+    // streams are now handled by extractModuleMajor() reading the dotted
+    // "Module mysql:8.4 is enabled" label directly, not this fallback).
+    expect(inferBareVersionStart('mysql', '5.1.66-2.el6_3')).toBe('5.1');
+    expect(inferBareVersionStart('mysql', '5.0.95-3.el5')).toBe('5.0');
+    // RHEL7-era mariadb (predates DNF modularity the same way).
+    expect(inferBareVersionStart('mariadb', '5.5.68-1.0.1.el7')).toBe('5.5');
+    // RHEL5/6-era php (predates DNF modularity; php:8.1's dotted Module
+    // criterion is likewise handled by extractModuleMajor(), not this).
+    expect(inferBareVersionStart('php', '5.1.6-27.el5_7.4')).toBe('5.1');
+    expect(inferBareVersionStart('php', '5.3.3-26.el6')).toBe('5.3');
+  });
+
+  it('applies to same-source-RPM subpackages sharing the parent version, not just the base product name', () => {
+    // Same version-release string as the mysql/mariadb/php samples above --
+    // these are built from the same source RPM, not independently versioned.
+    expect(inferBareVersionStart('mysql-server', '5.1.66-2.el6_3')).toBe('5.1');
+    expect(inferBareVersionStart('mariadb-bench', '5.5.68-1.0.1.el7')).toBe('5.5');
+    expect(inferBareVersionStart('php-cli', '5.3.3-26.el6')).toBe('5.3');
+  });
+
+  it('does not apply to independently-versioned bundled tools, even with a family-member-looking name', () => {
+    // mysql-selinux versions its SELinux policy ("1.0.14-1.el10_0"), not
+    // MySQL itself; mariadb-connector-c versions the Connector/C client
+    // library ("3.4.4-2.el10_2") independently of the server; php-pecl-*
+    // extensions and php-pear/php-libguestfs are likewise independently
+    // versioned -- none of these are in the family allowlists.
+    expect(inferBareVersionStart('mysql-selinux', '1.0.14-1.el10_0')).toBeUndefined();
+    expect(inferBareVersionStart('mariadb-connector-c', '3.4.4-2.el10_2')).toBeUndefined();
+    expect(inferBareVersionStart('php-pecl-xdebug', '3.1.9-2.el6')).toBeUndefined();
+    expect(inferBareVersionStart('php-pear', '1.9.4-4.el6')).toBeUndefined();
+  });
+
+  it('does not apply to Software Collections-style product names (version baked into the name, already isolated)', () => {
+    expect(inferBareVersionStart('php54-php-cli', '5.4.16-1.el6')).toBeUndefined();
+    expect(inferBareVersionStart('mysql55-mysql-server', '5.5.68-1.el6')).toBeUndefined();
+  });
+
+  it('does not apply to products outside the confirmed allowlist, even with the same version shape', () => {
+    expect(inferBareVersionStart('nodejs-nodemon', '2.0.19-1.el9_0')).toBeUndefined();
+    expect(inferBareVersionStart('golang', '1.21.0-1.el9')).toBeUndefined();
+  });
+
+  it('returns undefined when versionEnd has no leading major version', () => {
+    expect(inferBareVersionStart('nodejs', 'not-a-version')).toBeUndefined();
+    expect(inferBareVersionStart('postgresql', 'not-a-version')).toBeUndefined();
+    expect(inferBareVersionStart('httpd', 'not-a-version')).toBeUndefined();
+    expect(inferBareVersionStart('mysql', 'not-a-version')).toBeUndefined();
+    expect(inferBareVersionStart('mariadb', 'not-a-version')).toBeUndefined();
+    expect(inferBareVersionStart('php', 'not-a-version')).toBeUndefined();
   });
 });

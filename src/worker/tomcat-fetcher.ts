@@ -178,10 +178,14 @@ export function groupByAdvisory(entries: RawEntry[]): NormalizedAdvisory[] {
 // ─── AdvisoryFetcher Implementation ──────────────────────────
 
 export class TomcatFetcher implements AdvisoryFetcher {
+  private fetchFailed = 0;
+
   source(): string { return 'advisory-tomcat'; }
   isCompleteSnapshot(): boolean { return true; }
+  fetchFailedCount(): number { return this.fetchFailed; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
+    this.fetchFailed = 0;
     logger.info('Fetching Apache Tomcat security advisories');
 
     const allEntries: RawEntry[] = [];
@@ -196,12 +200,18 @@ export class TomcatFetcher implements AdvisoryFetcher {
         allEntries.push(...entries);
         logger.info({ major, count: entries.length }, 'Parsed Tomcat branch page');
       } catch (err) {
-        logger.warn({ major, err }, 'Skipping Tomcat branch page (not found or fetch failed)');
+        // A 404 means this candidate major has no page yet (or no longer) —
+        // expected and harmless, CANDIDATE_MAJORS intentionally probes ahead
+        // of the current release line. Anything else (timeout, 5xx, DNS) is
+        // a genuine fetch failure for a branch that does exist.
+        const notFound = axios.isAxiosError(err) && err.response?.status === 404;
+        if (!notFound) this.fetchFailed++;
+        logger.warn({ major, err, notFound }, 'Skipping Tomcat branch page (not found or fetch failed)');
       }
     }
 
     const results = groupByAdvisory(allEntries);
-    logger.info({ total: results.length }, 'Apache Tomcat advisory fetch complete');
+    logger.info({ total: results.length, failed: this.fetchFailed }, 'Apache Tomcat advisory fetch complete');
     return results;
   }
 }

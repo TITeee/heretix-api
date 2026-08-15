@@ -1,7 +1,6 @@
 import { prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
 import { logger } from '../utils/logger.js';
-import { inferPostgresqlModuleVersionStart } from './advisory-helpers.js';
 import type { Prisma } from '@prisma/client';
 
 // ─── Common Interfaces ────────────────────────────────────────
@@ -45,6 +44,20 @@ export interface AdvisoryFetcher {
    * perfectly valid advisories that just fall outside it.
    */
   isCompleteSnapshot(): boolean;
+  /**
+   * Count of individual items (advisory detail pages, CSAF documents, etc.)
+   * this fetcher's most recent fetch() call failed to retrieve or parse, for
+   * fetchers that loop over many per-item HTTP requests and catch failures
+   * per-item rather than letting one bad request abort the whole run.
+   * Without this, those failures are invisible outside a log line: fetch()
+   * simply returns whatever succeeded, runAdvisoryFetcher()'s `total` reflects
+   * only the survivors, and CollectionJob shows a "completed" run with a
+   * quietly shrinking count — indistinguishable from the vendor just
+   * publishing fewer advisories that day. Optional because fetchers that
+   * issue a single request (or that intentionally let a failure propagate
+   * and fail the whole run, e.g. nginx/apache) have nothing to report here.
+   */
+  fetchFailedCount?(): number;
 }
 
 // ─── Import Functions ─────────────────────────────────────────
@@ -144,11 +157,8 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
     await tx.advisoryAffectedProduct.deleteMany({ where: { advisoryId: advisory.id } });
 
     for (const prod of adv.affectedProducts) {
-      const effectiveVersionStart = inferPostgresqlModuleVersionStart(
-        prod.product.trim(), prod.versionStart, prod.versionEnd,
-      );
-      const versionStartInt = effectiveVersionStart
-        ? (normalizeVersion(effectiveVersionStart) ?? null)
+      const versionStartInt = prod.versionStart
+        ? (normalizeVersion(prod.versionStart) ?? null)
         : null;
       // versionFixed has the same exclusive-upper-bound semantics as versionEnd:
       // "fixed in X.Y.Z" means versions < X.Y.Z are affected → use as fallback for range queries.
@@ -165,7 +175,7 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
           advisoryId: advisory.id,
           vendor: prod.vendor.trim(),
           product: prod.product.trim(),
-          versionStart: effectiveVersionStart ?? null,
+          versionStart: prod.versionStart ?? null,
           versionEnd: prod.versionEnd ?? null,
           versionFixed: prod.versionFixed ?? null,
           lastAffected: prod.lastAffected ?? null,
@@ -259,12 +269,18 @@ export async function runAdvisoryFetcher(fetcher: AdvisoryFetcher): Promise<{
   inserted: number;
   updated: number;
   failed: number;
+  fetchFailed: number;
   pruned: number;
 }> {
   const source = fetcher.source();
   logger.info({ source }, 'Running advisory fetcher');
 
   const advisories = await fetcher.fetch();
+  // Distinct from `failed` below: this counts items the fetcher itself
+  // couldn't retrieve/parse (network error, malformed CSAF, ...) and so
+  // never made it into `advisories` at all — see fetchFailedCount()'s doc
+  // comment on AdvisoryFetcher for why this needs to be surfaced separately.
+  const fetchFailed = fetcher.fetchFailedCount?.() ?? 0;
   let inserted = 0;
   let updated = 0;
   let failed = 0;
@@ -292,6 +308,9 @@ export async function runAdvisoryFetcher(fetcher: AdvisoryFetcher): Promise<{
     ({ deleted: pruned } = await pruneStaleAdvisories(source, seenIds));
   }
 
-  logger.info({ source, total: advisories.length, succeeded, failed, pruned }, 'Advisory fetcher completed');
-  return { total: advisories.length, succeeded, inserted, updated, failed, pruned };
+  if (fetchFailed > 0) {
+    logger.warn({ source, fetchFailed }, 'Some items failed to fetch this run — CollectionJob total is undercounted');
+  }
+  logger.info({ source, total: advisories.length, succeeded, failed, fetchFailed, pruned }, 'Advisory fetcher completed');
+  return { total: advisories.length, succeeded, inserted, updated, failed, fetchFailed, pruned };
 }

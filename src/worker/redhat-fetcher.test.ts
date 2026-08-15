@@ -4,6 +4,7 @@ import {
   stripEpoch,
   parseCveElement,
   parseCriterionComment,
+  extractModuleMajor,
   collectCriteria,
 } from './redhat-fetcher.js';
 
@@ -96,15 +97,38 @@ describe('parseCriterionComment', () => {
   });
 });
 
+describe('extractModuleMajor', () => {
+  it('extracts an integer stream label from a module-enabled criterion', () => {
+    expect(extractModuleMajor('Module nodejs:20 is enabled')).toBe('20');
+    expect(extractModuleMajor('Module postgresql:16 is enabled')).toBe('16');
+  });
+
+  it('extracts a dotted major.minor stream label verbatim', () => {
+    // mysql/mariadb never use a plain integer stream -- 8.0 and 8.4 (mysql),
+    // 10.3/10.5/10.11/11.8 (mariadb) are each a distinct, mutually
+    // incompatible release line.
+    expect(extractModuleMajor('Module mysql:8.4 is enabled')).toBe('8.4');
+    expect(extractModuleMajor('Module mariadb:10.11 is enabled')).toBe('10.11');
+  });
+
+  it('returns null for non-module criteria', () => {
+    expect(extractModuleMajor('nodejs is earlier than 1:20.8.1-1.module+el9')).toBeNull();
+    expect(extractModuleMajor('Red Hat Enterprise Linux 9 is installed')).toBeNull();
+  });
+});
+
 describe('collectCriteria', () => {
-  it('collects criterion elements from a flat criteria node', () => {
+  it('collects criterion elements from a flat criteria node, with no module context', () => {
     const node = { criterion: [{ '@_comment': 'a' }, { '@_comment': 'b' }] };
-    expect(collectCriteria(node)).toEqual([{ '@_comment': 'a' }, { '@_comment': 'b' }]);
+    expect(collectCriteria(node)).toEqual([
+      { node: { '@_comment': 'a' }, moduleMajor: null },
+      { node: { '@_comment': 'b' }, moduleMajor: null },
+    ]);
   });
 
   it('collects a single criterion (non-array) node', () => {
     const node = { criterion: { '@_comment': 'a' } };
-    expect(collectCriteria(node)).toEqual([{ '@_comment': 'a' }]);
+    expect(collectCriteria(node)).toEqual([{ node: { '@_comment': 'a' }, moduleMajor: null }]);
   });
 
   it('recurses into nested criteria', () => {
@@ -114,11 +138,54 @@ describe('collectCriteria', () => {
         criterion: [{ '@_comment': 'nested' }],
       },
     };
-    expect(collectCriteria(node)).toEqual([{ '@_comment': 'top' }, { '@_comment': 'nested' }]);
+    expect(collectCriteria(node)).toEqual([
+      { node: { '@_comment': 'top' }, moduleMajor: null },
+      { node: { '@_comment': 'nested' }, moduleMajor: null },
+    ]);
   });
 
   it('returns an empty array for non-object input', () => {
     expect(collectCriteria(null)).toEqual([]);
     expect(collectCriteria(undefined)).toEqual([]);
+  });
+
+  it('propagates a "Module X:N is enabled" sibling criterion to nested descendants', () => {
+    // Mirrors the real RHEL9 OVAL shape: a module-enabled check and the
+    // OR-of-packages it guards are siblings under the same AND parent.
+    const node = {
+      criterion: [{ '@_comment': 'Module nodejs:20 is enabled' }],
+      criteria: {
+        criteria: [
+          { criterion: [{ '@_comment': 'nodejs is earlier than 1:20.8.1-1.module+el9' }] },
+          { criterion: [{ '@_comment': 'nodejs-devel is earlier than 1:20.8.1-1.module+el9' }] },
+        ],
+      },
+    };
+    const result = collectCriteria(node);
+    const moduleCrit = result.find(r => r.node['@_comment'] === 'Module nodejs:20 is enabled');
+    const nodejsCrit = result.find(r => r.node['@_comment']?.toString().startsWith('nodejs is earlier'));
+    const develCrit = result.find(r => r.node['@_comment']?.toString().startsWith('nodejs-devel'));
+    expect(moduleCrit?.moduleMajor).toBe('20');
+    expect(nodejsCrit?.moduleMajor).toBe('20');
+    expect(develCrit?.moduleMajor).toBe('20');
+  });
+
+  it('does not leak a module major across unrelated sibling branches', () => {
+    const node = {
+      criteria: [
+        {
+          criterion: [{ '@_comment': 'Module nodejs:20 is enabled' }],
+          criteria: { criterion: [{ '@_comment': 'nodejs is earlier than 1:20.8.1-1.module+el9' }] },
+        },
+        {
+          // No module criterion in this branch — e.g. the non-modular
+          // "nodejs is earlier than 1:16.16.0-1.el9_0" default-stream package.
+          criterion: [{ '@_comment': 'rsync is earlier than 0:3.2.5-3.el9' }],
+        },
+      ],
+    };
+    const result = collectCriteria(node);
+    const rsyncCrit = result.find(r => r.node['@_comment']?.toString().startsWith('rsync'));
+    expect(rsyncCrit?.moduleMajor).toBeNull();
   });
 });

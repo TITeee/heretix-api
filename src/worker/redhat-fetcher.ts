@@ -3,6 +3,7 @@ import { createRequire } from 'module';
 import { XMLParser } from 'fast-xml-parser';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
+import { inferBareVersionStart, moduleStreamVersionStart } from './advisory-helpers.js';
 
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -94,17 +95,54 @@ export function parseCriterionComment(comment: string): { packageName: string; v
   };
 }
 
-export function collectCriteria(node: unknown): Record<string, unknown>[] {
+/**
+ * Extracts the stream label from a "Module <name>:<stream> is enabled"
+ * criterion comment (DNF module-stream gate). The stream label is whatever
+ * the vendor uses to identify the stream verbatim -- a plain integer for
+ * most products (nodejs's "20", postgresql's "16"), but a dotted
+ * major.minor for others (mysql's "8.4", mariadb's "10.11") wherever that's
+ * the product's real, mutually-incompatible release-line boundary. Returning
+ * it as-is (not parsed as an integer) is what lets the caller use it
+ * directly as a versionStart floor without needing to know which shape a
+ * given product uses.
+ */
+export function extractModuleMajor(comment: string): string | null {
+  const m = comment.match(/^Module\s+\S+:(\S+)\s+is enabled$/i);
+  return m ? m[1] : null;
+}
+
+export interface CollectedCriterion {
+  node: Record<string, unknown>;
+  /**
+   * Stream label from an ancestor "Module <name>:<stream> is enabled"
+   * criterion, if any. RHEL/Oracle Linux OVAL always pairs that check and
+   * the OR-of-packages it guards as sibling children of the same
+   * <criteria operator="AND"> parent, so finding one at a level scopes
+   * every criterion at that level and everything nested beneath it.
+   */
+  moduleMajor: string | null;
+}
+
+export function collectCriteria(node: unknown, moduleMajor: string | null = null): CollectedCriterion[] {
   if (!node || typeof node !== 'object') return [];
   const n = node as Record<string, unknown>;
-  const results: Record<string, unknown>[] = [];
+  const results: CollectedCriterion[] = [];
 
-  for (const c of toArray(n['criterion'] as unknown)) {
-    results.push(c as Record<string, unknown>);
+  const ownCriteria = toArray(n['criterion'] as unknown) as Record<string, unknown>[];
+
+  let scopedModuleMajor = moduleMajor;
+  for (const c of ownCriteria) {
+    const comment = c['@_comment'] as string | undefined;
+    const major = comment ? extractModuleMajor(comment) : null;
+    if (major !== null) scopedModuleMajor = major;
+  }
+
+  for (const c of ownCriteria) {
+    results.push({ node: c, moduleMajor: scopedModuleMajor });
   }
 
   for (const nested of toArray(n['criteria'] as unknown)) {
-    results.push(...collectCriteria(nested));
+    results.push(...collectCriteria(nested, scopedModuleMajor));
   }
 
   return results;
@@ -222,7 +260,7 @@ export class RedHatFetcher implements AdvisoryFetcher {
       const seen = new Set<string>();
 
       for (const crit of criterionList) {
-        const comment = crit['@_comment'] as string | undefined;
+        const comment = crit.node['@_comment'] as string | undefined;
         if (!comment) continue;
 
         const parsed = parseCriterionComment(comment);
@@ -232,9 +270,14 @@ export class RedHatFetcher implements AdvisoryFetcher {
         if (seen.has(key)) continue;
         seen.add(key);
 
+        const versionStart = crit.moduleMajor !== null
+          ? moduleStreamVersionStart(crit.moduleMajor)
+          : inferBareVersionStart(parsed.packageName, parsed.versionEnd);
+
         affectedProducts.push({
           vendor: 'red-hat',
           product: parsed.packageName,
+          versionStart,
           versionEnd: parsed.versionEnd,
           affectedVersions: [],
         });

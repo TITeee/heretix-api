@@ -31,9 +31,10 @@ async function main() {
         totalInserted: result.inserted,
         totalUpdated: result.updated,
         totalFailed: result.failed,
+        metadata: { fetchFailed: result.fetchFailed },
       },
     });
-    console.log(`Done: ${result.succeeded} imported, ${result.failed} failed (total: ${result.total})`);
+    console.log(`Done: ${result.succeeded} imported, ${result.failed} failed, ${result.fetchFailed} fetch failed (total: ${result.total})`);
   } catch (err) {
     await prisma.collectionJob.update({
       where: { id: job.id },

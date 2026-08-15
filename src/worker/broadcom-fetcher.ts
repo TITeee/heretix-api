@@ -89,12 +89,75 @@ function parseProductNames(raw: string): string[] {
     .filter(s => s && !s.endsWith('...') && s.length > 2);
 }
 
+/**
+ * Build one NormalizedAdvisory per CVE covered by a VMSA item. A single VMSA
+ * commonly bundles several CVEs (e.g. "VMSA-2026-0006.1: ... address multiple
+ * vulnerabilities (CVE-2026-59309, CVE-2026-59310, ...)") — without the split,
+ * `externalId: vmsaId` + a single `cveId` field meant only the first CVE in
+ * the list ever got linked to a Vulnerability master row and became
+ * independently searchable; the rest were only visible inside rawData.
+ * Follows the same `${advisoryId}/${cveId}` composite-externalId pattern
+ * already used by redhat-fetcher.ts / oracle-linux-fetcher.ts for the same
+ * one-advisory-many-CVEs shape. Items with no CVE at all keep the plain
+ * VMSA/documentId as externalId, unchanged from before.
+ */
+export function buildBroadcomAdvisories(
+  item: BroadcomApiItem,
+  productVersions: ProductVersion[],
+): NormalizedAdvisory[] {
+  const vmsaId = extractVmsaId(item.title) ?? item.documentId;
+  const cveIds = extractCveIds(item.affectedCve ?? '');
+  const severity = normalizeSeverity(item.severity);
+  const publishedAt = parsePublishedDate(item.published);
+
+  let affectedProducts: NormalizedAdvisory['affectedProducts'];
+
+  if (productVersions.length > 0) {
+    affectedProducts = productVersions.flatMap((pv): NormalizedAdvisory['affectedProducts'] =>
+      pv.fixed.length > 0
+        ? pv.fixed.map(fixedVer => ({
+            vendor: 'broadcom',
+            product: pv.product,
+            // Stored as versionFixed (not versionEnd) so it surfaces as the
+            // "Fixed" version in search results — importAdvisoryData() falls
+            // back to versionFixed for range-matching when versionEnd is
+            // absent, so this doesn't change search behavior at all.
+            // normalizeVersion handles "X.Y UZw".
+            versionFixed: fixedVer,
+            patchAvailable: true,
+          }))
+        : [{ vendor: 'broadcom', product: pv.product, patchAvailable: false }]
+    );
+  } else {
+    // Fallback: use product names from list API (may be truncated)
+    const products = parseProductNames(item.supportProducts ?? '');
+    affectedProducts = products.length > 0
+      ? products.map(product => ({ vendor: 'broadcom', product, patchAvailable: true }))
+      : [{ vendor: 'broadcom', product: 'VMware', patchAvailable: true }];
+  }
+
+  const base = {
+    summary: item.title,
+    severity,
+    url: item.notificationUrl,
+    publishedAt,
+    affectedProducts,
+    rawData: item,
+  };
+
+  if (cveIds.length === 0) {
+    return [{ externalId: vmsaId, ...base }];
+  }
+  return cveIds.map(cveId => ({ externalId: `${vmsaId}/${cveId}`, cveId, ...base }));
+}
+
 
 // ─── Data Fetching ─────────────────────────────────────────────
 
-async function fetchAdvisoryList(segment: string): Promise<BroadcomApiItem[]> {
+async function fetchAdvisoryList(segment: string): Promise<{ items: BroadcomApiItem[]; truncated: boolean }> {
   const all: BroadcomApiItem[] = [];
   let pageNumber = 0;
+  let truncated = false;
 
   while (true) {
     let response: BroadcomApiResponse;
@@ -116,6 +179,10 @@ async function fetchAdvisoryList(segment: string): Promise<BroadcomApiItem[]> {
       response = data;
     } catch (err) {
       logger.error({ err, segment, pageNumber }, 'Broadcom API request failed');
+      // Any later pages beyond this one are silently missing from `all` —
+      // the caller needs to know this page listing is incomplete, not just
+      // that the segment happened to have fewer pages than usual.
+      truncated = true;
       break;
     }
 
@@ -132,7 +199,7 @@ async function fetchAdvisoryList(segment: string): Promise<BroadcomApiItem[]> {
     await new Promise(r => setTimeout(r, DELAY_MS));
   }
 
-  return all;
+  return { items: all, truncated };
 }
 
 /**
@@ -142,9 +209,9 @@ async function fetchAdvisoryList(segment: string): Promise<BroadcomApiItem[]> {
  * VMSA "Response Matrix" columns:
  *   0: VMware Product | 1: Version | ... | 6: Fixed Version | ...
  */
-async function fetchDetailVersions(notificationUrl: string): Promise<ProductVersion[]> {
+async function fetchDetailVersions(notificationUrl: string): Promise<{ versions: ProductVersion[]; failed: boolean }> {
   try {
-    return await withPage(notificationUrl, async (page) => {
+    const versions = await withPage(notificationUrl, async (page) => {
       await page.waitForSelector('table', { timeout: 20000 });
       return page.evaluate(() => {
         const results: Array<{ product: string; fixed: string[] }> = [];
@@ -186,31 +253,37 @@ async function fetchDetailVersions(notificationUrl: string): Promise<ProductVers
         return results;
       });
     }, { timeout: 30000 });
+    return { versions, failed: false };
   } catch (err) {
     logger.warn({ notificationUrl, err }, 'Playwright failed for Broadcom advisory detail');
-    return [];
+    return { versions: [], failed: true };
   }
 }
 
 // ─── AdvisoryFetcher Implementation ──────────────────────────
 
 export class BroadcomFetcher implements AdvisoryFetcher {
+  private fetchFailed = 0;
+
   source(): string { return 'advisory-broadcom'; }
   isCompleteSnapshot(): boolean { return true; }
+  fetchFailedCount(): number { return this.fetchFailed; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
+    this.fetchFailed = 0;
     logger.info('Fetching Broadcom/VMware security advisories');
 
     // Collect advisories from all segments (deduplicate by documentId)
     const seen = new Map<string, BroadcomApiItem>();
     for (const segment of SEGMENTS) {
-      const items = await fetchAdvisoryList(segment);
+      const { items, truncated } = await fetchAdvisoryList(segment);
+      if (truncated) this.fetchFailed++;
       for (const item of items) {
         if (item.documentId && !seen.has(item.documentId)) {
           seen.set(item.documentId, item);
         }
       }
-      logger.info({ segment, count: items.length }, 'Broadcom segment fetched');
+      logger.info({ segment, count: items.length, truncated }, 'Broadcom segment fetched');
     }
 
     const items = [...seen.values()];
@@ -219,58 +292,23 @@ export class BroadcomFetcher implements AdvisoryFetcher {
     const results: NormalizedAdvisory[] = [];
 
     for (const item of items) {
-      const vmsaId = extractVmsaId(item.title) ?? item.documentId;
-      const cveIds = extractCveIds(item.affectedCve ?? '');
-      const severity = normalizeSeverity(item.severity);
-      const publishedAt = parsePublishedDate(item.published);
-
       // Fetch detail page for version table (uses the direct notificationUrl)
       await new Promise(r => setTimeout(r, DELAY_MS));
-      const productVersions = await fetchDetailVersions(item.notificationUrl);
+      const { versions: productVersions, failed: detailFailed } = await fetchDetailVersions(item.notificationUrl);
+      if (detailFailed) this.fetchFailed++;
 
-      let affectedProducts: NormalizedAdvisory['affectedProducts'];
+      const built = buildBroadcomAdvisories(item, productVersions);
+      results.push(...built);
 
-      if (productVersions.length > 0) {
-        affectedProducts = productVersions.flatMap((pv): NormalizedAdvisory['affectedProducts'] =>
-          pv.fixed.length > 0
-            ? pv.fixed.map(fixedVer => ({
-                vendor: 'broadcom',
-                product: pv.product,
-                // Stored as versionFixed (not versionEnd) so it surfaces as the
-                // "Fixed" version in search results — importAdvisoryData() falls
-                // back to versionFixed for range-matching when versionEnd is
-                // absent, so this doesn't change search behavior at all.
-                // normalizeVersion handles "X.Y UZw".
-                versionFixed: fixedVer,
-                patchAvailable: true,
-              }))
-            : [{ vendor: 'broadcom', product: pv.product, patchAvailable: false }]
-        );
-      } else {
-        // Fallback: use product names from list API (may be truncated)
-        const products = parseProductNames(item.supportProducts ?? '');
-        affectedProducts = products.length > 0
-          ? products.map(product => ({ vendor: 'broadcom', product, patchAvailable: true }))
-          : [{ vendor: 'broadcom', product: 'VMware', patchAvailable: true }];
-      }
-
-      results.push({
-        externalId: vmsaId,
-        cveId: cveIds[0],
-        summary: item.title,
-        severity,
-        url: item.notificationUrl,
-        publishedAt,
-        affectedProducts,
-        rawData: item,
-      });
-
-      logger.debug({ vmsaId, cveIds, products: affectedProducts.length }, 'Broadcom advisory processed');
+      logger.debug(
+        { documentId: item.documentId, cves: built.length, products: built[0]?.affectedProducts.length ?? 0 },
+        'Broadcom advisory processed',
+      );
     }
 
     await closeBrowser();
 
-    logger.info({ total: items.length, imported: results.length }, 'Broadcom advisory fetch complete');
+    logger.info({ total: items.length, imported: results.length, failed: this.fetchFailed }, 'Broadcom advisory fetch complete');
     return results;
   }
 }

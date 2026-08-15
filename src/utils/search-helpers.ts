@@ -190,10 +190,12 @@ export function matchesDpkgStyleVersion(
  * therefore an *exclusive* upper bound — the named build is the patched one.
  * A row with no upper bound never matches, since there is nothing to compare.
  *
- * `versionStart`, when present, is an inclusive floor. OVAL itself never
- * supplies one; it is inferred for DNF module-stream products (see
- * advisory-helpers.ts) so a newer stream's fix cannot numerically swallow a
- * query against an older, unrelated stream.
+ * `versionStart`, when present, is an inclusive floor. OVAL's own upper-bound
+ * criterion never carries one, but a sibling "Module <name>:N is enabled"
+ * criterion does (see RedHatFetcher/OracleLinuxFetcher's collectCriteria) —
+ * extracting that major version as the floor is what stops a newer DNF
+ * module stream's fix from numerically swallowing a query against an older,
+ * unrelated stream.
  */
 export function matchesRpmVersionRange(
   row: { versionStart: string | null; versionEnd: string | null },

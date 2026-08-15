@@ -18,7 +18,7 @@ interface RssItem {
   guid: string | { '#text': string; '@_isPermaLink': string };
 }
 
-interface AdvisoryMeta {
+export interface AdvisoryMeta {
   externalId: string;
   cveIds: string[];
   severity?: string;
@@ -86,8 +86,14 @@ async function fetchSitemapIds(): Promise<string[]> {
   return [...new Set(matches.map(m => m.replace('security-advisories/', '')))];
 }
 
-/** Fetch the advisory page HTML and extract CVE IDs from <title> */
-async function fetchTitleCveIds(id: string): Promise<{ cveIds: string[]; title: string | undefined }> {
+/**
+ * Fetch the advisory page HTML and extract CVE IDs from <title>.
+ * `failed` distinguishes "the request itself failed" (network error, timeout,
+ * non-2xx) from "the request succeeded but the page legitimately had no CVE
+ * in its title" -- fetch()'s "no title or CVE" skip further down needs this
+ * to avoid silently dropping an advisory that was never actually fetched.
+ */
+async function fetchTitleCveIds(id: string): Promise<{ cveIds: string[]; title: string | undefined; failed: boolean }> {
   try {
     const { data } = await axios.get<string>(`${BASE_URL}/${id}`, {
       timeout: 15000,
@@ -97,9 +103,10 @@ async function fetchTitleCveIds(id: string): Promise<{ cveIds: string[]; title: 
     const titleMatch = (data as string).match(/<title>([^<]+)<\/title>/);
     const title = titleMatch?.[1]?.replace(/\s*\|\s*Sophos\s*$/, '').trim();
     const cveIds = extractCveIds(title ?? '');
-    return { cveIds, title };
-  } catch {
-    return { cveIds: [], title: undefined };
+    return { cveIds, title, failed: false };
+  } catch (err) {
+    logger.warn({ id, err }, 'Failed to fetch Sophos advisory page title');
+    return { cveIds: [], title: undefined, failed: true };
   }
 }
 
@@ -121,10 +128,49 @@ async function fetchRenderedCveIds(id: string): Promise<string[]> {
   }
 }
 
+/**
+ * Build one NormalizedAdvisory per CVE covered by a Sophos advisory. A single
+ * sophos-sa-* page commonly covers several CVEs (e.g. a monthly firewall
+ * roundup) — without the split, `externalId: meta.externalId` + a single
+ * `cveId` field meant only the first CVE ever got linked to a Vulnerability
+ * master row and became independently searchable. Follows the same
+ * `${advisoryId}/${cveId}` composite-externalId pattern already used by
+ * redhat-fetcher.ts / oracle-linux-fetcher.ts / broadcom-fetcher.ts for the
+ * same one-advisory-many-CVEs shape. Entries with no CVE at all keep the
+ * plain sophos-sa-* id as externalId, unchanged from before. Returns []
+ * for the pre-existing skip case (no title and no CVE — advisory that was
+ * never actually fetched, not just CVE-less).
+ */
+export function buildSophosAdvisories(meta: AdvisoryMeta): NormalizedAdvisory[] {
+  if (!meta.title && meta.cveIds.length === 0) {
+    return [];
+  }
+
+  const product = extractProduct(meta.title ?? meta.externalId);
+  const base = {
+    summary: meta.title,
+    severity: meta.severity,
+    url: meta.url,
+    publishedAt: meta.pubDate,
+    affectedProducts: [{
+      vendor: 'sophos',
+      product,
+      patchAvailable: (meta.title ?? '').toLowerCase().startsWith('resolved'),
+    }],
+    rawData: meta,
+  };
+
+  if (meta.cveIds.length === 0) {
+    return [{ externalId: meta.externalId, ...base }];
+  }
+  return meta.cveIds.map(cveId => ({ externalId: `${meta.externalId}/${cveId}`, cveId, ...base }));
+}
+
 // ─── AdvisoryFetcher Implementation ──────────────────────────
 
 export class SophosFetcher implements AdvisoryFetcher {
   private readonly delayMs: number;
+  private fetchFailed = 0;
 
   constructor({ delayMs = 500 } = {}) {
     this.delayMs = delayMs;
@@ -132,8 +178,10 @@ export class SophosFetcher implements AdvisoryFetcher {
 
   source(): string { return 'advisory-sophos'; }
   isCompleteSnapshot(): boolean { return true; }
+  fetchFailedCount(): number { return this.fetchFailed; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
+    this.fetchFailed = 0;
     logger.info('Fetching Sophos security advisories');
 
     const [rssMap, sitemapIds] = await Promise.all([
@@ -167,7 +215,8 @@ export class SophosFetcher implements AdvisoryFetcher {
       } else {
         // Older advisory: fetch title via HTTP first (fast)
         await new Promise(r => setTimeout(r, this.delayMs));
-        const { cveIds: titleCves, title } = await fetchTitleCveIds(id);
+        const { cveIds: titleCves, title, failed: titleFetchFailed } = await fetchTitleCveIds(id);
+        if (titleFetchFailed) this.fetchFailed++;
         let cveIds = cveFromId.length > 0 ? cveFromId : titleCves;
 
         // If title exists but has no CVE, use Playwright to render the full page
@@ -192,30 +241,15 @@ export class SophosFetcher implements AdvisoryFetcher {
     // (cveId is optional — advisories without CVE link via advisoryId in the master table)
     const results: NormalizedAdvisory[] = [];
     for (const meta of metas) {
-      if (!meta.title && meta.cveIds.length === 0) {
+      const built = buildSophosAdvisories(meta);
+      if (built.length === 0) {
         logger.debug({ externalId: meta.externalId }, 'Skipping Sophos advisory: no title or CVE');
         continue;
       }
-
-      const product = extractProduct(meta.title ?? meta.externalId);
-
-      results.push({
-        externalId: meta.externalId,
-        cveId: meta.cveIds[0],
-        summary: meta.title,
-        severity: meta.severity,
-        url: meta.url,
-        publishedAt: meta.pubDate,
-        affectedProducts: [{
-          vendor: 'sophos',
-          product,
-          patchAvailable: (meta.title ?? '').toLowerCase().startsWith('resolved'),
-        }],
-        rawData: meta,
-      });
+      results.push(...built);
     }
 
-    logger.info({ total: sitemapIds.length, imported: results.length }, 'Sophos advisory fetch complete');
+    logger.info({ total: sitemapIds.length, imported: results.length, failed: this.fetchFailed }, 'Sophos advisory fetch complete');
     return results;
   }
 }

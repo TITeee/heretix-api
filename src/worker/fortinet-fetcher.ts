@@ -297,6 +297,7 @@ async function fetchAllAdvisoryEntries(): Promise<AdvisoryListEntry[]> {
 
 export class FortinetFetcher implements AdvisoryFetcher {
   private readonly delayMs: number;
+  private fetchFailed = 0;
 
   constructor({ delayMs = 300 }: { delayMs?: number } = {}) {
     this.delayMs = delayMs;
@@ -304,15 +305,16 @@ export class FortinetFetcher implements AdvisoryFetcher {
 
   source(): string { return 'fortinet'; }
   isCompleteSnapshot(): boolean { return true; }
+  fetchFailedCount(): number { return this.fetchFailed; }
 
   async fetch(): Promise<NormalizedAdvisory[]> {
+    this.fetchFailed = 0;
     logger.info('Fetching Fortinet PSIRT advisory list (all pages)');
     const entries = await fetchAllAdvisoryEntries();
     logger.info({ count: entries.length }, 'Fetched Fortinet advisory list entries');
 
     const results: NormalizedAdvisory[] = [];
     let skipped = 0;
-    let failed  = 0;
 
     for (const { advisoryId, title } of entries) {
       const url = buildCsafUrl(title, advisoryId);
@@ -333,7 +335,7 @@ export class FortinetFetcher implements AdvisoryFetcher {
           skipped++;
         }
       } catch (err) {
-        failed++;
+        this.fetchFailed++;
         logger.error({ err, advisoryId, url }, 'Failed to fetch/parse CSAF for advisory');
       }
 
@@ -342,7 +344,7 @@ export class FortinetFetcher implements AdvisoryFetcher {
     }
 
     logger.info(
-      { total: entries.length, succeeded: results.length, skipped, failed },
+      { total: entries.length, succeeded: results.length, skipped, failed: this.fetchFailed },
       'Fortinet PSIRT fetch complete',
     );
     return results;
