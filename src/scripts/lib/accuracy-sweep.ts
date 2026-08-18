@@ -129,6 +129,7 @@ export function capPointsPerProduct(points: Map<string, BoundaryPoint>, maxPerPr
 export interface RpmFixEntry {
   cveId: string;
   versionEnd: string;
+  versionStart: string | null;
 }
 
 /**
@@ -141,7 +142,7 @@ export interface RpmFixEntry {
  * index once up front turns each lookup into O(1) instead.
  */
 export function indexByProduct(
-  advisories: { cveId?: string; affectedProducts: { product: string; versionEnd?: string }[] }[],
+  advisories: { cveId?: string; affectedProducts: { product: string; versionStart?: string; versionEnd?: string }[] }[],
 ): Map<string, RpmFixEntry[]> {
   const index = new Map<string, RpmFixEntry[]>();
   for (const adv of advisories) {
@@ -149,7 +150,7 @@ export function indexByProduct(
     for (const p of adv.affectedProducts) {
       if (!p.versionEnd) continue;
       const list = index.get(p.product);
-      const entry = { cveId: adv.cveId, versionEnd: p.versionEnd };
+      const entry = { cveId: adv.cveId, versionEnd: p.versionEnd, versionStart: p.versionStart ?? null };
       if (list) list.push(entry);
       else index.set(p.product, [entry]);
     }
@@ -157,11 +158,33 @@ export function indexByProduct(
   return index;
 }
 
-/** CVEs whose indexed RPM range for `product` places `version` before the fixed version. */
+/**
+ * CVEs whose indexed RPM range for `product` covers `version`, replicating
+ * matchesRpmVersionRange()'s (src/utils/search-helpers.ts) exact semantics:
+ * version < versionEnd, AND (no versionStart OR version >= versionStart).
+ *
+ * The versionStart check matters as much as the versionEnd one: a DNF
+ * module-stream entry (e.g. postgresql:18, versionStart="18.0") sets no
+ * lower bound in the OVAL feed's own upper-bound-only criterion, but
+ * RedHatFetcher/OracleLinuxFetcher derive one from the sibling "Module
+ * <name>:<stream> is enabled" criterion (see collectCriteria() in both
+ * fetchers) specifically so that querying an older, unrelated stream (e.g.
+ * postgresql 13.7) doesn't numerically match a newer stream's fix. Ignoring
+ * versionStart here would make ground truth share production's *old*
+ * blind spot from before that fix existed -- and once production started
+ * correctly excluding those older-stream queries, this function's old
+ * unconditional-versionEnd-only check started flagging every one of those
+ * correct exclusions as a false negative instead. Confirmed via a live
+ * RHEL sweep: CVE-2026-6575's only affected-product entry is
+ * postgresql:18 (versionStart="18.0"), yet the unguarded check expected it
+ * to also match postgresql@13.7 -- a ground-truth bug, not a search bug.
+ */
 export function expectedCVEsRpm(product: string, version: string, index: Map<string, RpmFixEntry[]>): Set<string> {
   const result = new Set<string>();
   for (const e of index.get(product) ?? []) {
-    if (compareRpmVersions(version, e.versionEnd) < 0) result.add(e.cveId.toUpperCase());
+    if (compareRpmVersions(version, e.versionEnd) >= 0) continue;
+    if (e.versionStart && compareRpmVersions(version, e.versionStart) < 0) continue;
+    result.add(e.cveId.toUpperCase());
   }
   return result;
 }

@@ -2,20 +2,44 @@
  * Pure advisory-import decision logic extracted from the RHEL/Oracle Linux
  * OVAL fetchers for unit testability. No DB dependency.
  */
+import { normalizeVersion } from '../utils/version.js';
 
 /**
  * Converts a DNF module stream label (from extractModuleMajor() in either
- * fetcher) into a versionStart floor. Most products use a plain integer
- * stream label (nodejs's "20", postgresql's "16") which just needs ".0"
- * appended; others use a dotted major.minor label (mysql's "8.4", mariadb's
- * "10.11") that's already a complete floor as-is. Passed through verbatim
- * either way -- the label itself, read straight from the Module criterion,
- * is definitionally the product's real stream boundary, so this needs no
- * per-product knowledge (unlike inferBareVersionStart() below, which has to
- * guess from versionEnd when there's no Module criterion to read at all).
+ * fetcher) into a versionStart floor, unless the label turns out to be
+ * numerically incompatible with the row's own versionEnd.
+ *
+ * Most products use a plain integer stream label (nodejs's "20",
+ * postgresql's "16") which just needs ".0" appended; others use a dotted
+ * major.minor label (mysql's "8.4", mariadb's "10.11") that's already a
+ * complete floor as-is. Some legitimately use a full calendar-date-style
+ * label (python-pytz's "2017", relaxngDatatype's "2011", perl-Text-Tabs+Wrap's
+ * "2013") because the package's own version scheme genuinely IS date-based --
+ * confirmed via live data that these always satisfy floor <= versionEnd, so
+ * "looks like a date" alone isn't a safe signal to distrust a label.
+ *
+ * The actual exception found: RHEL8's javapackages-tools module bundles
+ * several independently-versioned Java build tools (ant, xmvn, an older
+ * maven line, ...) under one stream labeled by build generation ("201801"),
+ * unrelated to any of the bundled packages' own versions (xmvn's real
+ * version is "3.0.0..."). Using "201801.0" as a floor made those rows
+ * permanently unmatchable (floor numerically far above the row's own
+ * ceiling) -- confirmed to affect 510 product names, a ~230k false-negative
+ * regression caught by re-running the RHEL/Oracle Linux boundary-value
+ * sweep after this function shipped. Detected generically (not by module
+ * name, since other modules could have the same shape) by checking floor <=
+ * versionEnd: every legitimate label observed in real data, date-shaped or
+ * not, satisfies this; only javapackages-tools's build-generation label
+ * violates it. Returns undefined when it does, so the caller falls back to
+ * inferBareVersionStart() exactly as if there had been no Module criterion
+ * at all.
  */
-export function moduleStreamVersionStart(moduleMajor: string): string {
-  return moduleMajor.includes('.') ? moduleMajor : `${moduleMajor}.0`;
+export function moduleStreamVersionStart(moduleMajor: string, versionEnd: string): string | undefined {
+  const candidate = moduleMajor.includes('.') ? moduleMajor : `${moduleMajor}.0`;
+  const startInt = normalizeVersion(candidate);
+  const endInt = normalizeVersion(versionEnd);
+  if (startInt !== null && endInt !== null && startInt > endInt) return undefined;
+  return candidate;
 }
 
 /**
