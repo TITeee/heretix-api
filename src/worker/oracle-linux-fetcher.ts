@@ -295,9 +295,10 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        const versionStart = crit.moduleMajor !== null
-          ? moduleStreamVersionStart(crit.moduleMajor)
-          : inferBareVersionStart(parsed.packageName, parsed.versionEnd);
+        const moduleVersionStart = crit.moduleMajor !== null
+          ? moduleStreamVersionStart(crit.moduleMajor, parsed.versionEnd)
+          : undefined;
+        const versionStart = moduleVersionStart ?? inferBareVersionStart(parsed.packageName, parsed.versionEnd);
 
         affectedProducts.push({
           vendor: 'oracle-linux',

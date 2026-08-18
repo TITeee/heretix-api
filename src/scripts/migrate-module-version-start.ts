@@ -71,7 +71,12 @@ async function main() {
       continue;
     }
 
-    const versionStart = moduleStreamVersionStart(stream);
+    const versionStart = moduleStreamVersionStart(stream, versionEnd);
+    if (!versionStart) {
+      console.warn(`  SKIP [${record.id}] product=${record.product} versionEnd="${versionEnd}" — derived stream "${stream}" implausible against versionEnd`);
+      skipped++;
+      continue;
+    }
     if (versionStart === record.versionStart) {
       unchanged++;
       continue;

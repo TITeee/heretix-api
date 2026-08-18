@@ -3,13 +3,36 @@ import { inferBareVersionStart, moduleStreamVersionStart } from './advisory-help
 
 describe('moduleStreamVersionStart', () => {
   it('appends ".0" to a plain integer stream label', () => {
-    expect(moduleStreamVersionStart('20')).toBe('20.0');
-    expect(moduleStreamVersionStart('16')).toBe('16.0');
+    expect(moduleStreamVersionStart('20', '20.8.1-1.module+el9.3.0')).toBe('20.0');
+    expect(moduleStreamVersionStart('16', '16.4-1.module+el9.3.0')).toBe('16.0');
   });
 
   it('passes a dotted major.minor stream label through as-is', () => {
-    expect(moduleStreamVersionStart('8.4')).toBe('8.4');
-    expect(moduleStreamVersionStart('10.11')).toBe('10.11');
+    expect(moduleStreamVersionStart('8.4', '8.4.3-1.module+el9.3.0')).toBe('8.4');
+    expect(moduleStreamVersionStart('10.11', '10.11.6-1.module+el9.3.0')).toBe('10.11');
+  });
+
+  it('accepts a calendar-date-style label when the package genuinely uses date-based versioning', () => {
+    // python2-pytz: real package version is "2017.2-12...", matching the module stream label.
+    expect(moduleStreamVersionStart('2017', '2017.2-12.module+el8.3.0')).toBe('2017.0');
+  });
+
+  it('rejects a stream label numerically incompatible with the row\'s own versionEnd', () => {
+    // javapackages-tools:201801 bundles xmvn, whose real version is 3.0.0 -- unrelated
+    // to the module's own build-generation label. See doc comment for the full story.
+    expect(moduleStreamVersionStart('201801', '3.0.0-21.module+el8.10.0')).toBeUndefined();
+  });
+
+  it('accepts when versionEnd is unparseable by normalizeVersion (nothing to contradict)', () => {
+    // Component > 999999 makes normalizeVersion() return null (see version.ts) --
+    // with no comparable endInt, the guard has nothing to contradict and passes through.
+    expect(moduleStreamVersionStart('20', '99999999.0-1.module+el9.3.0')).toBe('20.0');
+  });
+
+  it('rejects a non-version stream label even when it looks superficially plausible', () => {
+    // go-toolset-style modules use the RHEL major ("rhel8") as their stream label,
+    // not the tool's own version -- same non-version-label class as javapackages-tools.
+    expect(moduleStreamVersionStart('rhel8', '1.16.7-2.module+el8.6.0')).toBeUndefined();
   });
 });
 

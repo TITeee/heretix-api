@@ -56,7 +56,7 @@ pnpm validate:pan        # スイープモード: 全PAN製品（本番ジョブ
 
 ## 境界値スイープ（RHEL / Oracle Linux）
 
-RHEL・Oracle Linux のアドバイザリは常に排他的な上限（「`<パッケージ>` は `<バージョン>` より前」）のみを表現し下限を持たないため、「introduced」の境界は存在せず、「fixed exact（影響なしを期待）」と「fixed の1つ前のRPMリリース（影響ありを期待）」のみをテストする。ground truth は本番の `RedHatFetcher`/`OracleLinuxFetcher` 自身をその場でライブフィードから取得したものを使う（同じページを独立に再パースする専用スクリプトは書かない — `validate:apache` の開発中に実際に踏んだ「2つの独立したパーサーが乖離する」問題を繰り返さないため）。結果はnginx/tomcat/apacheと同様、fetcher自身の `sources` に絞り込んでいる。
+RHEL・Oracle Linux のアドバイザリは常に排他的な上限（「`<パッケージ>` は `<バージョン>` より前」、素の"is earlier than"criterion自体には下限が無い）のみを表現するため、「fixed exact（影響なしを期待）」と「fixed の1つ前のRPMリリース（影響ありを期待）」のみをテストする。ground truth は本番の `RedHatFetcher`/`OracleLinuxFetcher` 自身をその場でライブフィードから取得したものを使う（同じページを独立に再パースする専用スクリプトは書かない — `validate:apache` の開発中に実際に踏んだ「2つの独立したパーサーが乖離する」問題を繰り返さないため）。結果はnginx/tomcat/apacheと同様、fetcher自身の `sources` に絞り込んでいる。
 
 ```bash
 pnpm validate:redhat          # スイープモード: RHEL 8+9 の全パッケージ
@@ -65,10 +65,15 @@ pnpm validate:oracle-linux    # スイープモード: Oracle Linux の全パッ
 
 | 製品 | テストした境界ポイント数 | TP | Precision | Recall | F1 |
 |---|---:|---:|---:|---:|---:|
-| Red Hat (RHEL 8+9) | 105,049 | 40,622,977 | 99.97% | 99.98% | 99.98% |
-| Oracle Linux | 97,538 | 7,822,599 | 99.48% | 100.00% | 99.74% |
+| Red Hat (RHEL 8+9) | 107,118 | 42,290,911 | 99.99% | 99.98% | 99.99% |
+| Oracle Linux | 99,234 | 6,889,902 | 注記参照 | 100.00% | 注記参照 |
 
-*2026-07-25/26 に再現確認。残存するわずかなFP/FNはコードのバグではない——上位の該当CVEを個別に確認したところ、DBが最後にインポートされてから ground truth を取得するまでの数時間の間に、ベンダー側のライブOVALフィード自体が改訂されていた（例: あるアドバイザリの影響パッケージ一覧に追加/削除があった）ことが分かった。ライブの上流フィードと定期インポートされたスナップショットを比較する以上避けられないズレであり、検索やfetcherの欠陥ではない。Recallがほぼ完全（99.98%/100%）なのは、このスイープの初期版が `kernel` 等の大量パッチ済みパッケージ（500件超のCVEを返す）に対してページネーションをせずAPIの500件上限に引っかかっていたのを、validateスクリプト側で全ページ取得するよう修正した結果。*
+*2026-08-18に再現確認。このスイープの再実行で見つかった2件のバグを修正した後の数値（詳細は[README.mdのKnown Issues](README.ja.md#rheloracle-linuxモジュールストリームの誤検知根本修正済み-nodejspostgresqlhttpdmysqlmariadbphp以外の製品には1件の既知の残存ギャップあり)参照）:*
+
+1. *`moduleStreamVersionStart()`（`advisory-helpers.ts`）は、Module criterionのストリームラベルがその行自身の`versionEnd`と数値的に矛盾する場合、floorとして採用しない（Module criterionが無かった場合と同様、`inferBareVersionStart()`にフォールバックする）ガードを追加。RHEL8の`javapackages-tools:201801`モジュールは、ant/xmvn/旧mavenラインなど複数の独立してバージョニングされたJavaビルドツールを1つのストリームにまとめており、そのラベル（ビルド世代番号）はどのパッケージの実バージョンとも無関係——これをfloorに使うと510製品名が恒久的にヒットしなくなっていた。元のModule criterion修正をリリースした後にこのスイープを再実行してRecallが99.43%まで落ちたことで発見し、実データで正当なケース（`python-pytz`の"2017"ストリームは実際に"2017.2..."という自身のバージョンと一致する）を誤って弾かないことを確認した上で修正した。*
+2. *スイープ自身のground truth（`expectedCVEsRpm`/`indexByProduct`、`src/scripts/lib/accuracy-sweep.ts`）が`versionStart`を一切チェックしておらず、`versionEnd`だけを見ていた。Module criterion修正が存在する前は本番側にも`versionStart`が無かったため、ground truthと本番が同じ盲点を共有し偶然一致していた（`validate-nodejs.ts`が独立した、fetcher由来ではないground truthをあえて使っている理由そのもの — 下記参照）。本番がModule criterion由来の`versionStart`で古いストリームへのクエリを正しく除外するようになった途端、この関数はそれでも古いストリームを期待し続け、正しい除外全てを偽陰性として誤報告していた。`matchesRpmVersionRange()`（`search-helpers.ts`）と全く同じ意味論になるよう修正。これによりRHELのRecallは誤解を招く99.64%から99.98%に、Oracle Linuxは97.81%/99.87%からクリーンな100%に戻った。*
+
+**Oracle LinuxのPrecision列についての注記**: このスイープのTP/FNは再実行しても安定しているが、FPは安定しない——Oracleの統合フィード`com.oracle.elsa-all.xml.bz2`は、バイト長が同一と報告されたにも関わらず、数分違いの2回のフェッチで内容が異なっていることを確認した。つまりRHELの各メジャーバージョン別フィードよりもはるかに高頻度でほぼリアルタイムに改訂されている。これは[既知の制限事項](#既知の制限事項)に既に記載した「OVALフィードは事後改訂される」というズレと同じものだが、Oracle Linuxは1件のCVEが数十の姉妹サブパッケージをまとめてカバーするアドバイザリが多い（LibreOfficeの`autocorr-<lang>`系だけで約40パッケージ）ため、ここで極端に増幅されて見える——1件の改訂中アドバイザリが、数千件の個別境界点ミスマッチに乗算されてしまう。同一セッション内での再実行でPrecisionは86.88%〜87.01%の間で変動した（sweepの並列数を20から5に落としても結果はバイト単位で完全に同一となり、リクエストレベルの競合が原因ではないことも確認済み）。上位の該当CVEをライブフィードと直接突き合わせたところ、確認した全てのケースでクエリ時点のフィード内容に対しては検索結果が正しかった。この列は測定時点のフィードの変動を反映しているだけで、fetcherや検索の正しさを反映したものではないと捉えるべき——このベンダーについてはRecall（100.00%、再実行しても安定）の方が意味のある数字となる。
 
 ## 境界値スイープ（Node.jsモジュールストリーム / RHEL & Oracle Linux）
 
