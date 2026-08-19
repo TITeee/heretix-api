@@ -562,19 +562,38 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
     return { results };
   });
 
+  const masterInclude = {
+    nvdVulnerability: { include: { affectedPackages: true } },
+    osvVulnerabilities: { include: { affectedPackages: true } },
+    advisoryVulnerabilities: { include: { affectedProducts: true } },
+  } as const;
+
   fastify.get('/vulnerabilities/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
 
-    // Search master table by canonicalId (cveId or osvId)
+    // Search master table by canonicalId (cveId, osvId, or advisoryId)
     const master = await prisma.vulnerability.findFirst({
       where: { OR: [{ cveId: id }, { osvId: id }, { advisoryId: id }] },
-      include: {
-        nvdVulnerability: { include: { affectedPackages: true } },
-        osvVulnerabilities: { include: { affectedPackages: true } },
-        advisoryVulnerabilities: { include: { affectedProducts: true } },
-      },
+      include: masterInclude,
     });
     if (master) return master;
+
+    // Not found directly on a master row: id may be one a finding used to be
+    // reported by, whose master has since been merged into a later CVE-keyed one
+    // (see importAdvisoryData / upsertMasterFromOSV). The source row itself keeps
+    // its own id forever even after that merge, so it still resolves — through
+    // whichever master it currently points at — once looked up this way.
+    const viaAdvisory = await prisma.advisoryVulnerability.findFirst({
+      where: { externalId: id },
+      select: { masterVuln: { include: masterInclude } },
+    });
+    if (viaAdvisory?.masterVuln) return viaAdvisory.masterVuln;
+
+    const viaOsv = await prisma.oSVVulnerability.findFirst({
+      where: { osvId: id },
+      select: { masterVuln: { include: masterInclude } },
+    });
+    if (viaOsv?.masterVuln) return viaOsv.masterVuln;
 
     return reply.status(404).send({ error: 'Vulnerability not found' });
   });

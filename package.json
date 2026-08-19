@@ -39,6 +39,7 @@
     "migrate:job-config-defaults": "node dist/scripts/migrate-job-config-defaults.js",
     "migrate:broadcom-composite-externalid": "node dist/scripts/migrate-broadcom-composite-externalid.js",
     "migrate:sophos-sonicwall-composite-externalid": "node dist/scripts/migrate-sophos-sonicwall-composite-externalid.js",
+    "migrate:prune-orphaned-advisory-masters": "node dist/scripts/migrate-prune-orphaned-advisory-masters.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
     "validate:apache": "node dist/scripts/validate-apache.js",
