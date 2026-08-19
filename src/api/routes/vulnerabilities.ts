@@ -15,6 +15,7 @@ import {
   rpmAdvisoryVendor,
   matchesDpkgStyleVersion,
   matchesRpmVersionRange,
+  buildAliases,
   DISTRO_ECOSYSTEM_PREFIXES,
 } from '../../utils/search-helpers.js';
 
@@ -70,6 +71,10 @@ function masterToResult(
   approximateMatch: boolean,
   hitSource: string,
   fixedVersion: string | null = null,
+  // The id the matching source row carries itself. Unlike externalId it never
+  // changes, so it is what lets a consumer follow this finding across a CVE
+  // assignment (see VulnerabilityResult.aliases).
+  sourceOwnId: string | null = null,
 ): VulnerabilityResult {
   const primarySource = master.cveId ? 'nvd' : master.osvId ? 'osv' : 'advisory';
   return {
@@ -87,6 +92,7 @@ function masterToResult(
     epssScore: master.epssScore,
     epssPercentile: master.epssPercentile,
     fixedVersion,
+    aliases: buildAliases(master, sourceOwnId),
   };
 }
 
@@ -143,6 +149,7 @@ async function searchOSV(
           // fallback when masterVuln is null
           id: true,
           osvId: true,
+          cveId: true,
           severity: true,
           cvssScore: true,
           summary: true,
@@ -159,7 +166,7 @@ async function searchOSV(
   return filteredRows.map(r => {
     const v = r.vulnerability;
     if (v.masterVuln) {
-      return masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null);
+      return masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null, v.osvId);
     }
     // Fallback before backfill
     return {
@@ -177,6 +184,7 @@ async function searchOSV(
       epssScore: null,
       epssPercentile: null,
       fixedVersion: r.fixedVersion ?? null,
+      aliases: buildAliases({ cveId: v.cveId }, v.osvId),
     };
   });
 }
@@ -214,7 +222,7 @@ async function searchNVD(
     const v = r.vulnerability;
     const fixedVersion = r.versionEndExcluding ?? null;
     if (v.masterVuln) {
-      return masterToResult(v.masterVuln, approximate, 'nvd', fixedVersion);
+      return masterToResult(v.masterVuln, approximate, 'nvd', fixedVersion, v.cveId);
     }
     // Fallback before backfill
     return {
@@ -232,6 +240,7 @@ async function searchNVD(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      aliases: buildAliases({ cveId: v.cveId }),
     };
   });
 }
@@ -325,7 +334,7 @@ async function searchAdvisory(
     const adv = r.advisory;
     const fixedVersion = r.versionFixed ?? null;
     if (adv.masterVuln) {
-      return masterToResult(adv.masterVuln, version === undefined || approximate, adv.source, fixedVersion);
+      return masterToResult(adv.masterVuln, version === undefined || approximate, adv.source, fixedVersion, adv.externalId);
     }
     return {
       id: adv.id,
@@ -342,6 +351,7 @@ async function searchAdvisory(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
     };
   });
 }
@@ -381,7 +391,7 @@ async function searchAdvisoryRpm(
     const adv = r.advisory;
     const fixedVersion = r.versionEnd ?? r.versionFixed ?? null;
     if (adv.masterVuln) {
-      return masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion);
+      return masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId);
     }
     return {
       id: adv.id,
@@ -398,6 +408,7 @@ async function searchAdvisoryRpm(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
     };
   });
 }
@@ -441,7 +452,7 @@ async function searchByCPE(
     const v = r.vulnerability;
     const fixedVersion = r.versionEndExcluding ?? null;
     if (v.masterVuln) {
-      return masterToResult(v.masterVuln, noVersionSpecified || approximate, 'nvd', fixedVersion);
+      return masterToResult(v.masterVuln, noVersionSpecified || approximate, 'nvd', fixedVersion, v.cveId);
     }
     return {
       id: v.id,
@@ -458,6 +469,7 @@ async function searchByCPE(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      aliases: buildAliases({ cveId: v.cveId }),
     };
   });
 }
