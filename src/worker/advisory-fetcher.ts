@@ -89,12 +89,12 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
 
     if (adv.cveId) {
       // CVE present: find and link existing record; create placeholder from advisory data if absent
-      const existing = await tx.vulnerability.findUnique({
+      const existingMaster = await tx.vulnerability.findUnique({
         where: { cveId: adv.cveId },
         select: { id: true },
       });
-      if (existing) {
-        masterVulnId = existing.id;
+      if (existingMaster) {
+        masterVulnId = existingMaster.id;
       } else {
         const created = await tx.vulnerability.create({
           data: { cveId: adv.cveId, ...masterFields },
@@ -116,8 +116,33 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
     // ─── Step 2: Upsert AdvisoryVulnerability ────────────────────
     const existing = await tx.advisoryVulnerability.findUnique({
       where: { source_externalId: { source, externalId: adv.externalId } },
-      select: { id: true },
+      select: { id: true, masterVulnId: true },
     });
+
+    // Clean up an orphaned master row when a CVE is assigned to an advisory that
+    // previously had none. This row links to an advisoryId-keyed placeholder
+    // master (no cveId/osvId); now that a CVE exists it should link to the
+    // cveId-keyed master instead. Left in place, isCompleteSnapshot() pruning
+    // would eventually remove the AdvisoryVulnerability row that references it,
+    // but the placeholder master itself has no such mechanism and accumulates.
+    //
+    // Deleting it here is safe because it no longer needs to keep answering to its
+    // own advisoryId: GET /vulnerabilities/:id falls back to
+    // AdvisoryVulnerability.externalId (which never changes) when no master row
+    // matches directly, so a lookup by the advisory's own id keeps resolving —
+    // through the surviving CVE-keyed master — after this placeholder is gone.
+    if (adv.cveId && existing?.masterVulnId && existing.masterVulnId !== masterVulnId) {
+      const oldMasterId = existing.masterVulnId;
+      const oldMaster = await tx.vulnerability.findUnique({
+        where: { id: oldMasterId },
+        select: { cveId: true, osvId: true },
+      });
+      if (oldMaster && !oldMaster.cveId && !oldMaster.osvId) {
+        await tx.advisoryVulnerability.updateMany({ where: { masterVulnId: oldMasterId }, data: { masterVulnId } });
+        await tx.oSVVulnerability.updateMany({ where: { masterVulnId: oldMasterId }, data: { masterVulnId } });
+        await tx.vulnerability.delete({ where: { id: oldMasterId } });
+      }
+    }
 
     const advisory = await tx.advisoryVulnerability.upsert({
       where: { source_externalId: { source, externalId: adv.externalId } },
