@@ -54,6 +54,10 @@ The API is available at `http://localhost:5000`. `docker compose down` to stop (
    ```bash
    pnpm db:migrate
    ```
+   The Docker image also runs `pnpm migrate:all` on every container start, right
+   after schema migrations — see [One-time data backfills](#one-time-data-backfills)
+   below. Running it locally after `pnpm db:migrate` keeps a dev database caught up
+   the same way.
 
 5. **Start the server**
    ```bash
@@ -83,6 +87,28 @@ GITHUB_TOKEN=                       # Optional. Authenticates the single GitHub 
 ```
 
 ## Database Management
+
+### One-time data backfills
+
+Some fixes need to correct rows already written before the fix existed, not just
+change how future rows are written — a `pnpm migrate:*` script under
+[`src/scripts/`](src/scripts/), one per fix. Each is idempotent: it finds rows still
+needing the correction and does nothing once none remain, safe to run any number of
+times.
+
+They're run together, in one pass, via:
+```bash
+pnpm migrate:all
+```
+which scans `dist/scripts/` for every `migrate-*.js` file and runs them in sequence —
+a new one just has to exist there, nothing has to add it to a list. `entrypoint.sh`
+calls this automatically on every container start, right after `prisma migrate
+deploy`, so a newly added backfill reaches production on the next deploy without a
+manual step to remember. Run it locally too after pulling changes that add one.
+
+Individual scripts remain runnable on their own (`pnpm migrate:job-config-defaults`,
+etc.) for testing a specific one or re-running after investigating a partial
+failure.
 
 ### Prisma Studio
 
