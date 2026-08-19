@@ -14,8 +14,12 @@ describe('parseAffectsEntry', () => {
     expect(parseAffectsEntry('5.0.18')).toEqual({ version: '5.0.18' });
   });
 
-  it('parses a wildcard upper bound as open-ended', () => {
-    expect(parseAffectsEntry('4.4.4-4.4.*')).toEqual({ versionStart: '4.4.4' });
+  it('bounds a wildcard upper bound at the next minor branch rather than leaving it open-ended', () => {
+    // Real data (ZBV-2023-07-27-1 / CVE-2023-29449): "4.4.4-4.4.*" previously
+    // parsed to { versionStart: '4.4.4' } with no upper bound at all, which
+    // incorrectly matched every later zabbix version forever (e.g. 7.0.0).
+    expect(parseAffectsEntry('4.4.4-4.4.*')).toEqual({ versionStart: '4.4.4', versionEnd: '4.5.0' });
+    expect(parseAffectsEntry('5.2.0alpha1-5.2.*')).toEqual({ versionStart: '5.2.0alpha1', versionEnd: '5.3.0' });
   });
 
   it('returns null for the "-" placeholder', () => {
@@ -62,6 +66,26 @@ describe('buildAffectedProducts', () => {
         affectedVersions: ['5.0.18'],
         versionFixed: undefined,
         patchAvailable: true,
+      },
+    ]);
+  });
+
+  it('bounds a wildcard branch entry instead of leaving it unmatched-forever (CVE-2023-29449 shape)', () => {
+    const doc: ZabbixDocument = {
+      cve_id: 'ZBV-2023-07-27-1',
+      version_affected: ['4.4.4-4.4.*'],
+      version_fixed: ['-'],
+    };
+    expect(buildAffectedProducts(doc)).toEqual([
+      {
+        vendor: 'zabbix',
+        product: 'zabbix',
+        versionStart: '4.4.4',
+        versionEnd: '4.5.0',
+        lastAffected: undefined,
+        affectedVersions: undefined,
+        versionFixed: undefined,
+        patchAvailable: false,
       },
     ]);
   });

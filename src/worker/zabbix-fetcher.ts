@@ -57,8 +57,21 @@ function normalizeDash(s: string): string {
 
 interface AffectsSpec {
   versionStart?: string;
+  versionEnd?: string;    // exclusive upper bound, derived for wildcard branches only
   lastAffected?: string;
   version?: string; // single exact version (no range)
+}
+
+/**
+ * Derive the next minor branch as an exclusive upper bound.
+ * "4.4" → "4.5.0", "5.2" → "5.3.0"
+ */
+function nextMinorBranch(branch: string): string | undefined {
+  const parts = branch.split('.');
+  if (parts.length < 2) return undefined;
+  const minor = parseInt(parts[1], 10);
+  if (isNaN(minor)) return undefined;
+  return `${parts[0]}.${minor + 1}.0`;
 }
 
 /**
@@ -77,7 +90,14 @@ export function parseAffectsEntry(raw: string): AffectsSpec | null {
   const range = text.match(/^([\w.]+)\s*-\s*([\w.*]+)$/);
   if (range) {
     const [, start, end] = range;
-    if (end.includes('*')) return { versionStart: start }; // wildcard upper bound: leave open-ended
+    if (end.includes('*')) {
+      // "4.4.*" means "through the end of the 4.4 branch" -- bound it at the
+      // next minor branch (exclusive) rather than leaving it fully open-ended,
+      // which previously made these rows match every later zabbix version
+      // forever (e.g. "4.4.4-4.4.*" incorrectly matched a 7.0.0 query).
+      const branch = end.replace(/\.\*$/, '');
+      return { versionStart: start, versionEnd: nextMinorBranch(branch) };
+    }
     return { versionStart: start, lastAffected: end };
   }
 
@@ -107,6 +127,7 @@ export function buildAffectedProducts(doc: ZabbixDocument): NormalizedAdvisory['
       vendor: 'zabbix',
       product: 'zabbix',
       versionStart: spec.versionStart,
+      versionEnd: spec.versionEnd,
       lastAffected: spec.lastAffected,
       affectedVersions: spec.version ? [spec.version] : undefined,
       versionFixed: isRange ? cleanFixed : undefined,
