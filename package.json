@@ -33,6 +33,7 @@
     "import:zabbix": "node dist/scripts/import-zabbix.js",
     "import:tomcat": "node dist/scripts/import-tomcat.js",
     "import:nginx": "node dist/scripts/import-nginx.js",
+    "migrate:all": "node dist/scripts/migrate-all.js",
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
     "migrate:module-version-start": "node dist/scripts/migrate-module-version-start.js",
     "migrate:fix-implausible-module-floor": "node dist/scripts/migrate-fix-implausible-module-floor.js",
