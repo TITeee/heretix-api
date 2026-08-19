@@ -9,7 +9,7 @@ const CSAF_BASE = 'https://security.paloaltonetworks.com/csaf';
 
 // ─── CSAF 2.0 Type Definitions ───────────────────────────────
 
-interface CsafDocument {
+export interface CsafDocument {
   document: {
     title: string;
     tracking: {
@@ -52,13 +52,28 @@ interface CsafVulnerability {
 
 interface ProductRangeInfo {
   productName: string;
-  op: string;      // '<', '<=', '>=', '>'
-  version: string;
+  op: string | null;      // '<', '<=', '>=', '>', or null for a discrete/no-version entry
+  version: string | null;
 }
 
 /**
- * Build a map from product_id to version range info from product_tree
- * PAN CSAF format: product_version_range branch names contain "vers:generic/<12.1.4" etc.
+ * Build a map from product_id to version range info from product_tree.
+ * PAN CSAF documents mix two branch shapes under the same product_name:
+ *   - `product_version_range`, name like "vers:generic/<12.1.4" or
+ *     "vers:generic/PAN-OS Firewall>=11.2.10" -- a real range, captured as before.
+ *   - `product_version` (discrete, no range), name like "Prisma Access Agent 0"
+ *     or "Prisma Access Agent All" -- CSAF's placeholder for "affected, no
+ *     specific version boundary" (paired with a separate `>=` "fixed" entry
+ *     elsewhere in the tree that carries the real upper bound). These
+ *     product_ids use an internal scheme ("PANW-Prisma-Access-Agent-3") that
+ *     doesn't contain the product name or a version number at all, so unlike
+ *     the range case there's nothing to parse out of the name -- record them
+ *     with op/version null rather than skipping them, so the caller still
+ *     recognizes the product_id (via productMap.has()) and routes the whole
+ *     advisory through the range-aware path instead of falling through to
+ *     legacy product-id string-matching, which can't resolve these IDs to a
+ *     product name at all and silently drops the entire advisory as
+ *     unparseable -- confirmed this affected ~46% of PAN's CVE advisories.
  */
 function buildProductMap(branches: CsafBranch[]): Map<string, ProductRangeInfo> {
   const map = new Map<string, ProductRangeInfo>();
@@ -70,6 +85,8 @@ function buildProductMap(branches: CsafBranch[]): Map<string, ProductRangeInfo> 
         const m = b.name.match(/([<>]=?)([\d][\d.]*)$/);
         if (m) {
           map.set(b.product.product_id, { productName, op: m[1], version: m[2] });
+        } else if (b.category === 'product_version' || b.category === 'product_version_range') {
+          map.set(b.product.product_id, { productName, op: null, version: null });
         }
       }
       if (b.branches) walk(b.branches, productName);
@@ -139,7 +156,7 @@ function parseVersionOperator(str: string): { versionEnd?: string; versionFixed?
 
 // ─── CSAF → NormalizedAdvisory Conversion ────────────────────
 
-function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date): NormalizedAdvisory | null {
+export function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date): NormalizedAdvisory | null {
   const vulns = csaf.vulnerabilities ?? [];
   if (vulns.length === 0) return null;
 
@@ -183,7 +200,7 @@ function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date): Norm
       const fixedByProduct = new Map<string, string>();
       for (const pid of [...(v.product_status?.known_not_affected ?? []), ...(v.product_status?.fixed ?? [])]) {
         const info = productMap.get(pid);
-        if (info && (info.op === '>=' || info.op === '>')) {
+        if (info && (info.op === '>=' || info.op === '>') && info.version) {
           if (!fixedByProduct.has(info.productName)) {
             fixedByProduct.set(info.productName, info.version);
           }
@@ -201,8 +218,8 @@ function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date): Norm
         affectedProducts.push({
           vendor:       'paloalto',
           product:      info.productName,
-          versionEnd:   info.op === '<'  ? info.version : undefined,
-          lastAffected: info.op === '<=' ? info.version : undefined,
+          versionEnd:   info.op === '<'  ? (info.version ?? undefined) : undefined,
+          lastAffected: info.op === '<=' ? (info.version ?? undefined) : undefined,
           versionFixed,
           patchAvailable: !!versionFixed,
         });
