@@ -9,6 +9,7 @@ import {
   rpmAdvisoryVendor,
   matchesDpkgStyleVersion,
   matchesRpmVersionRange,
+  buildAliases,
   type VulnerabilityResult,
 } from './search-helpers.js';
 
@@ -28,6 +29,7 @@ function makeResult(overrides: Partial<VulnerabilityResult>): VulnerabilityResul
     epssScore: null,
     epssPercentile: null,
     fixedVersion: null,
+    aliases: ['CVE-2026-1234'],
     ...overrides,
   };
 }
@@ -70,6 +72,47 @@ describe('dedup', () => {
   it('keeps distinct master ids as separate results', () => {
     const items = [makeResult({ id: 'v1' }), makeResult({ id: 'v2' })];
     expect(dedup(items)).toHaveLength(2);
+  });
+
+  it('unions aliases across sources rather than keeping only the first', () => {
+    // Each source knows this finding by the id on its own row. Keeping only the
+    // winner's would drop the very mapping a consumer needs to follow an alert
+    // raised under the id a source used before a CVE was assigned.
+    const items = [
+      makeResult({ id: 'v1', sources: ['nvd'], aliases: ['CVE-2026-1234'] }),
+      makeResult({ id: 'v1', sources: ['osv'], aliases: ['CVE-2026-1234', 'GHSA-aaaa-bbbb-cccc'] }),
+    ];
+    expect(dedup(items)[0].aliases).toEqual(['CVE-2026-1234', 'GHSA-aaaa-bbbb-cccc']);
+  });
+
+  it('does not mutate the input items when merging', () => {
+    const first = makeResult({ id: 'v1', sources: ['nvd'], aliases: ['CVE-2026-1234'] });
+    dedup([first, makeResult({ id: 'v1', sources: ['osv'], aliases: ['GHSA-aaaa-bbbb-cccc'] })]);
+    expect(first.aliases).toEqual(['CVE-2026-1234']);
+    expect(first.sources).toEqual(['nvd']);
+  });
+});
+
+describe('buildAliases', () => {
+  it('collects every identifier the master carries', () => {
+    expect(buildAliases({ cveId: 'CVE-2026-1234', osvId: 'GHSA-x', advisoryId: 'ZBV-1' }))
+      .toEqual(['CVE-2026-1234', 'GHSA-x', 'ZBV-1']);
+  });
+
+  it('includes the source row\'s own id, which the master loses once a CVE is assigned', () => {
+    // Post-assignment shape: the master is keyed by CVE only, and the vendor id
+    // survives solely on the advisory row.
+    expect(buildAliases({ cveId: 'CVE-2026-1234', osvId: null, advisoryId: null }, 'ZBV-2026-05-06-3'))
+      .toEqual(['CVE-2026-1234', 'ZBV-2026-05-06-3']);
+  });
+
+  it('drops nulls and de-duplicates when the source id repeats the master id', () => {
+    expect(buildAliases({ cveId: 'CVE-2026-1234', osvId: null, advisoryId: null }, 'CVE-2026-1234'))
+      .toEqual(['CVE-2026-1234']);
+  });
+
+  it('returns an empty list when nothing identifies the finding', () => {
+    expect(buildAliases({}, null)).toEqual([]);
   });
 });
 

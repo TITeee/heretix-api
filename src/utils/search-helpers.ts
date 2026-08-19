@@ -20,9 +20,29 @@ export type VulnerabilityResult = {
   epssScore: number | null;
   epssPercentile: number | null;
   fixedVersion: string | null;
+  /**
+   * Every identifier this finding is reachable by, including externalId itself.
+   *
+   * externalId is not stable: it is the master's *preferred* id, recomputed on
+   * every query as cveId ?? osvId ?? advisoryId. A vendor advisory or OSV record
+   * assigned a CVE after it was first published keeps its own original id on its
+   * source row but starts being reported here under the CVE, so a consumer keying
+   * findings on externalId alone sees the old id vanish and an unrelated new one
+   * appear. Carrying the source row's own id alongside lets it recognise the two
+   * as one finding.
+   */
+  aliases: string[];
 };
 
-/** Deduplicate by master ID (merge sources, keep first non-null fixedVersion) */
+/** Collect the distinct, non-null identifiers a finding can be recognised by. */
+export function buildAliases(
+  master: { cveId?: string | null; osvId?: string | null; advisoryId?: string | null },
+  sourceOwnId?: string | null,
+): string[] {
+  return [...new Set([master.cveId, master.osvId, master.advisoryId, sourceOwnId].filter((v): v is string => !!v))];
+}
+
+/** Deduplicate by master ID (merge sources and aliases, keep first non-null fixedVersion) */
 export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
   const seen = new Map<string, VulnerabilityResult>();
   for (const item of items) {
@@ -31,11 +51,17 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
       for (const s of item.sources) {
         if (!existing.sources.includes(s)) existing.sources.push(s);
       }
+      // Union rather than first-wins: each source contributes the id it knows this
+      // finding by, and dropping the losers' would discard exactly the mapping a
+      // consumer needs to follow a finding across a rename.
+      for (const a of item.aliases) {
+        if (!existing.aliases.includes(a)) existing.aliases.push(a);
+      }
       if (!existing.fixedVersion && item.fixedVersion) {
         existing.fixedVersion = item.fixedVersion;
       }
     } else {
-      seen.set(item.id, { ...item, sources: [...item.sources] });
+      seen.set(item.id, { ...item, sources: [...item.sources], aliases: [...item.aliases] });
     }
   }
   return [...seen.values()];
