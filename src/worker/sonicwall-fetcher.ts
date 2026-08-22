@@ -110,11 +110,34 @@ export class SonicWallFetcher implements AdvisoryFetcher {
   async fetch(): Promise<NormalizedAdvisory[]> {
     logger.info('Fetching SonicWall PSIRT advisories');
 
-    const { data } = await axios.get<SonicWallAdvisory[]>(LIST_API, {
-      params: { srch: '', vulnerable_products: '', ord: '-advisory_id' },
-      timeout: 30000,
-      headers: { 'User-Agent': 'heretix-api/1.0', 'Accept': 'application/json' },
-    });
+    // The whole advisory list comes from this one request -- unlike the
+    // per-item loops other fetchers retry, a single transient failure here
+    // (this endpoint has been observed to reset the connection outright, not
+    // just time out) would otherwise fail the entire job with zero recovery.
+    const maxRetries = 3;
+    let data: SonicWallAdvisory[] | undefined;
+    let lastErr: unknown;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await axios.get<SonicWallAdvisory[]>(LIST_API, {
+          params: { srch: '', vulnerable_products: '', ord: '-advisory_id' },
+          timeout: 30000,
+          headers: { 'User-Agent': 'heretix-api/1.0', 'Accept': 'application/json' },
+        });
+        data = res.data;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxRetries) {
+          const wait = 3000 * attempt;
+          logger.warn({ attempt, wait, err }, 'SonicWall advisory list fetch failed, retrying');
+          await new Promise(r => setTimeout(r, wait));
+        }
+      }
+    }
+
+    if (data === undefined) throw lastErr;
 
     logger.info({ count: data.length }, 'Fetched SonicWall advisories');
 
