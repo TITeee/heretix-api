@@ -1,19 +1,54 @@
 /**
- * NVD CPE product name aliases
+ * Product name aliases
  *
- * NVD sometimes uses multiple product names for the same software.
- * This is especially common after vendor acquisitions when naming conventions change
- * (e.g., F5's acquisition of NGINX).
+ * Different data sources use multiple product names for the same software —
+ * NVD CPEs after a vendor acquisition (e.g., F5's acquisition of NGINX), or a
+ * vendor advisory page that spells the same product differently across
+ * bulletins (e.g., Broadcom's Response Matrix for VMware vCenter).
  *
  * This file manages the mapping from "canonical name used when searching" →
- * "list of product names stored in NVD".
+ * "list of product names stored in the DB" (NVDAffectedPackage.packageName
+ * for NVD lookups, AdvisoryAffectedProduct.product for vendor advisories).
  *
  * How to add:
- *   Use the canonical name (lowercase) as the key, and list all product names
- *   that appear in NVD CPEs. Always include the canonical name itself in the list.
- *   Verify that alias targets actually exist in NVDAffectedPackage before adding.
+ *   Use the canonical name (lowercase) as the key, and list every product name
+ *   spelling that actually appears in the target table. Always include the
+ *   canonical name itself in the list. Verify that alias targets actually exist
+ *   in the DB before adding.
  */
+
+// Broadcom's advisory Response Matrix spells "vCenter" at least a dozen ways
+// across VMSAs — with and without a "VMware " prefix, bundled under a
+// "Cloud Foundation (...)" or "Telco Cloud ..." qualifier, and even a
+// scraping-artifact "vCenter Server1". These are the literal strings
+// broadcom-fetcher.ts scrapes from the page, not canonical CPE names — unlike
+// every other entry in PRODUCT_ALIASES, which maps into NVDAffectedPackage.
+// DB counts as of 2026-08-24 (AdvisoryAffectedProduct, vendor='broadcom'):
+// vCenter Server=179, Cloud Foundation (vCenter Server)=84, vCenter=21,
+// VMware vCenter Server=20, VMware vCenter=18, vCenter Server1=12,
+// vCenter Server Appliance=10, VMware Telco Cloud Infrastructure (vCenter)=8,
+// VMware Cloud Foundation (vCenter)=8, VMware Cloud Foundation (vCenter Server)=6,
+// VMware Telco Cloud Platform (vCenter)=4, Cloud Foundation (vCenter)=2.
+const VCENTER_PRODUCTS = [
+  'Cloud Foundation (vCenter Server)',
+  'Cloud Foundation (vCenter)',
+  'vCenter',
+  'vCenter Server',
+  'vCenter Server Appliance',
+  'vCenter Server1',
+  'VMware Cloud Foundation (vCenter Server)',
+  'VMware Cloud Foundation (vCenter)',
+  'VMware Telco Cloud Infrastructure (vCenter)',
+  'VMware Telco Cloud Platform (vCenter)',
+  'VMware vCenter',
+  'VMware vCenter Server',
+];
+
 export const PRODUCT_ALIASES: Record<string, string[]> = {
+  // ── VMware vCenter (Broadcom) ────────────────────────────────────────────────
+  'vmware vcenter server': VCENTER_PRODUCTS,
+  'vmware vcenter': VCENTER_PRODUCTS,
+
   // ── nginx ──────────────────────────────────────────────────────────────────
   // After F5 acquired NGINX, the NVD CPE product name changed.
   // Old: nginx:nginx / New: f5:nginx_open_source, f5:nginx_open_source_subscription
