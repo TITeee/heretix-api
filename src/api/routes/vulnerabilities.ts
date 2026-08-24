@@ -306,7 +306,7 @@ async function searchAdvisory(
 
   const rows = await prisma.advisoryAffectedProduct.findMany({
     where: {
-      product,
+      product: { in: expandProductAliases(product) },
       AND: [
         versionWhere,
         { OR: [{ versionEnd: null }, { versionEnd: { not: { contains: '.module+' } } }] },

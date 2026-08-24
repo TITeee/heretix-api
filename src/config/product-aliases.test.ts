@@ -56,6 +56,25 @@ describe('expandProductAliases', () => {
     expect(expandProductAliases('unknown-tool')).toEqual(['unknown-tool']);
     expect(expandProductAliases('Unknown-Tool')).toEqual(['Unknown-Tool']);
   });
+
+  it('cross-maps VMware vCenter / VMware vCenter Server to every Broadcom advisory spelling', () => {
+    const expected = [
+      'Cloud Foundation (vCenter Server)',
+      'Cloud Foundation (vCenter)',
+      'vCenter',
+      'vCenter Server',
+      'vCenter Server Appliance',
+      'vCenter Server1',
+      'VMware Cloud Foundation (vCenter Server)',
+      'VMware Cloud Foundation (vCenter)',
+      'VMware Telco Cloud Infrastructure (vCenter)',
+      'VMware Telco Cloud Platform (vCenter)',
+      'VMware vCenter',
+      'VMware vCenter Server',
+    ];
+    expect(expandProductAliases('VMware vCenter Server')).toEqual(expected);
+    expect(expandProductAliases('VMware vCenter')).toEqual(expected);
+  });
 });
 
 describe('PRODUCT_ALIASES data integrity', () => {
