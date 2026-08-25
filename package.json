@@ -37,6 +37,7 @@
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
     "migrate:module-version-start": "node dist/scripts/migrate-module-version-start.js",
     "migrate:fix-implausible-module-floor": "node dist/scripts/migrate-fix-implausible-module-floor.js",
+    "migrate:clamp-version-components": "node dist/scripts/migrate-clamp-version-components.js",
     "migrate:nvd-exact-version": "node dist/scripts/migrate-nvd-exact-version.js",
     "migrate:job-config-defaults": "node dist/scripts/migrate-job-config-defaults.js",
     "migrate:broadcom-composite-externalid": "node dist/scripts/migrate-broadcom-composite-externalid.js",
@@ -55,6 +56,7 @@
     "validate:fortinet": "node dist/scripts/validate-fortinet.js",
     "validate:pan": "node dist/scripts/validate-pan.js",
     "validate:osv-coverage": "node dist/scripts/validate-osv-coverage.js",
+    "validate:version-encoding": "node dist/scripts/validate-version-encoding.js",
     "validate:nodejs": "node dist/scripts/validate-nodejs.js",
     "validate:broadcom": "node dist/scripts/validate-broadcom.js"
   },

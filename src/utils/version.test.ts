@@ -38,6 +38,30 @@ describe('normalizeVersion', () => {
     expect(normalizeVersion('9999999.0.0')).toBeNull();
   });
 
+  it('clamps a minor component >= 1000 instead of overflowing into major (NVD CPE "9999" convention)', () => {
+    // Real data: cpanel CVEs use "67.9999.64" to mean "any 9999.x build of major 67".
+    // Before clamping this normalized to 76999064000, sorting *above* "68.0.15"
+    // (a different, later major) -- non-monotonic, not just imprecise.
+    const introduced = normalizeVersion('67.9999.64')!;
+    const fixed = normalizeVersion('68.0.15')!;
+    expect(introduced).toBeLessThan(fixed);
+  });
+
+  it('clamps a release component >= 1000 instead of overflowing into patch (Oracle Linux UEK kernel builds)', () => {
+    // Before clamping, "4.14.35-1844..." overflowed to encode as if patch=36,
+    // colliding with the unrelated "4.14.36-..." line.
+    const sameLineHigherRelease = normalizeVersion('4.14.35-1844.4.5.el7uek')!;
+    const differentLaterPatch = normalizeVersion('4.14.36-100.el7uek')!;
+    expect(sameLineHigherRelease).toBeLessThan(differentLaterPatch);
+  });
+
+  it('still rejects a truly extreme component as garbage rather than clamping it', () => {
+    // Distinguishes "legitimately large" (clamp) from "obviously not a version
+    // component at all, e.g. a timestamp" (reject) -- both a plain 7-digit
+    // major and the same value from split() into minor hit this.
+    expect(normalizeVersion('1.9999999.0')).toBeNull();
+  });
+
   it('returns null for non-numeric garbage', () => {
     expect(normalizeVersion('not-a-version')).not.toBeNull(); // strips to "0" components, does not fail
   });
