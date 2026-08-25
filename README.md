@@ -1018,7 +1018,7 @@ Versions are converted as `major × 1,000,000,000 + minor × 1,000,000 + patch �
 | Build metadata (`1.0.0+build.123`) | Stripped and ignored | No impact |
 | RPM release (`2.9.13-6.el9`) | Release number (6) included as 4th component → `2_009_013_006` | Accurate sub-release range queries |
 | minor/patch/release ≥ 1,000 | Clamped to 999 (each occupies a fixed-width slot; letting it through unclamped would overflow into the next component up and silently corrupt it) | Bounded imprecision among values in this range for the same package, rather than colliding with an unrelated version |
-| Any component > 999,999 | Normalization fails (null) — treated as garbage (timestamp, git hash), not a real version | Falls back to approximate match |
+| Any component > 999,999 | Normalization fails (null) — treated as garbage (timestamp, git hash), not a real version | Falls back to approximate match. Affects ~0.46% of stored version strings (44,000 of 9,515,439 checked across `AdvisoryAffectedProduct`/`OSVAffectedPackage`/`NVDAffectedPackage`) — mostly Jenkins-style build ids (`696.v52535c46f4c9`) and date/git-based versions (`20240325.1`, `0.20170427git-3...`) that are correctly rejected as not being real version numbers, not a bug |
 | Non-semver (date-based, etc.) | Normalization fails (null) | Falls back to approximate match |
 
 **Approximate match fallback**: when normalization fails, all vulnerabilities matching the package name and ecosystem are returned with `approximateMatch: true`.
