@@ -54,6 +54,7 @@
     "validate:fortinet": "node dist/scripts/validate-fortinet.js",
     "validate:pan": "node dist/scripts/validate-pan.js",
     "validate:osv-coverage": "node dist/scripts/validate-osv-coverage.js",
+    "validate:version-encoding": "node dist/scripts/validate-version-encoding.js",
     "validate:nodejs": "node dist/scripts/validate-nodejs.js",
     "validate:broadcom": "node dist/scripts/validate-broadcom.js"
   },
