@@ -37,6 +37,7 @@
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
     "migrate:module-version-start": "node dist/scripts/migrate-module-version-start.js",
     "migrate:fix-implausible-module-floor": "node dist/scripts/migrate-fix-implausible-module-floor.js",
+    "migrate:nvd-exact-version": "node dist/scripts/migrate-nvd-exact-version.js",
     "migrate:job-config-defaults": "node dist/scripts/migrate-job-config-defaults.js",
     "migrate:broadcom-composite-externalid": "node dist/scripts/migrate-broadcom-composite-externalid.js",
     "migrate:sophos-sonicwall-composite-externalid": "node dist/scripts/migrate-sophos-sonicwall-composite-externalid.js",
