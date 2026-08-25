@@ -192,12 +192,22 @@ async function searchOSV(
 /** Search master via NVD table */
 async function searchNVD(
   packageName: string,
+  version: string | undefined,
   versionInt: bigint | null,
   ecosystem: string | undefined,
 ): Promise<VulnerabilityResult[]> {
   const ecosystemFilter = ecosystem ? { ecosystem: { startsWith: ecosystem } } : {};
   const approximate = versionInt === null;
-  const versionFilter = versionInt !== null ? versionRangeWhere(versionInt) : {};
+  // Rows with `exactVersion` set carry a real, specific CPE version (e.g. Huawei's
+  // "v200r007c00spcb00", a Jenkins plugin build id) that normalizeVersion() can't
+  // range-encode -- introducedInt/fixedInt/lastAffectedInt are all null for them,
+  // the same shape a genuine CPE wildcard ("*"/"-", intentionally unbounded) has.
+  // Without excluding them from the range branch, they'd match *every* queried
+  // version exactly like a real wildcard does. Route them to exact string
+  // equality instead so only a query for that same specific version finds them.
+  const versionFilter = versionInt !== null
+    ? { OR: [{ exactVersion: null, ...versionRangeWhere(versionInt) }, { exactVersion: version }] }
+    : {};
 
   const packageNames = expandProductAliases(packageName);
   const rows = await prisma.nVDAffectedPackage.findMany({
@@ -494,7 +504,7 @@ async function searchVulnerabilities(
 
   const [osvResults, nvdResults, advisoryResults] = await Promise.all([
     searchOSV(packageName, version, versionInt, ecosystem),
-    isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, versionInt, ecosystem),
+    isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, ecosystem),
     rpmVendor
       ? searchAdvisoryRpm(packageName, version, rpmVendor)
       : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),

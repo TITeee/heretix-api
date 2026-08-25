@@ -190,6 +190,12 @@ model NVDAffectedPackage {
   fixedInt        BigInt?
   lastAffectedInt BigInt?
 
+  // CPEのバージョン欄が「*」「-」（真のワイルドカード）ではなく実在する特定バージョンだが、
+  // normalizeVersion()では数値化できない場合（Huawei機器のV/R/C形式、Jenkinsのビルドid等）の
+  // 生文字列。この場合 introducedInt/fixedInt/lastAffectedInt は全てnullになり真のワイルドカード
+  // 行と区別がつかなくなる（=無条件マッチしてしまう）ため、完全一致検索用に別途保持する。
+  exactVersion    String?
+
   createdAt       DateTime @default(now())
 
   @@index([ecosystem, packageName])

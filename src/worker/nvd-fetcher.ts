@@ -2,6 +2,7 @@ import axios from 'axios';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
+import { computeExactVersion } from './nvd-helpers.js';
 import type { Prisma } from '@prisma/client';
 
 // ─── NVD API Type Definitions ────────────────────────────────
@@ -148,6 +149,7 @@ function parseCPE(cpe: string): {
 
   return { vendor, packageName: product, ecosystem, version, updateQualifier };
 }
+
 
 /**
  * Extract CVSS score and severity from NVD CVSS metrics
@@ -602,6 +604,8 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<'inserted' | '
         const fixedInt = toInt(vee ?? undefined);
         const lastAffectedInt = toInt(vei ?? undefined);
 
+        const exactVersion = computeExactVersion(pointVersion);
+
         await tx.nVDAffectedPackage.create({
           data: {
             vulnerabilityId: vulnerability.id,
@@ -616,6 +620,7 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<'inserted' | '
             introducedInt,
             fixedInt,
             lastAffectedInt,
+            exactVersion,
           },
         });
       }
