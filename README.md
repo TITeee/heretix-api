@@ -1017,10 +1017,13 @@ Versions are converted as `major × 1,000,000,000 + minor × 1,000,000 + patch �
 | Pre-release (`1.0.0-beta.1`) | Treated as slightly less than the release (`1.0.0 - 1`) | Minor inaccuracy possible |
 | Build metadata (`1.0.0+build.123`) | Stripped and ignored | No impact |
 | RPM release (`2.9.13-6.el9`) | Release number (6) included as 4th component → `2_009_013_006` | Accurate sub-release range queries |
-| Component ≥ 1,000,000 | Normalization fails (null) | Falls back to approximate match |
+| minor/patch/release ≥ 1,000 | Clamped to 999 (each occupies a fixed-width slot; letting it through unclamped would overflow into the next component up and silently corrupt it) | Bounded imprecision among values in this range for the same package, rather than colliding with an unrelated version |
+| Any component > 999,999 | Normalization fails (null) — treated as garbage (timestamp, git hash), not a real version | Falls back to approximate match |
 | Non-semver (date-based, etc.) | Normalization fails (null) | Falls back to approximate match |
 
 **Approximate match fallback**: when normalization fails, all vulnerabilities matching the package name and ecosystem are returned with `approximateMatch: true`.
+
+**RPM release strings with multiple dot-separated segments** (e.g. `2136.344.4.3` in Oracle Linux UEK kernel builds like `5.4.17-2136.344.4.3.el8uek`) only have their *leading* integer group (`2136`) captured — everything after the first dot is ignored, same as it always has been. Different builds sharing that leading group (`2136.344...` vs `2136.331...`) normalize identically. This is orthogonal to the ≥1,000 clamping above (already true for release values under 1,000 too) and not fixed here for the same reason as the RPM sub-release / 4-component precision limits already accepted elsewhere in this section — `ecosystem=oracle-linux`/`ecosystem=red-hat` queries are unaffected, since those route through `compareRpmVersions()` (full RPM release-string comparison) instead of this generic encoding.
 
 ## License
 

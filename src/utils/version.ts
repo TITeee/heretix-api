@@ -4,6 +4,22 @@
  * "1.2.3-6.el9" -> 1002003006  (RPM release number included as 4th component)
  *
  * Returns null for abnormally large values or versions containing timestamps
+ *
+ * minor/patch/release each occupy a fixed-width digit slot (weight 1e6/1e3/1
+ * respectively), so any of them reaching 1000+ overflows into the next slot up
+ * instead of being rejected -- e.g. "67.9999.64" (a real NVD CPE convention for
+ * "any 9999.x build of major 67") previously encoded to 76999064000, comparing
+ * as *larger* than "68.0.15" (68000015000), a different major entirely. This
+ * isn't just lossy, it's non-monotonic: an older version can normalize higher
+ * than a newer one. Legitimately large-but-real values in this range (large
+ * RPM release numbers, NVD's minor=9999 convention) are clamped to the slot's
+ * max (999) instead -- confirmed this doesn't introduce new same-line
+ * ambiguity beyond what already existed (RPM releases with a multi-part
+ * suffix like "2136.344.4.3" already only capture the leading integer group;
+ * see README.md's RPM sub-release precision note). Values beyond
+ * MAX_COMPONENT (999999) are still rejected outright as garbage (timestamps,
+ * git hashes) rather than clamped, since clamping those would treat obvious
+ * garbage as a real, comparable version.
  */
 export function normalizeVersion(version: string): bigint | null {
   // Strip epoch prefix ("1:0.1.15-..." -> "0.1.15-...")
@@ -42,19 +58,27 @@ export function normalizeVersion(version: string): bigint | null {
   const releaseMatch = !hasPrerelease ? parts[1]?.match(/^(\d+)/) : null;
   const release = releaseMatch ? parseInt(releaseMatch[1], 10) : 0;
 
-  // Check for abnormally large values (timestamps, Git hashes, etc.)
-  // Normal semantic versioning rarely exceeds 999 per component
+  // Check for abnormally large values (timestamps, Git hashes, etc.) -- beyond
+  // this, treat as garbage and reject rather than clamp.
   const MAX_COMPONENT = 999999;
 
-  if (major > MAX_COMPONENT || minor > MAX_COMPONENT || patch > MAX_COMPONENT || release > 999999) {
+  if (major > MAX_COMPONENT || minor > MAX_COMPONENT || patch > MAX_COMPONENT || release > MAX_COMPONENT) {
     return null;
   }
 
+  // minor/patch/release must each stay below 1000 to not corrupt the next
+  // slot up (see the function doc comment) -- clamp legitimately-large values
+  // in [1000, MAX_COMPONENT] to the slot's max instead of letting them overflow.
+  const SLOT_LIMIT = 999;
+  const clampedMinor = Math.min(minor, SLOT_LIMIT);
+  const clampedPatch = Math.min(patch, SLOT_LIMIT);
+  const clampedRelease = Math.min(release, SLOT_LIMIT);
+
   // Verify the resulting BigInt is within a safe range
   let result = BigInt(major) * 1_000_000_000n
-    + BigInt(minor) * 1_000_000n
-    + BigInt(patch) * 1_000n
-    + BigInt(release);
+    + BigInt(clampedMinor) * 1_000_000n
+    + BigInt(clampedPatch) * 1_000n
+    + BigInt(clampedRelease);
 
   // Pre-release versions should sort lower than the release (e.g., "2.0.0-beta.1" < "2.0.0")
   if (hasPrerelease && result > 0n) {
