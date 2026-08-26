@@ -21,7 +21,6 @@ export function rpmvercmp(a: string, b: string): number {
     if (i >= a.length || j >= b.length) break;
 
     const aIsDigit = isDigit(a[i]);
-    const bIsDigit = isDigit(b[i]);
 
     // Collect segment of same type from a
     const segStartA = i;
