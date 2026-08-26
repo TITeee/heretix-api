@@ -18,6 +18,30 @@ export function isJobRunning(source: string): boolean {
 }
 
 /**
+ * Mark any CollectionJob still 'running' as 'failed'. Call once at process
+ * startup, before the scheduler registers anything: the in-memory `running`
+ * lock above is always empty right after boot, so a row still marked
+ * 'running' at that point can't belong to this process — it was orphaned by
+ * a previous process that died mid-run (e.g. a host/sandbox restart) without
+ * going through either of executeJob()'s own completed/failed paths, and
+ * would otherwise sit in the dashboard forever with no completedAt.
+ */
+export async function reconcileOrphanedJobs(): Promise<number> {
+  const { count } = await prisma.collectionJob.updateMany({
+    where: { status: 'running' },
+    data: {
+      status: 'failed',
+      completedAt: new Date(),
+      errorMessage: 'Orphaned: process restarted before the job completed',
+    },
+  });
+  if (count > 0) {
+    logger.warn({ count }, 'Reconciled orphaned running jobs from a previous process');
+  }
+  return count;
+}
+
+/**
  * Resolve the delta cursor for a source: the completedAt of its last completed
  * CollectionJob, or now - fallbackMs if none exists.
  */

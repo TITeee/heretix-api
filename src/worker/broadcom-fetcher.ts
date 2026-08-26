@@ -166,6 +166,7 @@ export function parseAffectedVersionCell(raw: string): AffectedRange[] {
     .map(s => s.trim())
     .filter(Boolean)
     .filter(s => !/^any$/i.test(s))
+    .filter(s => !/n\/a|see\s+note/i.test(s))
     .map((token): AffectedRange => {
       if (!/^\d+(\.(?:\d+|[xX]))*$/.test(token)) {
         return { exact: token };
