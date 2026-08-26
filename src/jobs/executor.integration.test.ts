@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { prisma } from '../db/client.js';
 import { resetDb } from '../test-utils/db.js';
-import { executeJob, getDeltaCursor } from './executor.js';
+import { executeJob, getDeltaCursor, reconcileOrphanedJobs } from './executor.js';
 import type { JobDefinition } from './types.js';
 
 describe('executeJob', () => {
@@ -57,6 +57,43 @@ describe('executeJob', () => {
     };
 
     await expect(executeJob(def)).resolves.toBeUndefined();
+  });
+});
+
+describe('reconcileOrphanedJobs', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('marks a stale running job as failed with completedAt set', async () => {
+    const job = await prisma.collectionJob.create({
+      data: { source: 'orphan-source', status: 'running', startedAt: new Date() },
+    });
+
+    const count = await reconcileOrphanedJobs();
+
+    expect(count).toBe(1);
+    const updated = await prisma.collectionJob.findUnique({ where: { id: job.id } });
+    expect(updated?.status).toBe('failed');
+    expect(updated?.completedAt).not.toBeNull();
+    expect(updated?.errorMessage).toMatch(/orphaned/i);
+  });
+
+  it('leaves completed and failed jobs untouched', async () => {
+    await prisma.collectionJob.create({
+      data: { source: 'done-source', status: 'completed', startedAt: new Date(), completedAt: new Date() },
+    });
+    await prisma.collectionJob.create({
+      data: { source: 'already-failed-source', status: 'failed', startedAt: new Date(), completedAt: new Date(), errorMessage: 'boom' },
+    });
+
+    const count = await reconcileOrphanedJobs();
+
+    expect(count).toBe(0);
   });
 });
 

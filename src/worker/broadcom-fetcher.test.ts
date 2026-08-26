@@ -191,6 +191,12 @@ describe('parseAffectedVersionCell', () => {
     expect(parseAffectedVersionCell('any')).toEqual([]);
   });
 
+  it('omits "N/A" and "see note" tokens instead of storing them as a literal exact version', () => {
+    expect(parseAffectedVersionCell('N/A')).toEqual([]);
+    expect(parseAffectedVersionCell('n/a')).toEqual([]);
+    expect(parseAffectedVersionCell('See note 1.2')).toEqual([]);
+  });
+
   it('splits a cell listing several affected ranges into separate entries', () => {
     // Real VMSA-2026-0006 row: "VMware Telco Cloud Platform" | Version "3.0, 4.x, 5.0.x, 5.1.x"
     expect(parseAffectedVersionCell('3.0, 4.x, 5.0.x, 5.1.x')).toEqual([
