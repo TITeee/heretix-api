@@ -520,7 +520,50 @@ const cpeSearchSchema = z.object({
   offset: z.coerce.number().int().nonnegative().default(0),
 });
 
+const suggestSchema = z.object({
+  q: z.string().min(1),
+  ecosystem: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(50).default(10),
+});
+
+/**
+ * Package-name autocomplete for the "Package" search mode. NVD's packageName
+ * is the raw CPE <product> identifier ("http_server", not "Apache HTTP
+ * Server"), which a user can't reasonably guess up front — this lets the UI
+ * suggest real names as they type instead of requiring that lookup elsewhere.
+ * Covers NVD and OSV only (not AdvisoryAffectedProduct): those vendor products
+ * already have their own curated dropdown in the "Advisory" search mode.
+ */
+async function suggestPackageNames(prefix: string, ecosystem: string | undefined, limit: number): Promise<string[]> {
+  const ecosystemFilter = ecosystem ? { ecosystem: { startsWith: ecosystem } } : {};
+  // Case-sensitive startsWith (no `mode: 'insensitive'`), consistent with every
+  // other prefix filter in this file — Postgres can use the existing
+  // packageName B-tree index for this; ILIKE could not without a separate
+  // case-insensitive index.
+  const where = { packageName: { startsWith: prefix }, ...ecosystemFilter };
+
+  const [nvdRows, osvRows] = await Promise.all([
+    prisma.nVDAffectedPackage.findMany({
+      where, distinct: ['packageName'], select: { packageName: true }, take: limit, orderBy: { packageName: 'asc' },
+    }),
+    prisma.oSVAffectedPackage.findMany({
+      where, distinct: ['packageName'], select: { packageName: true }, take: limit, orderBy: { packageName: 'asc' },
+    }),
+  ]);
+
+  const names = new Set<string>();
+  for (const r of nvdRows) names.add(r.packageName);
+  for (const r of osvRows) names.add(r.packageName);
+  return [...names].sort((a, b) => a.localeCompare(b)).slice(0, limit);
+}
+
 export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
+  fastify.get('/vulnerabilities/suggest', async (request) => {
+    const params = suggestSchema.parse(request.query);
+    const suggestions = await suggestPackageNames(params.q, params.ecosystem, params.limit);
+    return { suggestions };
+  });
+
   fastify.get('/vulnerabilities/search/cpe', async (request, reply) => {
     const params = cpeSearchSchema.parse(request.query);
     const parsed = parseCPE(params.cpe);
