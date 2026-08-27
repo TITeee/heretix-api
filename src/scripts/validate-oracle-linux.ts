@@ -42,7 +42,7 @@ import { OracleLinuxFetcher } from '../worker/oracle-linux-fetcher.js';
 import {
   bumpRpmVersion, aggregateSweep, printSweepReport, filterBySource, diffSets,
   mapWithConcurrency, indexByProduct, expectedCVEsRpm, queryAllPages, capPointsPerProduct,
-  type SweepEntry, type RpmFixEntry, type BoundaryPoint,
+  type RpmFixEntry, type BoundaryPoint,
 } from './lib/accuracy-sweep.js';
 
 const MAX_POINTS_PER_PRODUCT = 50;

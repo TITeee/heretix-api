@@ -162,7 +162,7 @@ async function main() {
         await importByPackage(args[1], args[2]);
         break;
 
-      case 'id':
+      case 'id': {
         if (args.length < 2) {
           logger.error('Missing argument: OSV ID required');
           process.exit(1);
@@ -171,6 +171,7 @@ async function main() {
         await importOSVData(osvData);
         logger.info({ osvId: args[1] }, 'Successfully imported vulnerability');
         break;
+      }
 
       case 'malware': {
         // Full import of all MAL entries from ossf/malicious-packages GitHub repository

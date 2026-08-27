@@ -7,7 +7,13 @@ import jobsRoute from './routes/jobs.js';
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
 // Global setting to make BigInt JSON-serializable
-(BigInt.prototype as any).toJSON = function() {
+declare global {
+  interface BigInt {
+    toJSON(): string;
+  }
+}
+
+BigInt.prototype.toJSON = function () {
   return this.toString();
 };
 
