@@ -107,7 +107,7 @@ function parseVersionSpec(productId: string, productName: string): {
   }
 
   // Get the spec portion after the product name
-  let spec = productId.slice(productName.length).replace(/^[\s/]+/, '').trim();
+  const spec = productId.slice(productName.length).replace(/^[\s/]+/, '').trim();
   if (!spec) return null;
 
   // ">=X.Y.Z|<=A.B.C"

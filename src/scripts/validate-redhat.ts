@@ -41,7 +41,7 @@ import axios from 'axios';
 import { RedHatFetcher } from '../worker/redhat-fetcher.js';
 import {
   bumpRpmVersion, aggregateSweep, printSweepReport, filterBySource, diffSets,
-  mapWithConcurrency, indexByProduct, expectedCVEsRpm, queryAllPages, type SweepEntry, type RpmFixEntry,
+  mapWithConcurrency, indexByProduct, expectedCVEsRpm, queryAllPages, type RpmFixEntry,
 } from './lib/accuracy-sweep.js';
 
 const PAGE_SIZE = 500; // API-enforced max (see zod schema in vulnerabilities.ts)

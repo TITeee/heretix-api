@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import { pino } from 'pino';
@@ -30,11 +30,11 @@ const prisma = new PrismaClient({
   ],
 });
 
-prisma.$on('warn', (e: any) => {
+prisma.$on('warn', (e: Prisma.LogEvent) => {
   logger.warn(e);
 });
 
-prisma.$on('error', (e: any) => {
+prisma.$on('error', (e: Prisma.LogEvent) => {
   logger.error(e);
 });
 

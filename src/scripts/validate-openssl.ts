@@ -173,7 +173,7 @@ async function queryLocalAPI(
   const headers: Record<string, string> = {};
   if (process.env.API_KEY) headers['x-api-key'] = process.env.API_KEY;
 
-  let allResults: ApiVulnerability[] = [];
+  let allResults: ApiVulnerability[];
   try {
     const res = await axios.get<{ results: ApiVulnerability[] }>(url, { timeout: 30000, headers });
     allResults = res.data.results ?? [];

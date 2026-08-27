@@ -213,7 +213,7 @@ async function queryLocalAPI(
   baseUrl: string,
   version: string,
 ): Promise<{ cveIds: Set<string>; osvOnlyIds: string[]; allResults: ApiVulnerability[] }> {
-  let allResults: ApiVulnerability[] = [];
+  let allResults: ApiVulnerability[];
 
   try {
     allResults = await querySearchEndpoint(baseUrl, version);
