@@ -13,6 +13,11 @@ async function getBrowser(): Promise<Browser> {
     // playwright-extra returns a Playwright-compatible Browser
     browser = await extraChromium.launch({
       headless: true,
+      // Set in the Alpine-based Docker image, which points this at the
+      // distro's own chromium package -- Playwright's own downloadable build
+      // targets glibc and isn't supported on Alpine (musl). Left unset in
+      // local dev, which uses Playwright's normal managed browser download.
+      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
