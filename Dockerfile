@@ -5,6 +5,12 @@ FROM node:22-alpine AS builder
 
 RUN corepack enable && corepack prepare pnpm@10.24.0 --activate
 
+# Playwright's own downloaded Chromium targets glibc and isn't supported on
+# Alpine (musl) -- the runner stage uses Alpine's own `chromium` package
+# instead (see below), so skip this build's normally-automatic download
+# entirely rather than fetch a binary that will never run.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
@@ -20,6 +26,21 @@ RUN pnpm prune --prod
 FROM node:22-alpine AS runner
 
 RUN corepack enable && corepack prepare pnpm@10.24.0 --activate
+
+# Broadcom/Sophos advisory scraping (src/utils/browser.ts) needs a real
+# Chromium binary. Playwright's own downloadable build isn't supported on
+# Alpine, so install Alpine's own chromium package and point Playwright at it
+# instead (PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH below).
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 WORKDIR /app
 
