@@ -164,3 +164,7 @@ PostgreSQLも専用fetcherが無く、原理上は同じNVD側の制約を抱え
 ### RHEL/Oracle Linux の OVAL フィードは後から改訂されることがある
 
 Red Hat や Oracle は、CVE番号やエラータ番号を変えないまま、公開済みのアドバイザリの影響パッケージ一覧を後から改訂することがある（サブパッケージの追加・削除など）。[境界値スイープ](#境界値スイープrhel--oracle-linux)はレポート作成時にground truthをライブ取得するが、DB側は直近の定期インポート時点のスナップショットを反映しているため、両者の間に少数の不一致が生じるのは想定内であり、次回のインポートで自然に解消する——検索やfetcherの欠陥ではない。実際に不一致のあった複数のCVEについてライブフィードを再取得し、影響パッケージ一覧がDBの内容から実際に変わっていることを確認済み。
+
+### CVE番号を持たないDebianの問題（`TEMP-*`）は追跡対象外
+
+Debian自身のSecurity Trackerは、まだCVE番号が割り当てられていない問題に`TEMP-000000-XXXXXX`/`TEMP-<bug番号>-XXXXXX`という一時的な名前を割り当てているが、これらは不安定（データベース更新時に変わり得る）だと明記されており、[Debian自身が外部参照での使用を推奨していない](https://security-tracker.debian.org/tracker/data/fake-names)。ここでのDebian/Ubuntuカバレッジは OSV 経由（OSVはDebian Security TrackerのデータをCVEエントリに紐づけて取り込む）のため、`TEMP-*`という名前しか持たずCVE番号が無い問題は検索対象にならない。これはfetcherの欠陥ではなく意図的なスコープの境界——対応するにはOSVを介さずDebianのトラッカーデータを直接取り込む必要がある。
