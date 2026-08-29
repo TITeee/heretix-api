@@ -131,6 +131,25 @@ model OSVAffectedPackage {
   @@index([vulnerabilityId])
 }
 
+// Debian builds many binary packages from one source package (e.g. source
+// "gnupg2" -> binaries "gpgv"/"gpg"/"gpgsm"/...). OSVAffectedPackage.packageName
+// for Debian ecosystems is keyed by source name (matching OSV's own
+// pkg:deb/debian/<name>?arch=source convention), but installed packages are
+// reported by binary name -- this table resolves binary -> source per suite
+// so searchOSV() can bridge the two. See debian-sources-fetcher.ts.
+model DebianSourcePackage {
+  id         String   @id @default(cuid())
+
+  ecosystem  String   // "Debian:12"
+  binaryName String
+  sourceName String
+
+  updatedAt  DateTime @updatedAt
+
+  @@unique([ecosystem, binaryName])
+  @@index([ecosystem, binaryName])
+}
+
 // ─── NVD ─────────────────────────────────────────────────────
 
 model NVDVulnerability {

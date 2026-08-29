@@ -30,6 +30,7 @@ import { TomcatFetcher } from '../worker/tomcat-fetcher.js';
 import { NginxFetcher } from '../worker/nginx-fetcher.js';
 import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
+import { importDebianSourceMappings } from '../worker/debian-sources-fetcher.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -90,6 +91,15 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-zabbix',       label: 'Zabbix',             cron: '15 14 * * *', run: () => runAdvisory('advisory-zabbix', new ZabbixFetcher()) },
   { source: 'advisory-tomcat',       label: 'Tomcat',             cron: '30 14 * * *', run: () => runAdvisory('advisory-tomcat', new TomcatFetcher()) },
   { source: 'advisory-nginx',        label: 'Nginx',              cron: '45 14 * * *', run: () => runAdvisory('advisory-nginx', new NginxFetcher()) },
+  {
+    source: 'debian-source-packages',
+    label: 'Debian Source Packages',
+    cron: '0 7 * * 0',
+    run: async () => {
+      const result = await importDebianSourceMappings();
+      return { updated: result.updated };
+    },
+  },
   {
     source: 'osv-mal',
     label: 'OSV / Malware',

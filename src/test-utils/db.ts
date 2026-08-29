@@ -9,7 +9,7 @@ export async function resetDb(): Promise<void> {
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE "Vulnerability", "OSVVulnerability", "OSVAffectedPackage",
       "NVDVulnerability", "NVDAffectedPackage", "AdvisoryVulnerability",
-      "AdvisoryAffectedProduct", "CollectionJob", "JobConfig"
+      "AdvisoryAffectedProduct", "CollectionJob", "JobConfig", "DebianSourcePackage"
     RESTART IDENTITY CASCADE
   `);
 }
