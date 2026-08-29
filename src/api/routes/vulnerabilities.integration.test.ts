@@ -103,4 +103,32 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     const atFixedBoundary = await search(app, 'package=range-pkg&version=2.0.0&ecosystem=npm');
     expect(atFixedBoundary.body.results).toHaveLength(0);
   });
+
+  it('resolves a Debian binary package name to its source name via DebianSourcePackage', async () => {
+    // OSVAffectedPackage is keyed by the Debian source name ("gnupg2"), but
+    // the query below uses the installed binary name ("gpgv") -- the two
+    // differ because Debian builds many binaries from one source package.
+    const master = await prisma.vulnerability.create({ data: { osvId: 'GHSA-debian-0001' } });
+    const osv = await prisma.oSVVulnerability.create({
+      data: { osvId: 'GHSA-debian-0001', ecosystem: 'Debian:12', source: 'osv', rawData: {}, masterVulnId: master.id },
+    });
+    await prisma.oSVAffectedPackage.create({
+      data: { vulnerabilityId: osv.id, ecosystem: 'Debian:12', packageName: 'gnupg2', affectedVersions: ['2.2.40-1.1'] },
+    });
+    await prisma.debianSourcePackage.create({
+      data: { ecosystem: 'Debian:12', binaryName: 'gpgv', sourceName: 'gnupg2' },
+    });
+
+    const byBinaryName = await search(app, 'package=gpgv&version=2.2.40-1.1&ecosystem=Debian:12');
+    expect(byBinaryName.body.results).toHaveLength(1);
+    expect(byBinaryName.body.results[0].externalId).toBe('GHSA-debian-0001');
+
+    // The source name itself must still work directly (no mapping needed).
+    const bySourceName = await search(app, 'package=gnupg2&version=2.2.40-1.1&ecosystem=Debian:12');
+    expect(bySourceName.body.results).toHaveLength(1);
+
+    // An unrelated binary name with no mapping row must not match anything.
+    const noMapping = await search(app, 'package=unrelated-binary&version=2.2.40-1.1&ecosystem=Debian:12');
+    expect(noMapping.body.results).toHaveLength(0);
+  });
 });

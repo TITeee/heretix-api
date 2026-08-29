@@ -98,6 +98,25 @@ function masterToResult(
 
 // ─── Search Functions ─────────────────────────────────────────
 
+/**
+ * Debian builds many binary packages from one source package (e.g. source
+ * "gnupg2" -> binaries "gpgv"/"gpg"/"gpgsm"/...). OSVAffectedPackage.packageName
+ * for Debian ecosystems is keyed by source name, but a queried packageName is
+ * whatever name is actually installed -- usually the binary name. Resolves it
+ * to the source name via DebianSourcePackage (populated by
+ * debian-sources-fetcher.ts) so both names can be searched; returns null when
+ * there's no mapping (not a Debian ecosystem, or the name already is the
+ * source name, or the mapping hasn't been imported).
+ */
+async function resolveDebianSourceName(ecosystem: string, packageName: string): Promise<string | null> {
+  if (!ecosystem.startsWith('Debian:')) return null;
+  const row = await prisma.debianSourcePackage.findUnique({
+    where: { ecosystem_binaryName: { ecosystem, binaryName: packageName } },
+    select: { sourceName: true },
+  });
+  return row?.sourceName ?? null;
+}
+
 /** Search master via OSV table */
 async function searchOSV(
   packageName: string,
@@ -107,6 +126,8 @@ async function searchOSV(
 ): Promise<VulnerabilityResult[]> {
   const isDistro = ecosystem ? isDistroEcosystem(ecosystem) : false;
   const useDpkgRangeFallback = !!(ecosystem && version && isDpkgStyleDistro(ecosystem));
+  const debianSourceName = ecosystem ? await resolveDebianSourceName(ecosystem, packageName) : null;
+  const packageNameFilter = debianSourceName ? { in: [packageName, debianSourceName] } : packageName;
 
   const ecosystemFilter = ecosystem
     ? { ecosystem: { startsWith: ecosystem } }
@@ -140,7 +161,7 @@ async function searchOSV(
   }
 
   const rows = await prisma.oSVAffectedPackage.findMany({
-    where: { ...ecosystemFilter, packageName, ...versionFilter },
+    where: { ...ecosystemFilter, packageName: packageNameFilter, ...versionFilter },
     include: {
       vulnerability: {
         select: {
