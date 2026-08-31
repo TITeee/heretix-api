@@ -547,6 +547,10 @@ const suggestSchema = z.object({
   limit: z.coerce.number().int().positive().max(50).default(10),
 });
 
+const cpeForCveSchema = z.object({
+  product: z.string().min(1),
+});
+
 /**
  * Package-name autocomplete for the "Package" search mode. NVD's packageName
  * is the raw CPE <product> identifier ("http_server", not "Apache HTTP
@@ -578,11 +582,67 @@ async function suggestPackageNames(prefix: string, ecosystem: string | undefined
   return [...names].sort((a, b) => a.localeCompare(b)).slice(0, limit);
 }
 
+// NVD's <product> CPE token is lowercase/underscore ("firepower_management_center"),
+// while a vendor advisory page spells the same product with spaces/parens
+// ("Firepower Management Center") — this covers the mechanical part of that gap.
+// Anything that needs more than mechanical normalization (renames, multiple
+// historical spellings) belongs in PRODUCT_ALIASES instead of guessed here.
+function candidateProductTokens(product: string): string[] {
+  const lower = product.toLowerCase();
+  const mechanical = lower.replace(/[\s/-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+  return [...new Set([...expandProductAliases(product), mechanical, lower])];
+}
+
+/**
+ * Reverse-resolves a CVE + a vendor-bulletin product label (e.g. "PAN-OS") to
+ * the CPE vendor:product NVD's own analysts already assigned to that specific
+ * CVE, instead of maintaining a separate static product→CPE table — such a
+ * table can't be verified without hand-checking every entry against the NVD
+ * CPE dictionary, and would still drift as NVD's own naming does (e.g. legacy
+ * "dell:sonicwall_sonicos" vs current "sonicwall:sonicos" for the same product).
+ *
+ * A CVE from a shared component can carry CPEs for multiple, unrelated vendors
+ * (observed in ~34% of advisory-linked CVEs) — so this narrows to the caller's
+ * own product label rather than returning an arbitrary row, and returns nothing
+ * if that label still resolves to more than one distinct vendor:product pairing.
+ */
+async function findCpeForCve(cveId: string, product: string): Promise<{ cpe: string; vendor: string; product: string } | null> {
+  const vuln = await prisma.nVDVulnerability.findUnique({ where: { cveId }, select: { id: true } });
+  if (!vuln) return null;
+
+  const rows = await prisma.nVDAffectedPackage.findMany({
+    where: { vulnerabilityId: vuln.id },
+    select: { cpe: true, vendor: true, packageName: true },
+  });
+
+  const candidates = new Set(candidateProductTokens(product));
+  const matched = rows.filter((r): r is typeof r & { vendor: string } => !!r.vendor && candidates.has(r.packageName));
+
+  const distinct = new Map(matched.map(r => [`${r.vendor}:${r.packageName}`, r]));
+  if (distinct.size !== 1) return null;
+
+  const row = [...distinct.values()][0];
+  const parsed = row.cpe ? parseCPE(row.cpe) : null;
+  return {
+    cpe: `cpe:2.3:${parsed?.part ?? 'a'}:${row.vendor}:${row.packageName}:*:*:*:*:*:*:*:*`,
+    vendor: row.vendor,
+    product: row.packageName,
+  };
+}
+
 export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
   fastify.get('/vulnerabilities/suggest', async (request) => {
     const params = suggestSchema.parse(request.query);
     const suggestions = await suggestPackageNames(params.q, params.ecosystem, params.limit);
     return { suggestions };
+  });
+
+  fastify.get('/vulnerabilities/:id/cpe', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { product } = cpeForCveSchema.parse(request.query);
+    const result = await findCpeForCve(id, product);
+    if (!result) return reply.status(404).send({ error: 'No matching CPE found for this CVE and product' });
+    return result;
   });
 
   fastify.get('/vulnerabilities/search/cpe', async (request, reply) => {
