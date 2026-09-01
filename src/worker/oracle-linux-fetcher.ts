@@ -3,7 +3,7 @@ import { createRequire } from 'module';
 import { XMLParser } from 'fast-xml-parser';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
-import { inferBareVersionStart, moduleStreamVersionStart } from './advisory-helpers.js';
+import { extractOsMajorVersion, inferBareVersionStart, moduleStreamVersionStart } from './advisory-helpers.js';
 
 // bzip2 is a CommonJS module — use createRequire in ESM context
 const require = createRequire(import.meta.url);
@@ -300,8 +300,15 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
           : undefined;
         const versionStart = moduleVersionStart ?? inferBareVersionStart(parsed.packageName, parsed.versionEnd);
 
+        // This feed covers every Oracle Linux release in one download (see the
+        // constructor), so — unlike RedHatFetcher, which knows its release from
+        // which file it requested — the release has to come from each row's own
+        // release string. A row search-helpers.ts's per-release lookup can't
+        // reach falls back to the bare, unqualified vendor rather than being
+        // dropped, same as the pre-2026-09-01 behavior for every row.
+        const major = extractOsMajorVersion(parsed.versionEnd);
         affectedProducts.push({
-          vendor: 'oracle-linux',
+          vendor: major ? `oracle-linux-${major}` : 'oracle-linux',
           product: parsed.packageName,
           versionStart,
           versionEnd: parsed.versionEnd,

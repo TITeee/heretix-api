@@ -150,6 +150,44 @@ function twoComponentMajor(versionEnd: string, prefix?: string): string | undefi
   return prefix ? `${prefix}.${m[1]}` : m[1];
 }
 
+/**
+ * Extracts the OS major version (e.g. "9") from an RPM release string, using
+ * the ".elN" marker every RHEL/Oracle Linux build carries in its release field
+ * (Oracle Linux's own ksplice-tagged releases included, e.g.
+ * "2.34-274.0.1.ksplice1.el9_8" -- the marker sits after "ksplice1", not
+ * necessarily right after the version, so this scans for it anywhere rather
+ * than anchoring right after the last "-").
+ *
+ * "el" isn't required to sit right after a ".": DNF module-stream builds
+ * write it after a "+" instead, e.g. "8.0.0-10.0.1.module+el8.7.0+20875+...".
+ * The lookbehind below accepts either (or start-of-string) by rejecting only
+ * an alphanumeric character immediately before "el", so it doesn't also match
+ * "el" as part of an unrelated word. The digits must not be followed by
+ * another digit (so "el10" doesn't get read as "1"), but otherwise anything
+ * can follow them -- not just "." or "_" or end-of-string. Oracle Linux's UEK
+ * (Unbreakable Enterprise Kernel) packages append a bare "uek" suffix with no
+ * separator at all, e.g. "5.15.0-323.211.3.3.el9uek".
+ *
+ * Both shapes were confirmed live to each be a large share of Oracle Linux's
+ * OVAL data (UEK kernel-uek* packages over half of it, DNF module-stream
+ * builds a large part of the rest) -- a stricter boundary or "." requirement
+ * here left the vast majority of real rows unqualified, defeating the fix for
+ * most of what it was meant to cover.
+ *
+ * Needed because OracleLinuxFetcher pulls one feed covering every OS release
+ * at once (unlike RedHatFetcher, one feed request per release) -- there is no
+ * single "which major version is this fetch for" to stamp on every row, so
+ * each criterion's own release string is the only per-row signal available.
+ * Every AdvisoryAffectedProduct row needs a version-qualified vendor
+ * ("oracle-linux-9") for search-helpers.ts's per-release lookup to work at
+ * all; a row this can't extract a version from falls back to the bare,
+ * unqualified vendor in the caller, same as the pre-2026-09-01 behavior for
+ * every row.
+ */
+export function extractOsMajorVersion(versionEnd: string): string | undefined {
+  return versionEnd.match(/(?<![a-zA-Z0-9])el(\d+)(?!\d)/)?.[1];
+}
+
 export function inferBareVersionStart(product: string, versionEnd: string): string | undefined {
   if (!BARE_ROW_FALLBACK_PRODUCTS.has(product)) return undefined;
 

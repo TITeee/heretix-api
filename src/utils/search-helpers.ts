@@ -99,12 +99,13 @@ export function versionRangeWhere(versionInt: bigint) {
 // Prefixes for distro-specific ecosystems.
 // These use dpkg/apk version strings and require a different matching strategy
 // (exact match against the versions list) instead of upstream semver range comparison.
-// 'oracle-linux' has no colon-suffixed major version (unlike 'Red Hat:9') — it's
-// matched as a bare, version-less ecosystem value per its documented usage.
-// 'Oracle Linux:' is kept alongside it so this list stays consistent with
-// RPM_ECOSYSTEM_VENDOR's alias — without it, that ecosystem form would route through
-// searchAdvisoryRpm() (correct) but also searchNVD() (unlike every other RPM distro
-// here, which skips NVD once isDistro is true), reintroducing name-collision noise.
+// 'Oracle Linux:' is heretix-cli's current, version-qualified form (restored
+// 2026-09-01 — see rpmAdvisoryVendor() below for why the version matters).
+// 'oracle-linux' (bare) is kept alongside it for the legacy, version-less form
+// heretix-cli sent from 2026 until then — without it, that form would route
+// through searchAdvisoryRpm() (correct) but also searchNVD() (unlike every
+// other RPM distro here, which skips NVD once isDistro is true), reintroducing
+// name-collision noise.
 // 'Rocky Linux:' (not 'Rocky:' -- OSV's own ecosystem string is "Rocky Linux:8",
 // confirmed against a live OSV entry; the old 'Rocky:' value here never matched
 // anything). No dedicated OVAL fetcher exists for it, so it's covered purely
@@ -172,33 +173,37 @@ export function normalizeEcosystem(eco: string | undefined): string | undefined 
 // approximation used elsewhere (see AdvisoryAffectedProduct.versionEnd — this
 // reads that same string column directly, no precomputed/backfilled data needed).
 // Maps ecosystem prefix (colon-suffixed major version, e.g. "Red Hat:9") →
-// AdvisoryAffectedProduct.vendor value.
-//
-// 'Oracle Linux' is kept here too, as an alias of the canonical bare
-// 'oracle-linux' value below. heretix-cli briefly emitted "Oracle Linux:N" for
-// this ecosystem (2026-04-15 to 2026-08, under the mistaken assumption that all
-// RPM distros shared one prefix+version convention) before being reverted to
-// match this API's actual, documented format — any client or archived data
-// still using that form falls through silently to the lossy BigInt path
-// (searchAdvisory) without this entry, exactly the bug that alias exists to
-// prevent from recurring.
+// AdvisoryAffectedProduct.vendor *base* — searchAdvisoryRpm() looks up by
+// (product, vendor) alone, so the base by itself would compare an installed
+// package against every OS major release's fix versions at once. An RHEL10 or
+// OL10 fix numerically higher than an installed RHEL9/OL9 version then reads
+// as "not yet fixed" even when the correct release's advisory is long
+// satisfied (found 2026-09-01 comparing Oracle Linux 9 results against
+// Trivy — roughly a third of an OL9 image's packages false-positived this
+// way). rpmAdvisoryVendor() below appends the ecosystem's own major version to
+// this base, and RedHatFetcher/OracleLinuxFetcher write that same
+// "<base>-<major>" form into every row's vendor column, so the lookup only
+// ever sees rows from the matching release.
 const RPM_ECOSYSTEM_VENDOR: Record<string, string> = {
   'Red Hat': 'red-hat',
   'Oracle Linux': 'oracle-linux',
 };
-// Ecosystems matched as an exact, version-less value instead of a colon-suffixed prefix.
-// This is the canonical form heretix-cli sends; see the alias above for the
-// no-longer-emitted "Oracle Linux:N" form.
-const RPM_ECOSYSTEM_VENDOR_EXACT: Record<string, string> = {
-  'oracle-linux': 'oracle-linux',
-};
 
 export function rpmAdvisoryVendor(ecosystem: string): string | null {
-  const exact = RPM_ECOSYSTEM_VENDOR_EXACT[ecosystem];
-  if (exact) return exact;
-  for (const [prefix, vendor] of Object.entries(RPM_ECOSYSTEM_VENDOR)) {
-    if (ecosystem.startsWith(prefix + ':')) return vendor;
+  for (const [prefix, vendorBase] of Object.entries(RPM_ECOSYSTEM_VENDOR)) {
+    if (ecosystem.startsWith(prefix + ':')) {
+      const major = ecosystem.slice(prefix.length + 1);
+      return major ? `${vendorBase}-${major}` : vendorBase;
+    }
   }
+  // Legacy bare "oracle-linux" — what heretix-cli sent from 2026 until
+  // 2026-09-01, before this file's vendor values carried a version at all.
+  // Kept matching the bare vendor rows written under that same old scheme
+  // (including rows OracleLinuxFetcher's extractOsMajorVersion() couldn't
+  // parse a release from), rather than losing them outright; a client still
+  // sending this form gets back the same lossy, version-blind matching it
+  // always did, not zero results.
+  if (ecosystem === 'oracle-linux') return 'oracle-linux';
   return null;
 }
 

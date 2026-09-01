@@ -1,5 +1,47 @@
 import { describe, it, expect } from 'vitest';
-import { inferBareVersionStart, moduleStreamVersionStart } from './advisory-helpers.js';
+import { extractOsMajorVersion, inferBareVersionStart, moduleStreamVersionStart } from './advisory-helpers.js';
+
+describe('extractOsMajorVersion', () => {
+  it('extracts the major version from a plain ".elN" release', () => {
+    expect(extractOsMajorVersion('1.5.1-28.0.1.el9')).toBe('9');
+  });
+
+  it('extracts the major version from a ".elN_M" point-release suffix', () => {
+    expect(extractOsMajorVersion('1.5.1-25.0.1.el9_6')).toBe('9');
+  });
+
+  it('extracts the major version past a ksplice tag, not right after the version', () => {
+    // Oracle Linux ksplice-tracked fixes put "ksplice1" between the version
+    // and the ".elN" marker, e.g. glibc 2.34-274.0.1.ksplice1.el9_8.
+    expect(extractOsMajorVersion('2.34-274.0.1.ksplice1.el9_8')).toBe('9');
+  });
+
+  it('extracts a two-digit major version', () => {
+    expect(extractOsMajorVersion('9.5-8.0.1.el10_2')).toBe('10');
+  });
+
+  it('extracts the major version when a suffix follows with no separator', () => {
+    // Oracle Linux's UEK (Unbreakable Enterprise Kernel) packages: confirmed
+    // live to be over half of all Oracle Linux OVAL rows, almost entirely
+    // kernel-uek* packages in this exact shape.
+    expect(extractOsMajorVersion('5.15.0-323.211.3.3.el9uek')).toBe('9');
+  });
+
+  it('extracts the major version when "el" follows a "+" instead of a "."', () => {
+    // DNF module-stream builds: confirmed live to be a large share of the
+    // remaining Oracle Linux OVAL rows after the UEK fix above, e.g.
+    // libvirt 8.0.0-10.0.1.module+el8.7.0+20875+5dd40464.
+    expect(extractOsMajorVersion('8.0.0-10.0.1.module+el8.7.0+20875+5dd40464')).toBe('8');
+  });
+
+  it('does not match "el" embedded in an unrelated word', () => {
+    expect(extractOsMajorVersion('novel123-1')).toBeUndefined();
+  });
+
+  it('returns undefined when no ".elN" marker is present', () => {
+    expect(extractOsMajorVersion('1.2.3-1')).toBeUndefined();
+  });
+});
 
 describe('moduleStreamVersionStart', () => {
   it('appends ".0" to a plain integer stream label', () => {
