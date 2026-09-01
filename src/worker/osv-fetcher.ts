@@ -251,7 +251,15 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
     responseData = response.data;
   } catch (err) {
     if (axios.isAxiosError(err) && err.response?.status === 404) {
-      logger.warn({ ecosystem }, 'No GCS bucket found for ecosystem, skipping delta update');
+      // registry.ts's osvBucketName() is responsible for mapping a DB
+      // ecosystem value to a bucket name that actually exists -- a 404 here
+      // means that mapping is missing or wrong for this ecosystem (the
+      // AlmaLinux/Rocky Linux case: their per-version DB values 404 against
+      // OSV's shared, version-less bucket and silently returned a fake
+      // "0 fetched" success every day for a week before this was caught).
+      // Log at error, not warn, so a still-unmapped ecosystem doesn't go
+      // unnoticed the same way again.
+      logger.error({ ecosystem, url }, 'No GCS bucket found for ecosystem -- check osvBucketName() in registry.ts, skipping delta update');
       return { total: 0, skipped: 0, succeeded: 0, inserted: 0, updated: 0, failed: 0 };
     }
     throw err;
