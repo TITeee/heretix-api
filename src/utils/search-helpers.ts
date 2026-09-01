@@ -105,7 +105,15 @@ export function versionRangeWhere(versionInt: bigint) {
 // RPM_ECOSYSTEM_VENDOR's alias — without it, that ecosystem form would route through
 // searchAdvisoryRpm() (correct) but also searchNVD() (unlike every other RPM distro
 // here, which skips NVD once isDistro is true), reintroducing name-collision noise.
-export const DISTRO_ECOSYSTEM_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:', 'AlmaLinux:', 'Rocky:', 'Red Hat:', 'CentOS:', 'Oracle Linux:', 'oracle-linux'];
+// 'Rocky Linux:' (not 'Rocky:' -- OSV's own ecosystem string is "Rocky Linux:8",
+// confirmed against a live OSV entry; the old 'Rocky:' value here never matched
+// anything). No dedicated OVAL fetcher exists for it, so it's covered purely
+// through OSV like AlmaLinux, not through a RPM_ECOSYSTEM_VENDOR entry.
+// 'CentOS' has no entry here: OSV has no CentOS ecosystem at all (confirmed via
+// its published ecosystem list and a live 404), and there's no dedicated fetcher
+// either, so a 'CentOS:' prefix here would only ever suppress a genuine NVD
+// centos-vendor CPE match for nothing in return.
+export const DISTRO_ECOSYSTEM_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:', 'AlmaLinux:', 'Rocky Linux:', 'Red Hat:', 'Oracle Linux:', 'oracle-linux'];
 
 export function isDistroEcosystem(eco: string): boolean {
   return DISTRO_ECOSYSTEM_PREFIXES.some(p => eco.startsWith(p));
@@ -121,6 +129,21 @@ const DPKG_STYLE_DISTRO_PREFIXES = ['Ubuntu:', 'Debian:', 'Alpine:'];
 
 export function isDpkgStyleDistro(eco: string): boolean {
   return DPKG_STYLE_DISTRO_PREFIXES.some(p => eco.startsWith(p));
+}
+
+// RPM-based distros whose OSV entries have the same "range-only, no enumerated
+// versions list" shape as the dpkg-style ones above (confirmed against live
+// data: every AlmaLinux:9 row has affectedVersions=[] and only
+// introducedVersion/fixedVersion) -- exact-match-only search-time filtering
+// silently returns nothing for these ecosystems. 'Red Hat:' is included even
+// though it currently has no OSV data at all (its vulnerabilities come from
+// the dedicated OVAL fetcher via searchAdvisoryRpm instead) because
+// searchOSV() runs unconditionally regardless of ecosystem, so this would
+// resurface the instant OSV data for it exists.
+const RPM_STYLE_DISTRO_PREFIXES = ['AlmaLinux:', 'Rocky Linux:', 'Red Hat:'];
+
+export function isRpmStyleOsvDistro(eco: string): boolean {
+  return RPM_STYLE_DISTRO_PREFIXES.some(p => eco.startsWith(p));
 }
 
 // Language package ecosystems (npm, PyPI, Go, etc.) are fully covered by OSV.
@@ -205,6 +228,32 @@ export function matchesDpkgStyleVersion(
   if (row.introducedVersion && compareDpkgVersions(version, row.introducedVersion) < 0) return false;
   if (row.fixedVersion && compareDpkgVersions(version, row.fixedVersion) >= 0) return false;
   if (row.lastAffectedVersion && compareDpkgVersions(version, row.lastAffectedVersion) > 0) return false;
+
+  return true;
+}
+
+/**
+ * Same shape as matchesDpkgStyleVersion() (enumerated `versions` list first,
+ * then a continuous introduced/fixed/lastAffected range), but for RPM-based
+ * OSV ecosystems (AlmaLinux, Rocky Linux, Red Hat) -- uses compareRpmVersions()
+ * (rpmvercmp) rather than compareDpkgVersions() (dpkg's verrevcmp), since the
+ * two algorithms disagree on things like tilde handling and can't be
+ * substituted for each other. Distinct from matchesRpmVersionRange() below,
+ * which compares against AdvisoryAffectedProduct's versionStart/versionEnd
+ * shape (a single exclusive upper bound), not OSV's three-field range.
+ */
+export function matchesRpmStyleOsvVersion(
+  row: { affectedVersions: string[]; introducedVersion: string | null; fixedVersion: string | null; lastAffectedVersion: string | null },
+  version: string,
+): boolean {
+  if (row.affectedVersions.includes(version)) return true;
+
+  const hasRange = row.introducedVersion !== null || row.fixedVersion !== null || row.lastAffectedVersion !== null;
+  if (!hasRange) return false;
+
+  if (row.introducedVersion && compareRpmVersions(version, row.introducedVersion) < 0) return false;
+  if (row.fixedVersion && compareRpmVersions(version, row.fixedVersion) >= 0) return false;
+  if (row.lastAffectedVersion && compareRpmVersions(version, row.lastAffectedVersion) > 0) return false;
 
   return true;
 }

@@ -8,7 +8,9 @@ import {
   normalizeEcosystem,
   rpmAdvisoryVendor,
   matchesDpkgStyleVersion,
+  matchesRpmStyleOsvVersion,
   matchesRpmVersionRange,
+  isRpmStyleOsvDistro,
   buildAliases,
   type VulnerabilityResult,
 } from './search-helpers.js';
@@ -147,8 +149,16 @@ describe('isDistroEcosystem', () => {
     expect(isDistroEcosystem('Oracle Linux:9')).toBe(true);
   });
 
+  it('recognizes "Rocky Linux:N" (not "Rocky:" -- that value never matched OSV\'s own ecosystem string)', () => {
+    expect(isDistroEcosystem('Rocky Linux:8')).toBe(true);
+  });
+
   it('rejects language ecosystems', () => {
     expect(isDistroEcosystem('npm')).toBe(false);
+  });
+
+  it('rejects CentOS -- no OSV ecosystem or dedicated fetcher exists for it', () => {
+    expect(isDistroEcosystem('CentOS:7')).toBe(false);
   });
 });
 
@@ -163,6 +173,19 @@ describe('isDpkgStyleDistro', () => {
     expect(isDpkgStyleDistro('Red Hat:9')).toBe(false);
     expect(isDpkgStyleDistro('oracle-linux')).toBe(false);
     expect(isDpkgStyleDistro('npm')).toBe(false);
+  });
+});
+
+describe('isRpmStyleOsvDistro', () => {
+  it('recognizes AlmaLinux, Rocky Linux, and Red Hat', () => {
+    expect(isRpmStyleOsvDistro('AlmaLinux:9')).toBe(true);
+    expect(isRpmStyleOsvDistro('Rocky Linux:8')).toBe(true);
+    expect(isRpmStyleOsvDistro('Red Hat:9')).toBe(true);
+  });
+
+  it('rejects dpkg-based distros and non-distro ecosystems', () => {
+    expect(isRpmStyleOsvDistro('Debian:12')).toBe(false);
+    expect(isRpmStyleOsvDistro('npm')).toBe(false);
   });
 });
 
@@ -282,6 +305,48 @@ describe('matchesDpkgStyleVersion', () => {
     expect(matchesDpkgStyleVersion(
       row({ introducedVersion: '0', fixedVersion: '1.0' }), '1.0~rc1',
     )).toBe(true);
+  });
+});
+
+describe('matchesRpmStyleOsvVersion', () => {
+  // OSVAffectedPackage column shape; only the fields this predicate reads.
+  const row = (o: Partial<Parameters<typeof matchesRpmStyleOsvVersion>[0]> = {}) => ({
+    affectedVersions: [],
+    introducedVersion: null,
+    fixedVersion: null,
+    lastAffectedVersion: null,
+    ...o,
+  });
+
+  it('matches a range-only row (no enumerated list) — every AlmaLinux/Rocky Linux OSV row has this shape', () => {
+    // Real AlmaLinux:9 data: dbus, introducedVersion="0", fixedVersion="1:1.12.20-7.el9_1".
+    expect(matchesRpmStyleOsvVersion(
+      row({ introducedVersion: '0', fixedVersion: '1:1.12.20-7.el9_1' }), '1:1.12.20-6.el9_1',
+    )).toBe(true);
+  });
+
+  it('treats fixedVersion as an exclusive upper bound', () => {
+    const r = row({ introducedVersion: '0', fixedVersion: '1:1.12.20-7.el9_1' });
+    expect(matchesRpmStyleOsvVersion(r, '1:1.12.20-7.el9_1')).toBe(false);
+    expect(matchesRpmStyleOsvVersion(r, '1:1.12.20-8.el9_1')).toBe(false);
+  });
+
+  it('matches a version present in the enumerated affectedVersions list', () => {
+    expect(matchesRpmStyleOsvVersion(
+      row({ affectedVersions: ['1.12.20-6.el9'] }), '1.12.20-6.el9',
+    )).toBe(true);
+  });
+
+  it('uses compareRpmVersions, not compareDpkgVersions — the two disagree on "~"', () => {
+    // dpkg's verrevcmp special-cases "~" to sort before everything, so
+    // "1.0~rc1" < "1.0" there; this codebase's rpmvercmp has no such special
+    // case, so "~" is skipped like any other non-alphanumeric separator and
+    // "1.0~rc1" compares as "1.0" + digit "1" > "1.0". Substituting
+    // compareDpkgVersions() here by mistake would flip this row from
+    // "already fixed" to "still affected".
+    expect(matchesRpmStyleOsvVersion(
+      row({ introducedVersion: '0', fixedVersion: '1.0' }), '1.0~rc1',
+    )).toBe(false);
   });
 });
 

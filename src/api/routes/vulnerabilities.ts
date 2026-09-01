@@ -10,10 +10,12 @@ import {
   versionRangeWhere,
   isDistroEcosystem,
   isDpkgStyleDistro,
+  isRpmStyleOsvDistro,
   isLanguageEcosystem,
   normalizeEcosystem,
   rpmAdvisoryVendor,
   matchesDpkgStyleVersion,
+  matchesRpmStyleOsvVersion,
   matchesRpmVersionRange,
   buildAliases,
   DISTRO_ECOSYSTEM_PREFIXES,
@@ -126,6 +128,7 @@ async function searchOSV(
 ): Promise<VulnerabilityResult[]> {
   const isDistro = ecosystem ? isDistroEcosystem(ecosystem) : false;
   const useDpkgRangeFallback = !!(ecosystem && version && isDpkgStyleDistro(ecosystem));
+  const useRpmRangeFallback = !!(ecosystem && version && isRpmStyleOsvDistro(ecosystem));
   const debianSourceName = ecosystem ? await resolveDebianSourceName(ecosystem, packageName) : null;
   const packageNameFilter = debianSourceName ? { in: [packageName, debianSourceName] } : packageName;
 
@@ -139,11 +142,13 @@ async function searchOSV(
   let approximate: boolean;
   if (isDistro) {
     approximate = false;
-    // When the dpkg range fallback applies, the DB-level filter is dropped
-    // entirely (fetch by ecosystem+package only, then filter in JS below) —
-    // an exact-match-only DB filter would incorrectly exclude rows that only
-    // match via range.
-    versionFilter = version && !useDpkgRangeFallback ? { affectedVersions: { has: version } } : {};
+    // When a range fallback applies (dpkg- or RPM-style), the DB-level filter
+    // is dropped entirely (fetch by ecosystem+package only, then filter in JS
+    // below) — an exact-match-only DB filter would incorrectly exclude rows
+    // that only match via range.
+    versionFilter = version && !useDpkgRangeFallback && !useRpmRangeFallback
+      ? { affectedVersions: { has: version } }
+      : {};
   } else {
     approximate = versionInt === null;
     if (versionInt !== null) {
@@ -182,7 +187,9 @@ async function searchOSV(
 
   const filteredRows = useDpkgRangeFallback
     ? rows.filter(r => matchesDpkgStyleVersion(r, version!))
-    : rows;
+    : useRpmRangeFallback
+      ? rows.filter(r => matchesRpmStyleOsvVersion(r, version!))
+      : rows;
 
   return filteredRows.map(r => {
     const v = r.vulnerability;
