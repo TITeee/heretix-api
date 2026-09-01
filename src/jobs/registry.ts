@@ -31,6 +31,7 @@ import { NginxFetcher } from '../worker/nginx-fetcher.js';
 import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
 import { importDebianSourceMappings } from '../worker/debian-sources-fetcher.js';
+import { SHARED_BUCKET_ECOSYSTEMS, osvBucketName } from './osv-bucket.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -114,16 +115,16 @@ export const STATIC_JOBS: JobDefinition[] = [
 
 const STATIC_BY_SOURCE = new Map(STATIC_JOBS.map((j) => [j.source, j]));
 
-/** Build an on-demand JobDefinition for a single OSV ecosystem. */
-function osvEcosystemJob(ecosystem: string): JobDefinition {
-  const source = `osv-${ecosystem}`;
+/** Build an on-demand JobDefinition for a single OSV bucket (see osvBucketName()). */
+function osvEcosystemJob(bucketEcosystem: string): JobDefinition {
+  const source = `osv-${bucketEcosystem}`;
   return {
     source,
-    label: `OSV / ${ecosystem}`,
+    label: `OSV / ${bucketEcosystem}`,
     cron: '0 8 * * *',
     run: async () => {
       const since = await getDeltaCursor(source, OSV_DELTA_FALLBACK_MS);
-      const result = await importOSVEcosystemDelta(ecosystem, since);
+      const result = await importOSVEcosystemDelta(bucketEcosystem, since);
       return { fetched: result.total, inserted: result.inserted, updated: result.updated, failed: result.failed };
     },
   };
@@ -139,27 +140,32 @@ export async function resolveJob(source: string): Promise<JobDefinition | null> 
 
   // osv-<ecosystem> (osv-mal is static and handled above)
   if (source.startsWith('osv-')) {
-    const ecosystem = source.slice(4);
-    const exists = await prisma.oSVVulnerability.findFirst({
-      where: { ecosystem },
-      select: { id: true },
-    });
-    if (exists) return osvEcosystemJob(ecosystem);
+    const bucketEcosystem = source.slice(4);
+    // A shared-bucket job (e.g. "osv-AlmaLinux") is valid as long as any
+    // version under it exists, not just an exact "AlmaLinux" match.
+    const where = SHARED_BUCKET_ECOSYSTEMS.includes(bucketEcosystem)
+      ? { ecosystem: { startsWith: bucketEcosystem } }
+      : { ecosystem: bucketEcosystem };
+    const exists = await prisma.oSVVulnerability.findFirst({ where, select: { id: true } });
+    if (exists) return osvEcosystemJob(bucketEcosystem);
   }
 
   return null;
 }
 
-/** Discover all OSV ecosystem jobs currently present in the DB. */
+/** Discover all OSV bucket jobs currently backed by data in the DB. */
 export async function listOsvEcosystemJobs(): Promise<JobDefinition[]> {
   const rows = await prisma.oSVVulnerability.groupBy({
     by: ['ecosystem'],
     where: { ecosystem: { not: null } },
   });
-  return rows
-    .map((r) => r.ecosystem)
-    .filter((e): e is string => !!e)
-    .map((e) => osvEcosystemJob(e));
+  const bucketNames = new Set(
+    rows
+      .map((r) => r.ecosystem)
+      .filter((e): e is string => !!e)
+      .map(osvBucketName),
+  );
+  return [...bucketNames].map((b) => osvEcosystemJob(b));
 }
 
 /** Display label for a source, used by the dashboard (single source of truth). */
