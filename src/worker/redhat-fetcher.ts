@@ -152,18 +152,22 @@ export function collectCriteria(node: unknown, moduleMajor: string | null = null
 
 export class RedHatFetcher implements AdvisoryFetcher {
   private readonly feedUrl: string;
+  // Written into every affectedProducts[].vendor below as "red-hat-<major>" —
+  // AdvisoryAffectedProduct is looked up by (product, vendor) with no other
+  // version column, so a vendor value that drops this major version (the bare
+  // "red-hat" this used until 2026-09-01) makes the lookup compare an
+  // installed package against every RHEL release's fix versions at once. An
+  // RHEL10 fix numerically higher than an installed RHEL9 version then reads
+  // as "not yet fixed" even when the correct RHEL9 advisory is long satisfied.
+  private readonly majorVersion: string;
 
   /**
    * @param variant - RHEL version: 'rhel9', 'rhel8'.
    *                  Maps to RHEL9/rhel-9.oval.xml.bz2, etc.
    */
   constructor(variant?: string) {
-    if (variant) {
-      const ver = variant.replace('rhel', '');
-      this.feedUrl = `${BASE_URL}/RHEL${ver}/rhel-${ver}.oval.xml.bz2`;
-    } else {
-      this.feedUrl = `${BASE_URL}/RHEL9/rhel-9.oval.xml.bz2`;
-    }
+    this.majorVersion = variant ? variant.replace('rhel', '') : '9';
+    this.feedUrl = `${BASE_URL}/RHEL${this.majorVersion}/rhel-${this.majorVersion}.oval.xml.bz2`;
   }
 
   source(): string {
@@ -276,7 +280,7 @@ export class RedHatFetcher implements AdvisoryFetcher {
         const versionStart = moduleVersionStart ?? inferBareVersionStart(parsed.packageName, parsed.versionEnd);
 
         affectedProducts.push({
-          vendor: 'red-hat',
+          vendor: `red-hat-${this.majorVersion}`,
           product: parsed.packageName,
           versionStart,
           versionEnd: parsed.versionEnd,

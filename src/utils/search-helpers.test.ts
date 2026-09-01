@@ -220,19 +220,24 @@ describe('normalizeEcosystem', () => {
 });
 
 describe('rpmAdvisoryVendor', () => {
-  it('maps Red Hat ecosystem to the red-hat vendor', () => {
-    expect(rpmAdvisoryVendor('Red Hat:9')).toBe('red-hat');
+  it('maps Red Hat ecosystem to a version-qualified vendor', () => {
+    // Not just "red-hat": AdvisoryAffectedProduct is looked up by (product,
+    // vendor) alone, so a version-less vendor would compare an installed
+    // RHEL9 package against every RHEL release's fix versions at once.
+    expect(rpmAdvisoryVendor('Red Hat:9')).toBe('red-hat-9');
+    expect(rpmAdvisoryVendor('Red Hat:8')).toBe('red-hat-8');
   });
 
-  it('maps the version-less oracle-linux ecosystem to the oracle-linux vendor', () => {
+  it('maps the version-qualified "Oracle Linux:N" ecosystem to a version-qualified vendor', () => {
+    expect(rpmAdvisoryVendor('Oracle Linux:9')).toBe('oracle-linux-9');
+  });
+
+  it('maps the legacy version-less oracle-linux ecosystem to the version-less vendor', () => {
+    // What heretix-cli sent from 2026 until 2026-09-01, before this file's
+    // vendor values carried a version at all. A client still emitting this
+    // form gets the same lossy, version-blind matching it always did, not
+    // zero results — see the row-level fallback in OracleLinuxFetcher.
     expect(rpmAdvisoryVendor('oracle-linux')).toBe('oracle-linux');
-  });
-
-  it('maps the prefixed "Oracle Linux:N" alias to the same oracle-linux vendor', () => {
-    // Older heretix-cli builds (750b4ee..reverted) sent this form; kept as an
-    // alias so a client still emitting it doesn't silently fall back to the
-    // lossy BigInt search path.
-    expect(rpmAdvisoryVendor('Oracle Linux:9')).toBe('oracle-linux');
   });
 
   it('returns null for non-RPM ecosystems', () => {
