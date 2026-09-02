@@ -59,6 +59,21 @@ describe('buildRhelComponentMap', () => {
     expect(buildRhelComponentMap(relationships).size).toBe(0);
   });
 
+  it('strips a ".src" suffix to recover the real installable package name (real CVE-2026-5958/sed shape)', () => {
+    // Some CVEs record only the source RPM ("sed.src") with no separate
+    // relationship for its own same-named binary output ("sed") -- nothing
+    // installed on a running system is ever named "foo.src", so left as-is
+    // this component could never match an SBOM's installed package list.
+    const relationships = [{
+      category: 'default_component_of',
+      full_product_name: { product_id: 'red_hat_enterprise_linux_9:sed.src' },
+      product_reference: 'sed.src',
+      relates_to_product_reference: 'red_hat_enterprise_linux_9',
+    }];
+    const map = buildRhelComponentMap(relationships);
+    expect(map.get('red_hat_enterprise_linux_9:sed.src')).toEqual({ major: '9', pkg: 'sed' });
+  });
+
   it('ignores RHEL majors outside the currently supported set (8, 9)', () => {
     // The archive tracks every RHEL major back to 5; only 8/9 match
     // RedHatFetcher's own supported variants and are worth the memory to
@@ -135,6 +150,36 @@ describe('extractUnfixedComponents', () => {
     const productStatus = {
       fixed: [],
       known_affected: ['red_hat_enterprise_linux_9:bzip2-libs', 'red_hat_enterprise_linux_9:bzip2-libs'],
+    };
+    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs' }]);
+  });
+
+  it('returns a component listed under under_investigation, not just known_affected (real CVE-2026-56403/expat shape)', () => {
+    // Red Hat hasn't confirmed impact either way yet -- narrower confidence
+    // than known_affected, but not "ruled out" either, so it's surfaced the
+    // same way rather than silently dropped pending a triage that may take a
+    // while to land.
+    const productStatus = {
+      fixed: [],
+      known_affected: [],
+      under_investigation: ['red_hat_enterprise_linux_9:bzip2-libs'],
+    };
+    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs' }]);
+  });
+
+  it('excludes an under_investigation id that also appears in fixed', () => {
+    const productStatus = {
+      fixed: ['red_hat_enterprise_linux_9:bzip2-libs'],
+      under_investigation: ['red_hat_enterprise_linux_9:bzip2-libs'],
+    };
+    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([]);
+  });
+
+  it('deduplicates a component listed in both known_affected and under_investigation', () => {
+    const productStatus = {
+      fixed: [],
+      known_affected: ['red_hat_enterprise_linux_9:bzip2-libs'],
+      under_investigation: ['red_hat_enterprise_linux_9:bzip2-libs'],
     };
     expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs' }]);
   });

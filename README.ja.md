@@ -845,7 +845,8 @@ pnpm import:redhat-vex                # CSAF VEXアーカイブ全体（RHEL 8/9
 
 - `archive_latest.txt` → 全Red Hat製品を含む単一の`.tar.zst`アーカイブをダウンロードし、メモリに全展開せずzstd展開・tar展開をストリーミング処理(アーカイブはRHEL 5まで遡る全メジャーバージョンを含み、展開後は1GBを大きく超える)
 - CVEごとのJSONドキュメントの`product_tree.relationships`(`category: "default_component_of"`が素の`red_hat_enterprise_linux_N`製品を指すもの)を辿り、複合プロダクトIDを(RHELメジャーバージョン, パッケージ名)に変換
-- `product_status.known_affected`にあり`product_status.fixed`に無いパッケージを抽出——Red Hat自身による「対象だが未修正」という明示的なシグナル
+- `product_status.known_affected`および`product_status.under_investigation`にあり`product_status.fixed`に無いパッケージを抽出——前者はRed Hat自身による「対象だが未修正」という明示的なシグナル、後者は「対象かどうかまだ未確定」(known_affectedより確度は低いが、対象外とも判明していないため同様に扱う)。いずれにせよOVALフィードは未解決のケースを一切表現できない
+- `.src`で終わる`product_reference`(ソースRPM。自身と同名のバイナリ出力に対する個別の関連付けが存在しないケースがある——実例: CVE-2026-5958/`sed`)はサフィックスを除去してインストール可能なパッケージ名を復元する。稼働中システムに`foo.src`という名前でインストールされることはあり得ないため、そのままでは絶対にSBOMと一致しない
 - RHEL 8/9(`RedHatFetcher`がサポートするバリアントと同じ)に限定——制限しない場合、アーカイブに含まれるサポート対象外の古いメジャーバージョン分がほぼそのまま件数に上乗せされ、フルアーカイブ処理時のOOMクラッシュの直接の原因になった
 - 該当パッケージはバージョン範囲情報を一切持たず`patchAvailable: false`として保存する——`matchesRpmVersionRange()`/`searchAdvisory()`(`src/utils/search-helpers.ts`、`src/api/routes/vulnerabilities.ts`)がこれを見て、クエリされたバージョンに関わらず無条件に一致させる（範囲が無く`patchAvailable`が`null`/未設定のままの通常行は、これまで通り一致しない。詳細は下記「高速バージョン検索の仕組み」参照）
 

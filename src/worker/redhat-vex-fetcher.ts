@@ -62,8 +62,20 @@ export function buildRhelComponentMap(relationships: unknown): Map<string, RhelC
 
     const fpn = r['full_product_name'] as Record<string, unknown> | undefined;
     const productId = fpn?.['product_id'];
-    const pkg = r['product_reference'];
-    if (typeof productId !== 'string' || typeof pkg !== 'string') continue;
+    const rawPkg = r['product_reference'];
+    if (typeof productId !== 'string' || typeof rawPkg !== 'string') continue;
+
+    // A source RPM ("sed.src") can be the *only* relationship Red Hat records
+    // for a component, with no separate entry for its own same-named binary
+    // package ("sed") -- observed live on CVE-2026-5958. Nothing installed on
+    // a running system is ever named "foo.src", so left as-is this component
+    // could never match an SBOM's installed package list. Stripping the
+    // suffix recovers the real, installable name for the common case (a
+    // single-binary-output source RPM); it isn't a full source->binary
+    // mapping and won't help a multi-output source RPM whose extra binaries
+    // aren't independently listed, but that's the same "no data recorded"
+    // gap this whole fetcher exists to narrow, not one it can close alone.
+    const pkg = rawPkg.endsWith('.src') ? rawPkg.slice(0, -'.src'.length) : rawPkg;
 
     map.set(productId, { major: majorMatch[1], pkg });
   }
@@ -73,10 +85,18 @@ export function buildRhelComponentMap(relationships: unknown): Map<string, RhelC
 
 /**
  * Components a CVE affects on some RHEL major version with no fix recorded
- * anywhere in this document. "known_affected" is Red Hat's own explicit "yes
- * this applies, no it's not resolved" signal -- unlike the OVAL patch feed
- * (redhat-fetcher.ts), which only ever publishes definitions for CVEs that
- * *have* a fix and has no representation for the unfixed case at all.
+ * anywhere in this document. Pulled from two of `product_status`'s buckets,
+ * both treated as an unconditional "affected, no fix" signal despite their
+ * different confidence levels:
+ *   - "known_affected": Red Hat's explicit "yes this applies, not resolved".
+ *   - "under_investigation": Red Hat hasn't yet confirmed impact one way or
+ *     the other (observed live on CVE-2026-56403/expat) -- narrower than
+ *     known_affected, but still not "ruled out", so it's surfaced the same
+ *     way rather than silently dropped pending a triage that may take a
+ *     while to land.
+ * Either way this is unlike the OVAL patch feed (redhat-fetcher.ts), which
+ * only ever publishes definitions for CVEs that *have* a fix and has no
+ * representation for an unresolved case at all.
  */
 export function extractUnfixedComponents(
   productStatus: unknown,
@@ -85,12 +105,13 @@ export function extractUnfixedComponents(
   if (!productStatus || typeof productStatus !== 'object') return [];
   const ps = productStatus as Record<string, unknown>;
 
-  const knownAffected = Array.isArray(ps['known_affected']) ? (ps['known_affected'] as unknown[]) : [];
-  const fixed = new Set(Array.isArray(ps['fixed']) ? (ps['fixed'] as unknown[]) : []);
+  const toArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+  const candidates = [...toArray(ps['known_affected']), ...toArray(ps['under_investigation'])];
+  const fixed = new Set(toArray(ps['fixed']));
 
   const seen = new Set<string>();
   const results: RhelComponent[] = [];
-  for (const productId of knownAffected) {
+  for (const productId of candidates) {
     if (typeof productId !== 'string' || fixed.has(productId)) continue;
     const component = componentMap.get(productId);
     if (!component) continue;
