@@ -792,6 +792,7 @@ pnpm import:oracle-linux ol8          # Oracle Linux 8 のみ
 - Oracle 公式 OVAL XML フィード（bzip2 圧縮）を利用（認証不要）
 - ELSA ID・深刻度・CVE・影響パッケージ/バージョン範囲を取得
 - RPM バージョン（例: `2.9.13-6.el9`）で範囲検索が可能
+- `versionEnd` は `epoch:version-release` の形式のまま epoch を保持して解析（epoch を除去すると、実際にepochを持つインストール済みビルドが epoch なし＝暗黙的に epoch 0 の修正行より新しいと誤判定され、そのパッケージの修正が静かに一致しなくなっていた。詳細は [`redhat-fetcher.test.ts`](src/worker/redhat-fetcher.test.ts) を参照）
 
 #### 検索例
 
@@ -817,6 +818,7 @@ pnpm import:redhat rhel8              # RHEL 8 のみ
 - Red Hat 公式 OVAL v2 XML フィード（bzip2 圧縮）を利用（認証不要）
 - RHSA/RHBA ID・深刻度・CVE リスト（CVSS3 スコア付き）・影響 RPM パッケージを解析
 - `rpmvercmp` アルゴリズムによる RPM バージョン範囲比較に対応（`src/utils/rpm-version.ts`）
+- `versionEnd` は上記 Oracle Linux と同様、epoch を保持したまま解析
 - `rhel9` / `rhel8` のバリアント別フィードに対応（RHEL 7 は対象外）
 - CentOS は公式 OVAL フィードが存在しないため対象外
 

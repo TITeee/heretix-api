@@ -548,7 +548,7 @@ Semantic versions are converted to integers for fast range queries:
 
 - Downloads Oracle's public OVAL XML feed (bzip2-compressed, no authentication required)
 - Parses ELSA advisories: severity, CVE list with CVSS scores, affected package/version pairs
-- Uses `criterion` comment text ("X is earlier than Y") to extract `versionEnd` (exclusive) per package
+- Uses `criterion` comment text ("X is earlier than Y") to extract `versionEnd` (exclusive) per package — the full `epoch:version-release` string, epoch included (a real, nonzero epoch dropped here made an installed build compare as newer than any epoch-omitted fix row regardless of its actual version, silently breaking every fix for that package; see [`redhat-fetcher.test.ts`](src/worker/redhat-fetcher.test.ts))
 - Per-variant feeds supported: `ol9`, `ol8`, `ol7`, etc.
 - RPM release numbers (e.g. `2.9.13-6.el9`) are handled by `normalizeVersion()` for accurate range queries
 

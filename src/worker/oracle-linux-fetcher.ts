@@ -30,10 +30,6 @@ export function mapSeverity(s?: unknown): string | undefined {
   return SEVERITY_MAP[str.toLowerCase()] ?? str.toUpperCase();
 }
 
-/** Strip RPM epoch prefix: "0:2.9.13-9.el9" → "2.9.13-9.el9" */
-export function stripEpoch(version: string): string {
-  return version.replace(/^\d+:/, '');
-}
 
 /**
  * Derive ELSA ID from definition id.
@@ -97,12 +93,20 @@ export function parseCveElement(cve: unknown): CveInfo | null {
  * "rsync is earlier than 0:3.2.5-3.el9_7.2" → { packageName: "rsync", versionEnd: "3.2.5-3.el9_7.2" }
  * Returns null for non-version criteria ("is signed with", "is installed", etc.)
  */
+// versionEnd is kept as the full "epoch:version-release" string the OVAL feed
+// writes ("0:3.2.5-3.el9_7.2" when a package has no real epoch, RPM's own
+// convention for "none" is a literal number here, never a placeholder like the
+// "(none)" rpm(8) itself prints -- see oracle-linux-fetcher.test.ts). Stripping
+// it (as this used to) drops the single highest-precedence field
+// compareRpmVersions() compares: an installed package with a real epoch reads
+// as newer than *any* epoch-omitted (implicitly epoch-0) row regardless of its
+// actual version/release, so every fix for it silently stops matching.
 export function parseCriterionComment(comment: string): { packageName: string; versionEnd: string } | null {
   const m = comment.match(/^(.+?)\s+is earlier than\s+(.+)$/i);
   if (!m) return null;
   return {
     packageName: m[1].trim(),
-    versionEnd:  stripEpoch(m[2].trim()),
+    versionEnd:  m[2].trim(),
   };
 }
 
