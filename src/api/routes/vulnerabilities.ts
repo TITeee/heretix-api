@@ -284,6 +284,24 @@ async function searchNVD(
 }
 
 /**
+ * Matches a row with `patchAvailable: false` (confirmed unfixed, e.g. from
+ * RedHatVexFetcher's Red Hat CSAF VEX ingestion) and no range or list data of
+ * any kind — the only case where "unconditional match" is actually correct,
+ * since there's nothing to compare the queried version against. A vendor that
+ * reports patchAvailable: false *alongside* a real versionStart/versionEnd
+ * (e.g. "still open somewhere in this bounded range") must keep going through
+ * the ordinary range guard instead, or it would match every version rather
+ * than just the ones the bound actually covers.
+ */
+const UNFIXED_NO_RANGE_WHERE = {
+  patchAvailable: false,
+  versionStartInt: null,
+  versionEndInt: null,
+  lastAffectedInt: null,
+  affectedVersions: { isEmpty: true },
+} as const;
+
+/**
  * Search master via Advisory table (product + version).
  *
  * Excludes RPM module-stream rows (versionEnd containing ".module+") — RHEL/
@@ -303,7 +321,7 @@ async function searchAdvisory(
   const versionInt = version ? normalizeVersion(version) : null;
   const approximate = version !== undefined && versionInt === null;
 
-  // Version range filter (range OR individual version list)
+  // Version range filter (range OR individual version list OR confirmed-unfixed)
   let versionWhere = {};
   if (versionInt !== null) {
     versionWhere = {
@@ -313,8 +331,9 @@ async function searchAdvisory(
             // Guard: only apply range matching when the row actually carries some range
             // info. Rows with versionStartInt/versionEndInt/lastAffectedInt all null (i.e.
             // affectedVersions-only entries, no range data at all) must be matched solely via
-            // the affectedVersions branch below — otherwise every null-fallback in this block
-            // resolves to true and the row incorrectly matches every version.
+            // the affectedVersions/patchAvailable branches below — otherwise every
+            // null-fallback in this block resolves to true and the row incorrectly
+            // matches every version.
             {
               OR: [
                 { versionStartInt: { not: null } },
@@ -335,11 +354,18 @@ async function searchAdvisory(
           ],
         },
         { affectedVersions: { has: version } },
+        // Confirmed unfixed (patchAvailable: false) with no range data at all —
+        // matches unconditionally, since there is nothing to compare against.
+        // Scoped to rows with no range/list data so a *bounded* unfixed range
+        // (e.g. Broadcom's versionStart/versionEnd with patchAvailable: false)
+        // still goes through the range guard above instead of matching every
+        // version.
+        UNFIXED_NO_RANGE_WHERE,
       ],
     };
   } else if (version !== undefined) {
-    // Could not convert to semver: match individual version list only
-    versionWhere = { affectedVersions: { has: version } };
+    // Could not convert to semver: match individual version list, or a confirmed-unfixed row.
+    versionWhere = { OR: [{ affectedVersions: { has: version } }, UNFIXED_NO_RANGE_WHERE] };
   }
 
   const rows = await prisma.advisoryAffectedProduct.findMany({

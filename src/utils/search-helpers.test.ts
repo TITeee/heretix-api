@@ -372,8 +372,22 @@ describe('matchesRpmVersionRange', () => {
     expect(matchesRpmVersionRange(row('1.9.15-8.p5.el10_0.2'), '1.9.16-1.el10')).toBe(false);
   });
 
-  it('never matches a row with no upper bound', () => {
+  it('never matches a row with no upper bound and unknown patch status', () => {
     expect(matchesRpmVersionRange(row(null), '1.0-1.el9')).toBe(false);
+  });
+
+  it('matches unconditionally when patchAvailable is explicitly false (RedHatVexFetcher unfixed row)', () => {
+    // e.g. bzip2-libs on RHEL9: Red Hat's own CSAF VEX data confirms this CVE
+    // affects it with no fix recorded anywhere, not merely a row a fetcher
+    // failed to extract a range for.
+    expect(matchesRpmVersionRange({ ...row(null), patchAvailable: false }, '1.0.8-11.el9')).toBe(true);
+  });
+
+  it('does not match a row with no upper bound just because patchAvailable is unset', () => {
+    // Distinguishes "confirmed unfixed" from "ordinary parse gap" -- only the
+    // explicit false is trusted, not merely an absent/null value.
+    expect(matchesRpmVersionRange({ ...row(null), patchAvailable: null }, '1.0-1.el9')).toBe(false);
+    expect(matchesRpmVersionRange({ ...row(null), patchAvailable: true }, '1.0-1.el9')).toBe(false);
   });
 
   it('respects an inferred versionStart floor so one module stream does not swallow another', () => {

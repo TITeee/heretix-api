@@ -402,6 +402,7 @@ heretix-api/
 │   │   ├── import-sophos.ts         # Sophos advisory import CLI
 │   │   ├── import-sonicwall.ts      # SonicWall PSIRT import CLI
 │   │   ├── import-redhat.ts         # Red Hat RHSA/RHBA import CLI
+│   │   ├── import-redhat-vex.ts     # Red Hat CSAF VEX (unfixed CVEs) import CLI
 │   │   ├── import-oracle-cpu.ts     # Oracle CPU (quarterly patch) import CLI
 │   │   ├── import-broadcom.ts       # Broadcom/VMware VMSA import CLI
 │   │   ├── import-splunk.ts         # Splunk security advisory import CLI
@@ -426,6 +427,7 @@ heretix-api/
 │   │   ├── cisco-fetcher.ts         # Cisco PSIRT openVuln API fetch & parse
 │   │   ├── oracle-linux-fetcher.ts  # Oracle Linux OVAL XML fetch, decompress & parse
 │   │   ├── redhat-fetcher.ts        # Red Hat OVAL v2 XML fetch, decompress & parse
+│   │   ├── redhat-vex-fetcher.ts    # Red Hat CSAF VEX archive fetch, decompress & parse (unfixed CVEs)
 │   │   ├── sophos-fetcher.ts        # Sophos sitemap + RSS + headless browser fetch
 │   │   ├── sonicwall-fetcher.ts     # SonicWall PSIRT JSON API fetch & parse
 │   │   ├── oracle-cpu-fetcher.ts    # Oracle CPU CSAF 2.0 fetch & per-CVE split
@@ -551,6 +553,21 @@ Semantic versions are converted to integers for fast range queries:
 - Uses `criterion` comment text ("X is earlier than Y") to extract `versionEnd` (exclusive) per package — the full `epoch:version-release` string, epoch included (a real, nonzero epoch dropped here made an installed build compare as newer than any epoch-omitted fix row regardless of its actual version, silently breaking every fix for that package; see [`redhat-fetcher.test.ts`](src/worker/redhat-fetcher.test.ts))
 - Per-variant feeds supported: `ol9`, `ol8`, `ol7`, etc.
 - RPM release numbers (e.g. `2.9.13-6.el9`) are handled by `normalizeVersion()` for accurate range queries
+
+### Red Hat OVAL ([src/worker/redhat-fetcher.ts](src/worker/redhat-fetcher.ts))
+
+- Downloads Red Hat's public OVAL v2 XML feed (bzip2-compressed, no authentication required)
+- Parses RHSA/RHBA `class="patch"` definitions only — this feed exclusively covers CVEs that already have a released fix; it has no representation at all for a CVE that's confirmed to affect a package with no fix yet (see Red Hat CSAF VEX below for that case)
+- Same epoch-preserving `versionEnd` extraction as Oracle Linux above
+- Per-variant feeds supported: `rhel9`, `rhel8`
+
+### Red Hat CSAF VEX ([src/worker/redhat-vex-fetcher.ts](src/worker/redhat-vex-fetcher.ts))
+
+- Downloads Red Hat's bulk CSAF VEX archive (`archive_latest.txt` → a `.tar.zst` covering every Red Hat product, streamed through zstd decompression and tar extraction rather than buffered in memory — the archive spans every RHEL major back to 5 and is well over a gigabyte decompressed)
+- Per CVE document, joins `product_tree.relationships` (`category: "default_component_of"` onto a bare `red_hat_enterprise_linux_N` product) to resolve each compound product ID down to (RHEL major, package name)
+- Extracts packages in `product_status.known_affected` that are *not* also in `product_status.fixed` — Red Hat's own explicit "still affected, no fix" signal, which the OVAL feed above structurally cannot express
+- Restricted to RHEL 8/9 (`RedHatFetcher`'s own supported variants) — the archive's older, unsupported majors were dropped almost entirely for volume, and were a direct contributor to an early OOM crash processing the full archive
+- Stores affected-product rows with no version range at all and `patchAvailable: false` — the explicit signal `matchesRpmVersionRange()`/`searchAdvisory()` (`src/utils/search-helpers.ts`, `src/api/routes/vulnerabilities.ts`) key off of to match a query unconditionally, distinct from an ordinary row with no range and `patchAvailable` left `null`/unset, which still never matches (see "Confirmed-unfixed vulnerabilities" below)
 
 ### CPE mapping notes
 
@@ -714,6 +731,23 @@ curl -H "x-api-key: $API_KEY" \
 > **ecosystem value**: `oracle-linux` (no version suffix). Range queries use RPM version strings.
 > Specify versions as `MAJOR.MINOR.PATCH-RELEASE.dist` (e.g. `3.2.5-3.el9`) or upstream `MAJOR.MINOR.PATCH` (e.g. `3.2.4`).
 > Routed to the same exact `rpmvercmp` comparison as Red Hat (see [`rpmAdvisoryVendor`](src/utils/search-helpers.ts)) — previously this ecosystem value wasn't wired up and silently fell back to the lossy BigInt approximation regardless of what this doc said; see the [boundary-value sweep](ACCURACY.md#boundary-value-sweep-rhel--oracle-linux) in ACCURACY.md.
+
+### Red Hat
+
+```bash
+pnpm import:redhat                    # Full feed, both variants (RHEL 9 + RHEL 8 OVAL)
+pnpm import:redhat rhel9              # RHEL 9 only
+pnpm import:redhat-vex                # CSAF VEX archive (confirmed-unfixed CVEs, RHEL 8/9)
+```
+
+```bash
+# Search Red Hat packages
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:5000/api/v1/vulnerabilities/search?package=bzip2-libs&ecosystem=Red%20Hat:9&version=1.0.8-11.el9"
+```
+
+> **ecosystem value**: `Red Hat:<major>` (e.g. `Red Hat:9`). Range queries use RPM version strings, `epoch:version-release` included.
+> A confirmed-unfixed hit from `import:redhat-vex` always has `fixedVersion: null` and carries `red-hat-vex` in its `sources[]` array — `source` (singular) still prefers `nvd`/the CVE's own primary source when one exists, so `sources[]` is what identifies the VEX origin, not `source`.
 
 ### Sophos
 
@@ -880,6 +914,8 @@ WHERE ecosystem = 'npm'
 
 Vendor advisory search also uses `versionStartInt` / `lastAffectedInt` (inclusive) or `versionEndInt` (exclusive), plus an exact match against `affectedVersions[]` for distro ecosystems.
 
+A row with no range data at all (no `versionStart`/`versionEnd`/`versionFixed`/`lastAffected`/`affectedVersions`) never matches by default — nothing to compare the queried version against — *except* when `patchAvailable` is explicitly `false` (Red Hat CSAF VEX's confirmed-unfixed rows, see above), which matches unconditionally instead. Only that explicit `false` is trusted this way; `patchAvailable: null` (the ordinary case — a vendor simply hasn't reported fix status) still falls through to the conservative default, so an ordinary data gap can't silently turn into "vulnerable at every version" the way flipping the default itself would have.
+
 ### Source priority
 
 | Field | Authoritative source |
@@ -925,6 +961,7 @@ Job definitions (source key, label, cron, run logic) are centralized in `src/job
 | Broadcom/VMware advisory | Daily at 13:00 UTC |
 | Red Hat RHEL 9 advisory | Daily at 13:15 UTC |
 | Red Hat RHEL 8 advisory | Daily at 13:30 UTC |
+| Red Hat CSAF VEX (unfixed CVEs) | Daily at 15:00 UTC |
 | Splunk advisory | Daily at 13:45 UTC |
 | Apache HTTP Server advisory | Daily at 14:00 UTC |
 | Zabbix advisory | Daily at 14:15 UTC |

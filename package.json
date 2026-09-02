@@ -29,6 +29,7 @@
     "import:oracle-cpu": "node dist/scripts/import-oracle-cpu.js",
     "import:broadcom": "node dist/scripts/import-broadcom.js",
     "import:redhat": "node dist/scripts/import-redhat.js",
+    "import:redhat-vex": "node dist/scripts/import-redhat-vex.js",
     "import:splunk": "node dist/scripts/import-splunk.js",
     "import:apache": "node dist/scripts/import-apache.js",
     "import:zabbix": "node dist/scripts/import-zabbix.js",
@@ -87,6 +88,7 @@
     "playwright-extra": "^4.3.6",
     "prisma": "^7.7.0",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "tar-stream": "^3.2.1",
     "zod": "^4.3.5"
   },
   "pnpm": {

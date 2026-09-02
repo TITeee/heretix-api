@@ -268,7 +268,15 @@ export function matchesRpmStyleOsvVersion(
  *
  * `versionEnd` comes from OVAL's "<package> is earlier than <version>" and is
  * therefore an *exclusive* upper bound — the named build is the patched one.
- * A row with no upper bound never matches, since there is nothing to compare.
+ * A row with no upper bound never matches by default, since there is nothing
+ * to compare — *unless* `patchAvailable === false`, RedHatVexFetcher's
+ * explicit signal (from Red Hat's own CSAF VEX "known_affected, not fixed"
+ * data) that this is a confirmed-unfixed row, not merely one a fetcher failed
+ * to extract a range for. Only that explicit signal is trusted to mean
+ * "matches unconditionally" — a row with `patchAvailable: null` (unknown) and
+ * no range still falls through to the conservative default below, since an
+ * ordinary parse gap saying "always vulnerable" would be its own, worse kind
+ * of false positive.
  *
  * `versionStart`, when present, is an inclusive floor. OVAL's own upper-bound
  * criterion never carries one, but a sibling "Module <name>:N is enabled"
@@ -278,10 +286,10 @@ export function matchesRpmStyleOsvVersion(
  * unrelated stream.
  */
 export function matchesRpmVersionRange(
-  row: { versionStart: string | null; versionEnd: string | null },
+  row: { versionStart: string | null; versionEnd: string | null; patchAvailable?: boolean | null },
   version: string,
 ): boolean {
-  if (!row.versionEnd) return false;
+  if (!row.versionEnd) return row.patchAvailable === false;
   if (compareRpmVersions(version, row.versionEnd) >= 0) return false;
   if (row.versionStart && compareRpmVersions(version, row.versionStart) < 0) return false;
   return true;

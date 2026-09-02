@@ -395,6 +395,7 @@ heretix-api/
 │   │   ├── import-sophos.ts                 # Sophosアドバイザリインポートcli
 │   │   ├── import-sonicwall.ts              # SonicWall PSIRTインポートCLI
 │   │   ├── import-redhat.ts                 # Red Hat RHSA/RHBAインポートCLI
+│   │   ├── import-redhat-vex.ts              # Red Hat CSAF VEX（未修正CVE）インポートCLI
 │   │   ├── import-oracle-cpu.ts             # Oracle CPU（四半期パッチ）インポートCLI
 │   │   ├── import-splunk.ts                 # Splunk セキュリティアドバイザリインポートCLI
 │   │   ├── import-apache.ts                 # Apache HTTP Server アドバイザリインポートCLI
@@ -418,6 +419,7 @@ heretix-api/
 │   │   ├── cisco-fetcher.ts        # Cisco PSIRT openVuln API取得・パース
 │   │   ├── oracle-linux-fetcher.ts # Oracle Linux OVAL XML取得・bzip2解凍・パース
 │   │   ├── redhat-fetcher.ts      # Red Hat OVAL v2 XML取得・bzip2解凍・パース
+│   │   ├── redhat-vex-fetcher.ts  # Red Hat CSAF VEXアーカイブ取得・展開・パース（未修正CVE）
 │   │   ├── sophos-fetcher.ts       # Sophos サイトマップ+RSS+ヘッドレスブラウザ取得
 │   │   ├── sonicwall-fetcher.ts    # SonicWall PSIRT JSON API取得・パース
 │   │   ├── oracle-cpu-fetcher.ts   # Oracle CPU CSAF 2.0取得・CVE別分割
@@ -817,6 +819,7 @@ pnpm import:redhat rhel8              # RHEL 8 のみ
 
 - Red Hat 公式 OVAL v2 XML フィード（bzip2 圧縮）を利用（認証不要）
 - RHSA/RHBA ID・深刻度・CVE リスト（CVSS3 スコア付き）・影響 RPM パッケージを解析
+- `class="patch"` の定義のみを解析——このフィードは「既に修正版が出ているCVE」しか収録しておらず、「対象であることは確定しているが修正がまだ無い」CVEを表現する手段が構造的に存在しない（そのケースは下記の Red Hat CSAF VEX で扱う）
 - `rpmvercmp` アルゴリズムによる RPM バージョン範囲比較に対応（`src/utils/rpm-version.ts`）
 - `versionEnd` は上記 Oracle Linux と同様、epoch を保持したまま解析
 - `rhel9` / `rhel8` のバリアント別フィードに対応（RHEL 7 は対象外）
@@ -831,6 +834,22 @@ curl -H "x-api-key: $API_KEY" \
 ```
 
 > **ecosystem の値**: `Red Hat:9` または `Red Hat:8`（バージョン付き）。バージョンは RPM 形式（`7.76.1-23.el9`）を指定します。`rpmvercmp` で `versionEnd`（修正済みバージョン）と比較し、インストール済みバージョンが修正版より古い場合のみ脆弱性がヒットします。
+
+### Red Hat CSAF VEX（未修正の脆弱性）
+
+Red Hat公式のCSAF VEXアーカイブから、「対象であることは確定しているが修正がまだ提供されていない」CVEを収集します。上記OVALフィードが構造的に表現できないデータです。認証不要。
+
+```bash
+pnpm import:redhat-vex                # CSAF VEXアーカイブ全体（RHEL 8/9 に該当する分のみ抽出）
+```
+
+- `archive_latest.txt` → 全Red Hat製品を含む単一の`.tar.zst`アーカイブをダウンロードし、メモリに全展開せずzstd展開・tar展開をストリーミング処理(アーカイブはRHEL 5まで遡る全メジャーバージョンを含み、展開後は1GBを大きく超える)
+- CVEごとのJSONドキュメントの`product_tree.relationships`(`category: "default_component_of"`が素の`red_hat_enterprise_linux_N`製品を指すもの)を辿り、複合プロダクトIDを(RHELメジャーバージョン, パッケージ名)に変換
+- `product_status.known_affected`にあり`product_status.fixed`に無いパッケージを抽出——Red Hat自身による「対象だが未修正」という明示的なシグナル
+- RHEL 8/9(`RedHatFetcher`がサポートするバリアントと同じ)に限定——制限しない場合、アーカイブに含まれるサポート対象外の古いメジャーバージョン分がほぼそのまま件数に上乗せされ、フルアーカイブ処理時のOOMクラッシュの直接の原因になった
+- 該当パッケージはバージョン範囲情報を一切持たず`patchAvailable: false`として保存する——`matchesRpmVersionRange()`/`searchAdvisory()`(`src/utils/search-helpers.ts`、`src/api/routes/vulnerabilities.ts`)がこれを見て、クエリされたバージョンに関わらず無条件に一致させる（範囲が無く`patchAvailable`が`null`/未設定のままの通常行は、これまで通り一致しない。詳細は下記「高速バージョン検索の仕組み」参照）
+
+> 確認済みの未修正ヒットは常に`fixedVersion: null`で、`sources[]`配列に`red-hat-vex`を含みます。`source`（単数）は該当CVEにNVD等の情報がある場合そちらを優先表示するため、VEX由来かどうかを判別するには`sources[]`を見る必要があります。
 
 ### Sophos
 
@@ -997,6 +1016,8 @@ WHERE ecosystem = 'npm'
 
 ベンダーアドバイザリでは `versionStartInt` / `lastAffectedInt`（inclusive）または `versionEndInt`（exclusive）による範囲検索、加えて `affectedVersions` 配列への完全一致検索も並行実施します。
 
+範囲情報を一切持たない行（`versionStart`/`versionEnd`/`versionFixed`/`lastAffected`/`affectedVersions`が全て無い）は、比較対象が無いためデフォルトでは一致しません——ただし`patchAvailable`が明示的に`false`の場合（Red Hat CSAF VEXの確認済み未修正行、上記参照）だけは例外として無条件に一致します。この扱いは明示的な`false`にのみ適用され、`patchAvailable: null`（ベンダーが単に修正状況を報告していないだけの通常ケース）は従来通り保守的なデフォルト(不一致)のままです。デフォルト自体を反転させていたら、単なるデータ欠損が「あらゆるバージョンで脆弱」という誤検知にすり替わってしまうところでした。
+
 ### ソース優先度
 
 | フィールド | 優先ソース |
@@ -1042,6 +1063,7 @@ TEST_DATABASE_URL="postgresql://...heretix_test" pnpm exec prisma migrate deploy
 | Broadcom/VMware アドバイザリ | 毎日 13:00 UTC |
 | Red Hat RHEL 9 アドバイザリ | 毎日 13:15 UTC |
 | Red Hat RHEL 8 アドバイザリ | 毎日 13:30 UTC |
+| Red Hat CSAF VEX（未修正CVE） | 毎日 15:00 UTC |
 | Splunk アドバイザリ | 毎日 13:45 UTC |
 | Apache HTTP Server アドバイザリ | 毎日 14:00 UTC |
 | Zabbix アドバイザリ | 毎日 14:15 UTC |
