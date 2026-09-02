@@ -23,6 +23,7 @@ import { SonicWallFetcher } from '../worker/sonicwall-fetcher.js';
 import { OracleCpuFetcher } from '../worker/oracle-cpu-fetcher.js';
 import { BroadcomFetcher } from '../worker/broadcom-fetcher.js';
 import { RedHatFetcher } from '../worker/redhat-fetcher.js';
+import { RedHatVexFetcher } from '../worker/redhat-vex-fetcher.js';
 import { SplunkFetcher } from '../worker/splunk-fetcher.js';
 import { ApacheFetcher } from '../worker/apache-fetcher.js';
 import { ZabbixFetcher } from '../worker/zabbix-fetcher.js';
@@ -87,6 +88,7 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-broadcom',     label: 'Broadcom/VMware',  cron: '0 13 * * *',  run: () => runAdvisory('advisory-broadcom', new BroadcomFetcher()) },
   { source: 'advisory-redhat-rhel9', label: 'Red Hat (RHEL 9)', cron: '15 13 * * *', run: () => runAdvisory('advisory-redhat-rhel9', new RedHatFetcher('rhel9')) },
   { source: 'advisory-redhat-rhel8', label: 'Red Hat (RHEL 8)', cron: '30 13 * * *', run: () => runAdvisory('advisory-redhat-rhel8', new RedHatFetcher('rhel8')) },
+  { source: 'advisory-redhat-vex',   label: 'Red Hat (unfixed CVEs)', cron: '0 15 * * *', run: () => runAdvisory('advisory-redhat-vex', new RedHatVexFetcher()) },
   { source: 'advisory-splunk',       label: 'Splunk',           cron: '45 13 * * *', run: () => runAdvisory('advisory-splunk', new SplunkFetcher()) },
   { source: 'advisory-apache',       label: 'Apache HTTP Server', cron: '0 14 * * *', run: () => runAdvisory('advisory-apache', new ApacheFetcher()) },
   { source: 'advisory-zabbix',       label: 'Zabbix',             cron: '15 14 * * *', run: () => runAdvisory('advisory-zabbix', new ZabbixFetcher()) },

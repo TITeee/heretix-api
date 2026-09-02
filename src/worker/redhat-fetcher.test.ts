@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   mapSeverity,
-  stripEpoch,
   parseCveElement,
   parseCriterionComment,
   extractModuleMajor,
@@ -32,16 +31,6 @@ describe('mapSeverity', () => {
     expect(mapSeverity(undefined)).toBeUndefined();
     expect(mapSeverity(null)).toBeUndefined();
     expect(mapSeverity('')).toBeUndefined();
-  });
-});
-
-describe('stripEpoch', () => {
-  it('strips a numeric epoch prefix', () => {
-    expect(stripEpoch('0:2.9.13-9.el9')).toBe('2.9.13-9.el9');
-  });
-
-  it('leaves versions without an epoch unchanged', () => {
-    expect(stripEpoch('2.9.13-9.el9')).toBe('2.9.13-9.el9');
   });
 });
 
@@ -81,10 +70,21 @@ describe('parseCveElement', () => {
 });
 
 describe('parseCriterionComment', () => {
-  it('parses a version-range criterion', () => {
+  it('keeps the epoch on a version-range criterion (a 0 epoch, RPM\'s "no epoch")', () => {
     expect(parseCriterionComment('rsync is earlier than 0:3.2.5-3.el9_7.2')).toEqual({
       packageName: 'rsync',
-      versionEnd: '3.2.5-3.el9_7.2',
+      versionEnd: '0:3.2.5-3.el9_7.2',
+    });
+  });
+
+  it('keeps a real, nonzero epoch', () => {
+    // openssl-libs: a real package carrying a nonzero epoch. Dropping it (as
+    // this used to) makes an installed build with the epoch read as newer
+    // than any epoch-omitted (implicitly epoch-0) fix row regardless of its
+    // actual version/release, so every fix for it silently stops matching.
+    expect(parseCriterionComment('openssl-libs is earlier than 1:3.5.5-4.el9_8')).toEqual({
+      packageName: 'openssl-libs',
+      versionEnd: '1:3.5.5-4.el9_8',
     });
   });
 
@@ -147,6 +147,14 @@ describe('collectCriteria', () => {
   it('returns an empty array for non-object input', () => {
     expect(collectCriteria(null)).toEqual([]);
     expect(collectCriteria(undefined)).toEqual([]);
+  });
+
+  it('tolerates a purely numeric @_comment (fast-xml-parser coerces "0" to a number, not a crash)', () => {
+    // Same OVAL parsing code as OracleLinuxFetcher, which crashed on exactly
+    // this shape against a live feed, 2026-09-02.
+    const node = { criterion: [{ '@_comment': 0 }] };
+    expect(() => collectCriteria(node)).not.toThrow();
+    expect(collectCriteria(node)).toEqual([{ node: { '@_comment': 0 }, moduleMajor: null }]);
   });
 
   it('propagates a "Module X:N is enabled" sibling criterion to nested descendants', () => {

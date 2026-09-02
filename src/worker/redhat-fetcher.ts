@@ -28,10 +28,6 @@ export function mapSeverity(s?: unknown): string | undefined {
   return SEVERITY_MAP[str.toLowerCase()] ?? str.toUpperCase();
 }
 
-export function stripEpoch(version: string): string {
-  return version.replace(/^\d+:/, '');
-}
-
 /**
  * Derive advisory ID from definition id.
  * "oval:com.redhat.rhsa:def:20260425" → "RHSA-2026:0425"
@@ -86,12 +82,21 @@ export function parseCveElement(cve: unknown): CveInfo | null {
   return null;
 }
 
+// versionEnd is kept as the full "epoch:version-release" string the OVAL feed
+// writes ("0:3.2.5-3.el9_7.2" when a package has no real epoch, RPM's own
+// convention for "none" is a literal number here, never a placeholder like the
+// "(none)" rpm(8) itself prints -- see redhat-fetcher.test.ts). Stripping it
+// (as this used to) drops the single highest-precedence field
+// compareRpmVersions() compares: an installed package with a real epoch (e.g.
+// openssl-libs at "1:3.5.5-6.el9_8") then reads as newer than *any*
+// epoch-omitted (implicitly epoch-0) row regardless of its actual
+// version/release, so every fix for it silently stops matching.
 export function parseCriterionComment(comment: string): { packageName: string; versionEnd: string } | null {
   const m = comment.match(/^(.+?)\s+is earlier than\s+(.+)$/i);
   if (!m) return null;
   return {
     packageName: m[1].trim(),
-    versionEnd:  stripEpoch(m[2].trim()),
+    versionEnd:  m[2].trim(),
   };
 }
 
@@ -132,8 +137,13 @@ export function collectCriteria(node: unknown, moduleMajor: string | null = null
 
   let scopedModuleMajor = moduleMajor;
   for (const c of ownCriteria) {
-    const comment = c['@_comment'] as string | undefined;
-    const major = comment ? extractModuleMajor(comment) : null;
+    // fast-xml-parser auto-coerces purely numeric attribute text (e.g.
+    // comment="0") to a number -- guard against that the same way
+    // mapSeverity() does, rather than assuming the `as string` cast holds
+    // (a live Oracle Linux feed hit exactly this and crashed the fetcher,
+    // 2026-09-02; RedHatFetcher shares this same parsing code).
+    const comment = c['@_comment'];
+    const major = typeof comment === 'string' ? extractModuleMajor(comment) : null;
     if (major !== null) scopedModuleMajor = major;
   }
 
@@ -264,8 +274,8 @@ export class RedHatFetcher implements AdvisoryFetcher {
       const seen = new Set<string>();
 
       for (const crit of criterionList) {
-        const comment = crit.node['@_comment'] as string | undefined;
-        if (!comment) continue;
+        const comment = crit.node['@_comment'];
+        if (typeof comment !== 'string') continue;
 
         const parsed = parseCriterionComment(comment);
         if (!parsed) continue;

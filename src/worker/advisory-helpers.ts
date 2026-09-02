@@ -143,8 +143,13 @@ export const BARE_ROW_FALLBACK_PRODUCTS = new Set([
 // branch below); httpd/mysql/mariadb/php need it unconditionally, since none
 // of them has ever used a single-integer major across the versions
 // RHEL/Oracle Linux track.
+//
+// `(?:\d+:)?` skips an optional leading epoch: versionEnd is now the OVAL
+// feed's full "epoch:version-release" string (2026-09-01 -- see
+// parseCriterionComment()), so a pattern anchored at the literal start would
+// otherwise never match at all (every row has at least "0:").
 function twoComponentMajor(versionEnd: string, prefix?: string): string | undefined {
-  const re = prefix ? new RegExp(`^${prefix}\\.(\\d+)\\.`) : /^(\d+\.\d+)\./;
+  const re = prefix ? new RegExp(`^(?:\\d+:)?${prefix}\\.(\\d+)\\.`) : /^(?:\d+:)?(\d+\.\d+)\./;
   const m = versionEnd.match(re);
   if (!m) return undefined;
   return prefix ? `${prefix}.${m[1]}` : m[1];
@@ -207,6 +212,8 @@ export function inferBareVersionStart(product: string, versionEnd: string): stri
     if (pre10) return pre10;
   }
 
-  const major = versionEnd.match(/^(\d+)\./)?.[1];
+  // `(?:\d+:)?` skips an optional leading epoch -- see twoComponentMajor()'s
+  // doc comment above for why.
+  const major = versionEnd.match(/^(?:\d+:)?(\d+)\./)?.[1];
   return major ? `${major}.0` : undefined;
 }

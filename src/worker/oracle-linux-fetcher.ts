@@ -30,10 +30,6 @@ export function mapSeverity(s?: unknown): string | undefined {
   return SEVERITY_MAP[str.toLowerCase()] ?? str.toUpperCase();
 }
 
-/** Strip RPM epoch prefix: "0:2.9.13-9.el9" → "2.9.13-9.el9" */
-export function stripEpoch(version: string): string {
-  return version.replace(/^\d+:/, '');
-}
 
 /**
  * Derive ELSA ID from definition id.
@@ -97,12 +93,20 @@ export function parseCveElement(cve: unknown): CveInfo | null {
  * "rsync is earlier than 0:3.2.5-3.el9_7.2" → { packageName: "rsync", versionEnd: "3.2.5-3.el9_7.2" }
  * Returns null for non-version criteria ("is signed with", "is installed", etc.)
  */
+// versionEnd is kept as the full "epoch:version-release" string the OVAL feed
+// writes ("0:3.2.5-3.el9_7.2" when a package has no real epoch, RPM's own
+// convention for "none" is a literal number here, never a placeholder like the
+// "(none)" rpm(8) itself prints -- see oracle-linux-fetcher.test.ts). Stripping
+// it (as this used to) drops the single highest-precedence field
+// compareRpmVersions() compares: an installed package with a real epoch reads
+// as newer than *any* epoch-omitted (implicitly epoch-0) row regardless of its
+// actual version/release, so every fix for it silently stops matching.
 export function parseCriterionComment(comment: string): { packageName: string; versionEnd: string } | null {
   const m = comment.match(/^(.+?)\s+is earlier than\s+(.+)$/i);
   if (!m) return null;
   return {
     packageName: m[1].trim(),
-    versionEnd:  stripEpoch(m[2].trim()),
+    versionEnd:  m[2].trim(),
   };
 }
 
@@ -122,6 +126,22 @@ export function extractModuleMajor(comment: string): string | null {
   return m ? m[1] : null;
 }
 
+// Oracle ships parallel, differently-epoched fix tracks for the same product
+// name alongside the regular build: ksplice live-patch errata ("<pkg> is
+// ksplice-based", epoch bumped by roughly 1) and FIPS-validated module
+// builds ("<pkg> is fips patched", epoch pinned to 10 specifically to keep
+// it sorting above every ordinary release). Both markers sit as a sibling
+// <criterion> alongside the package's own "is earlier than" criterion, under
+// the same AND block -- confirmed live on Oracle Linux 9's openssl/openssl-libs
+// and gnutls definitions. Merging one of these rows into the regular
+// (product, vendor) bucket makes a fully-patched regular-track install read
+// as vulnerable against a fix version on a track it was never running,
+// because that track's own epoch has nothing to do with the regular
+// package's version history (confirmed: 79 "fips patched" + 200
+// "ksplice-based" definitions inflated one image's false-positive count from
+// ~0 to 47 across just openssl/openssl-libs/gnutls, 2026-09-02).
+const BUILD_VARIANT_RE = /\bis (fips patched|ksplice-based)$/i;
+
 export interface CollectedCriterion {
   node: Record<string, unknown>;
   /**
@@ -132,6 +152,14 @@ export interface CollectedCriterion {
    * every criterion at that level and everything nested beneath it.
    */
   moduleMajor: string | null;
+  /**
+   * True when a sibling criterion in the same AND block marks this as a
+   * ksplice or FIPS build-variant track rather than the regular package
+   * (see BUILD_VARIANT_RE). Scoped to the immediate criterion array only,
+   * not inherited by nested <criteria> the way moduleMajor is -- each
+   * package's own AND block carries its own variant marker independently.
+   */
+  isBuildVariant: boolean;
 }
 
 /**
@@ -146,15 +174,21 @@ export function collectCriteria(node: unknown, moduleMajor: string | null = null
   const ownCriteria = toArray(n['criterion'] as unknown) as Record<string, unknown>[];
 
   let scopedModuleMajor = moduleMajor;
+  let isBuildVariant = false;
   for (const c of ownCriteria) {
-    const comment = c['@_comment'] as string | undefined;
-    const major = comment ? extractModuleMajor(comment) : null;
+    // fast-xml-parser auto-coerces purely numeric attribute text (e.g.
+    // comment="0") to a number -- guard against that the same way
+    // mapSeverity() does, rather than assuming the `as string` cast holds.
+    const comment = c['@_comment'];
+    if (typeof comment !== 'string') continue;
+    const major = extractModuleMajor(comment);
     if (major !== null) scopedModuleMajor = major;
+    if (BUILD_VARIANT_RE.test(comment)) isBuildVariant = true;
   }
 
   // Direct criterion children
   for (const c of ownCriteria) {
-    results.push({ node: c, moduleMajor: scopedModuleMajor });
+    results.push({ node: c, moduleMajor: scopedModuleMajor, isBuildVariant });
   }
 
   // Recurse into nested criteria
@@ -285,8 +319,10 @@ export class OracleLinuxFetcher implements AdvisoryFetcher {
       const seen = new Set<string>();
 
       for (const crit of criterionList) {
-        const comment = crit.node['@_comment'] as string | undefined;
-        if (!comment) continue;
+        if (crit.isBuildVariant) continue;
+
+        const comment = crit.node['@_comment'];
+        if (typeof comment !== 'string') continue;
 
         const parsed = parseCriterionComment(comment);
         if (!parsed) continue;

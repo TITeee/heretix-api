@@ -83,6 +83,15 @@ describe('inferBareVersionStart', () => {
     expect(inferBareVersionStart('nodejs', '16.16.0-1.el9_0')).toBe('16.0');
   });
 
+  it('infers the floor when versionEnd carries an epoch', () => {
+    // versionEnd is now the OVAL feed's full "epoch:version-release" string
+    // (2026-09-01 -- see parseCriterionComment()); the leading "epoch:" must
+    // not stop the anchored floor-extraction regexes from matching at all
+    // (every row has at least "0:").
+    expect(inferBareVersionStart('nodejs', '0:16.16.0-1.el9_0')).toBe('16.0');
+    expect(inferBareVersionStart('postgresql', '9:9.2.24-9.0.7.el7_9')).toBe('9.2');
+  });
+
   it('infers a single-component major-version floor for a bare postgresql row at version 10+', () => {
     expect(inferBareVersionStart('postgresql', '13.23-5.el9_8')).toBe('13.0');
     expect(inferBareVersionStart('postgresql', '16.14-1.0.1.el10_2')).toBe('16.0');
