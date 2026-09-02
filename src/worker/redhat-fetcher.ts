@@ -137,8 +137,13 @@ export function collectCriteria(node: unknown, moduleMajor: string | null = null
 
   let scopedModuleMajor = moduleMajor;
   for (const c of ownCriteria) {
-    const comment = c['@_comment'] as string | undefined;
-    const major = comment ? extractModuleMajor(comment) : null;
+    // fast-xml-parser auto-coerces purely numeric attribute text (e.g.
+    // comment="0") to a number -- guard against that the same way
+    // mapSeverity() does, rather than assuming the `as string` cast holds
+    // (a live Oracle Linux feed hit exactly this and crashed the fetcher,
+    // 2026-09-02; RedHatFetcher shares this same parsing code).
+    const comment = c['@_comment'];
+    const major = typeof comment === 'string' ? extractModuleMajor(comment) : null;
     if (major !== null) scopedModuleMajor = major;
   }
 
@@ -269,8 +274,8 @@ export class RedHatFetcher implements AdvisoryFetcher {
       const seen = new Set<string>();
 
       for (const crit of criterionList) {
-        const comment = crit.node['@_comment'] as string | undefined;
-        if (!comment) continue;
+        const comment = crit.node['@_comment'];
+        if (typeof comment !== 'string') continue;
 
         const parsed = parseCriterionComment(comment);
         if (!parsed) continue;

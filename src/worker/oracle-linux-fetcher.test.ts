@@ -96,13 +96,76 @@ describe('collectCriteria', () => {
       },
     };
     expect(collectCriteria(node)).toEqual([
-      { node: { '@_comment': 'top' }, moduleMajor: null },
-      { node: { '@_comment': 'nested' }, moduleMajor: null },
+      { node: { '@_comment': 'top' }, moduleMajor: null, isBuildVariant: false },
+      { node: { '@_comment': 'nested' }, moduleMajor: null, isBuildVariant: false },
     ]);
   });
 
   it('returns an empty array for non-object input', () => {
     expect(collectCriteria(null)).toEqual([]);
+  });
+
+  it('tolerates a purely numeric @_comment (fast-xml-parser coerces "0" to a number, not a crash)', () => {
+    // Hit a live Oracle Linux feed 2026-09-02 and crashed the fetcher with
+    // "comment.match is not a function" -- the `as string` cast doesn't
+    // actually make it one.
+    const node = { criterion: [{ '@_comment': 0 }] };
+    expect(() => collectCriteria(node)).not.toThrow();
+    expect(collectCriteria(node)).toEqual([{ node: { '@_comment': 0 }, moduleMajor: null, isBuildVariant: false }]);
+  });
+
+  it('marks a criterion as a build variant when a sibling says "is fips patched" (real Oracle Linux 9/openssl-libs shape)', () => {
+    // ELSA-2026-50075: openssl-libs's regular fix track is a separate,
+    // lower-epoch advisory: importing this FIPS-track version boundary into
+    // the same (product, vendor) bucket made a fully-patched regular
+    // install read as vulnerable, since epoch 1 (regular) < epoch 10 (this
+    // track) regardless of the actual release history.
+    const node = {
+      criterion: [
+        { '@_comment': 'openssl-libs is earlier than 10:3.5.1-7.0.1.el9_7_fips' },
+        { '@_comment': 'openssl-libs is signed with the Oracle Linux 9 key' },
+        { '@_comment': 'openssl-libs is fips patched' },
+      ],
+    };
+    const result = collectCriteria(node);
+    expect(result.every(r => r.isBuildVariant)).toBe(true);
+  });
+
+  it('marks a criterion as a build variant when a sibling says "is ksplice-based" (real Oracle Linux 9/openssl shape)', () => {
+    const node = {
+      criterion: [
+        { '@_comment': 'openssl is earlier than 2:3.5.1-7.0.1.ksplice1.el9_7' },
+        { '@_comment': 'openssl is signed with the Oracle Linux 9 key' },
+        { '@_comment': 'openssl is ksplice-based' },
+      ],
+    };
+    const result = collectCriteria(node);
+    expect(result.every(r => r.isBuildVariant)).toBe(true);
+  });
+
+  it('does not mark an ordinary AND block (no variant sibling) as a build variant', () => {
+    const node = {
+      criterion: [
+        { '@_comment': 'rsync is earlier than 0:3.2.5-3.el9_7.2' },
+        { '@_comment': 'rsync is signed with the Oracle Linux 9 key' },
+      ],
+    };
+    expect(collectCriteria(node).every(r => !r.isBuildVariant)).toBe(true);
+  });
+
+  it('scopes isBuildVariant to the criterion array it was found in, not inherited by nested criteria', () => {
+    // Each package's own AND block carries its own independent variant
+    // marker (or lack of one) -- unlike moduleMajor, this must not leak into
+    // a sibling package's unrelated nested criteria.
+    const node = {
+      criterion: [{ '@_comment': 'openssl is fips patched' }],
+      criteria: {
+        criterion: [{ '@_comment': 'rsync is earlier than 0:3.2.5-3.el9_7.2' }],
+      },
+    };
+    const result = collectCriteria(node);
+    const rsyncCrit = result.find(r => r.node['@_comment']?.toString().startsWith('rsync'));
+    expect(rsyncCrit?.isBuildVariant).toBe(false);
   });
 
   it('propagates a "Module X:N is enabled" sibling criterion to nested descendants', () => {

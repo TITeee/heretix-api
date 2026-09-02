@@ -149,6 +149,14 @@ describe('collectCriteria', () => {
     expect(collectCriteria(undefined)).toEqual([]);
   });
 
+  it('tolerates a purely numeric @_comment (fast-xml-parser coerces "0" to a number, not a crash)', () => {
+    // Same OVAL parsing code as OracleLinuxFetcher, which crashed on exactly
+    // this shape against a live feed, 2026-09-02.
+    const node = { criterion: [{ '@_comment': 0 }] };
+    expect(() => collectCriteria(node)).not.toThrow();
+    expect(collectCriteria(node)).toEqual([{ node: { '@_comment': 0 }, moduleMajor: null }]);
+  });
+
   it('propagates a "Module X:N is enabled" sibling criterion to nested descendants', () => {
     // Mirrors the real RHEL9 OVAL shape: a module-enabled check and the
     // OR-of-packages it guards are siblings under the same AND parent.
