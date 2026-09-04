@@ -207,6 +207,22 @@ export function rpmAdvisoryVendor(ecosystem: string): string | null {
   return null;
 }
 
+// AdvisoryAffectedProduct.vendor values owned exclusively by the RPM-specific
+// search path (searchAdvisoryRpm(), routed via rpmAdvisoryVendor() above) --
+// RedHatFetcher/OracleLinuxFetcher (OVAL) and RedHatVexFetcher all write rows
+// under generic package names (php, sed, expat, ...) that collide heavily
+// with unrelated language/container ecosystems, and RedHatVexFetcher's
+// "confirmed unfixed" entries match unconditionally regardless of version
+// (see matchesRpmVersionRange() below) -- leaking through the vendor-blind
+// searchAdvisory() fallback risks a false "vulnerable, unfixed" hit for any
+// package sharing that name anywhere (confirmed live: package=php&ecosystem=bitnami
+// surfaced RHEL9's unfixed CVE-2023-0568 for a completely unrelated container image).
+export const RPM_ADVISORY_VENDOR_PREFIXES = Object.values(RPM_ECOSYSTEM_VENDOR);
+
+export function isRpmAdvisoryVendor(vendor: string): boolean {
+  return RPM_ADVISORY_VENDOR_PREFIXES.some(p => vendor === p || vendor.startsWith(`${p}-`));
+}
+
 // ─── Version-range predicates ────────────────────────────────
 // Applied in application code rather than SQL because both compare version
 // strings with distro-specific ordering rules (dpkg / rpmvercmp) that the

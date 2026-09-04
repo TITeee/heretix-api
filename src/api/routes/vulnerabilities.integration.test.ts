@@ -131,6 +131,33 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     const noMapping = await search(app, 'package=unrelated-binary&version=2.2.40-1.1&ecosystem=Debian:12');
     expect(noMapping.body.results).toHaveLength(0);
   });
+
+  it('keeps a confirmed-unfixed RPM-vendor advisory row out of the vendor-blind product search', async () => {
+    // Shape RedHatVexFetcher writes for a CVE with no fix yet: no version
+    // range at all, patchAvailable: false -- matches unconditionally via
+    // matchesRpmVersionRange()'s "no versionEnd" branch, which is exactly why
+    // it must never be reachable through a query that doesn't name the RHEL
+    // ecosystem explicitly (confirmed live: package=php&ecosystem=bitnami
+    // surfaced RHEL9's unfixed CVE-2023-0568 for an unrelated container image).
+    const advisory = await prisma.advisoryVulnerability.create({
+      data: { source: 'red-hat-vex', externalId: 'CVE-2023-0568', cveId: 'CVE-2023-0568', rawData: {} },
+    });
+    await prisma.advisoryAffectedProduct.create({
+      data: { advisoryId: advisory.id, vendor: 'red-hat-9', product: 'php', patchAvailable: false },
+    });
+
+    // Unrelated ecosystem, or none at all: must not surface the RHEL-only row.
+    const noEcosystem = await search(app, 'package=php');
+    expect(noEcosystem.body.results).toHaveLength(0);
+
+    const unrelatedEcosystem = await search(app, 'package=php&ecosystem=bitnami');
+    expect(unrelatedEcosystem.body.results).toHaveLength(0);
+
+    // The RHEL ecosystem, explicitly named, must still find it via searchAdvisoryRpm().
+    const rhelEcosystem = await search(app, 'package=php&ecosystem=Red%20Hat:9');
+    expect(rhelEcosystem.body.results).toHaveLength(1);
+    expect(rhelEcosystem.body.results[0].externalId).toBe('CVE-2023-0568');
+  });
 });
 
 describe('GET /api/v1/vulnerabilities/:id/cpe', () => {

@@ -7,6 +7,7 @@ import {
   isLanguageEcosystem,
   normalizeEcosystem,
   rpmAdvisoryVendor,
+  isRpmAdvisoryVendor,
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
   matchesRpmVersionRange,
@@ -246,6 +247,27 @@ describe('rpmAdvisoryVendor', () => {
 
   it('returns null when the prefix matches but without the colon separator', () => {
     expect(rpmAdvisoryVendor('Red Hat')).toBeNull();
+  });
+});
+
+describe('isRpmAdvisoryVendor', () => {
+  it('recognizes version-qualified Red Hat and Oracle Linux vendors', () => {
+    expect(isRpmAdvisoryVendor('red-hat-9')).toBe(true);
+    expect(isRpmAdvisoryVendor('red-hat-8')).toBe(true);
+    expect(isRpmAdvisoryVendor('oracle-linux-9')).toBe(true);
+  });
+
+  it('recognizes the bare, version-less vendor forms', () => {
+    expect(isRpmAdvisoryVendor('red-hat')).toBe(true);
+    expect(isRpmAdvisoryVendor('oracle-linux')).toBe(true);
+  });
+
+  it('rejects unrelated vendors, including ones sharing a prefix substring', () => {
+    expect(isRpmAdvisoryVendor('sophos')).toBe(false);
+    expect(isRpmAdvisoryVendor('broadcom')).toBe(false);
+    // Not a real vendor value in this codebase, but guards against a naive
+    // .includes()-style check matching on "red-hat" appearing mid-string.
+    expect(isRpmAdvisoryVendor('not-red-hat-9')).toBe(false);
   });
 });
 
