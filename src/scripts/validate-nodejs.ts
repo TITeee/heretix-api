@@ -21,9 +21,15 @@
  * corresponding `patched` version (a "^N.M.P" clause) -- or there is no
  * patched clause for that major at all (never fixed on that line).
  *
- * Scoped to the module-stream majors RHEL 8/9 and Oracle Linux 8/9 actually
+ * Scoped to the module-stream majors RHEL 8/9 and Oracle Linux 8/9/10 actually
  * package (10/12/14/16/18/20/22/24); older majors are irrelevant to this
  * search path and would only add noise.
+ *
+ * AdvisoryAffectedProduct.vendor is keyed per OS major version ("red-hat-8",
+ * "oracle-linux-9", ...), not one shared bucket across majors -- queryLocalAPI
+ * queries every OS major's ecosystem string and unions the results (see
+ * VENDORS below), since ground truth here has no concept of which OS major a
+ * given nodejs module stream shipped on.
  *
  * Version comparisons use compareRpmVersions (rpmvercmp), matching
  * matchesRpmVersionRange() (search-helpers.ts), the actual comparison the
@@ -52,13 +58,24 @@ const ACTIVE_MAJORS = new Set([10, 12, 14, 16, 18, 20, 22, 24]);
 
 interface VendorConfig {
   label: string;
-  ecosystem: string;
+  ecosystems: string[];
   targetSource: string;
 }
 
+// AdvisoryAffectedProduct.vendor is now keyed per OS major version
+// ("red-hat-8"/"red-hat-9", "oracle-linux-8"/"oracle-linux-9"/"oracle-linux-10")
+// rather than one shared bucket across majors (see rpmAdvisoryVendor() /
+// search-helpers.ts) -- querying a single ecosystem string only ever sees
+// that one major's rows, so a nodejs module stream packaged solely on
+// another major (e.g. nodejs:10/:12/:14 on RHEL 8 only) would never be
+// found against "Red Hat:9" alone. Query every major this data actually
+// exists under and union the results, matching how a real caller running
+// either OS major would see it. The legacy bare "oracle-linux" ecosystem
+// string (pre-2026-09-01) now resolves to a vendor bucket with zero rows --
+// see rpmAdvisoryVendor()'s comment -- so it must not be used here.
 const VENDORS: Record<string, VendorConfig> = {
-  'red-hat': { label: 'RHEL 8+9', ecosystem: 'Red Hat:9', targetSource: 'red-hat' },
-  'oracle-linux': { label: 'Oracle Linux', ecosystem: 'oracle-linux', targetSource: 'oracle-linux' },
+  'red-hat': { label: 'RHEL 8+9', ecosystems: ['Red Hat:8', 'Red Hat:9'], targetSource: 'red-hat' },
+  'oracle-linux': { label: 'Oracle Linux 8+9+10', ecosystems: ['Oracle Linux:8', 'Oracle Linux:9', 'Oracle Linux:10'], targetSource: 'oracle-linux' },
 };
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
@@ -170,20 +187,24 @@ async function queryLocalAPI(baseUrl: string, version: string, vendor: VendorCon
   const headers: Record<string, string> = {};
   if (process.env.API_KEY) headers['x-api-key'] = process.env.API_KEY;
 
-  return queryAllPages(async (offset) => {
-    const url = `${baseUrl}/api/v1/vulnerabilities/search?package=${encodeURIComponent(PRODUCT)}&version=${encodeURIComponent(version)}&ecosystem=${encodeURIComponent(vendor.ecosystem)}&limit=${PAGE_SIZE}&offset=${offset}`;
-    try {
-      const res = await axios.get<{ results: ApiVulnerability[] }>(url, { timeout: 30000, headers });
-      return res.data.results ?? [];
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.code === 'ECONNREFUSED') {
-        console.error(`ERROR: Could not reach local API at ${baseUrl}`);
-        console.error('       Is the server running? (pnpm dev)');
-        process.exit(1);
+  const perEcosystem = await Promise.all(vendor.ecosystems.map(ecosystem =>
+    queryAllPages(async (offset) => {
+      const url = `${baseUrl}/api/v1/vulnerabilities/search?package=${encodeURIComponent(PRODUCT)}&version=${encodeURIComponent(version)}&ecosystem=${encodeURIComponent(ecosystem)}&limit=${PAGE_SIZE}&offset=${offset}`;
+      try {
+        const res = await axios.get<{ results: ApiVulnerability[] }>(url, { timeout: 30000, headers });
+        return res.data.results ?? [];
+      } catch (err: unknown) {
+        if (axios.isAxiosError(err) && err.code === 'ECONNREFUSED') {
+          console.error(`ERROR: Could not reach local API at ${baseUrl}`);
+          console.error('       Is the server running? (pnpm dev)');
+          process.exit(1);
+        }
+        throw err;
       }
-      throw err;
-    }
-  }, PAGE_SIZE);
+    }, PAGE_SIZE),
+  ));
+
+  return perEcosystem.flat();
 }
 
 // ─── Boundary-Value Sweep ──────────────────────────────────────────────────────
