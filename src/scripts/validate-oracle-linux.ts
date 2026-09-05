@@ -48,7 +48,7 @@ import { compareRpmVersions } from '../utils/rpm-version.js';
 import { OracleLinuxFetcher } from '../worker/oracle-linux-fetcher.js';
 import {
   aggregateSweep, printSweepReport, filterBySource, diffSets,
-  mapWithConcurrency, queryAllPages, bumpRpmVersion,
+  mapWithConcurrency, queryAllPages, bumpRpmVersion, dedupeSiblingProducts,
 } from './lib/accuracy-sweep.js';
 
 const MAX_POINTS_PER_PRODUCT = 50;
@@ -238,7 +238,7 @@ async function main() {
   const index = indexByProductAndVendor(advisories);
 
   if (args === null) {
-    await runSweep(baseUrl, index, advisories.length);
+    await runSweep(baseUrl, dedupeSiblingProducts(index), advisories.length);
     return;
   }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { indexByProduct, expectedCVEsRpm } from './accuracy-sweep.js';
+import { indexByProduct, expectedCVEsRpm, dedupeSiblingProducts, type RpmFixEntry } from './accuracy-sweep.js';
 
 describe('expectedCVEsRpm', () => {
   it('does not expect a module-stream CVE to match a query below its versionStart', () => {
@@ -39,5 +39,56 @@ describe('expectedCVEsRpm', () => {
 
     expect(expectedCVEsRpm('nodejs', '20.8.1-1.module+el9', index)).toEqual(new Set());
     expect(expectedCVEsRpm('nodejs', '19.9.0-1.module+el9', index)).toEqual(new Set());
+  });
+});
+
+describe('dedupeSiblingProducts', () => {
+  it('collapses products with an identical fix history to the alphabetically-first name', () => {
+    const sharedHistory: RpmFixEntry[] = [
+      { cveId: 'CVE-2024-1', versionStart: null, versionEnd: '5.14.0-500.el9' },
+      { cveId: 'CVE-2024-2', versionStart: '5.14.0-400.el9', versionEnd: '5.14.0-450.el9' },
+    ];
+    const index = new Map<string, RpmFixEntry[]>([
+      ['kernel-rt-devel', sharedHistory],
+      ['kernel-rt', sharedHistory],
+      ['kernel-rt-core', sharedHistory],
+    ]);
+
+    const deduped = dedupeSiblingProducts(index);
+
+    expect(deduped.size).toBe(1);
+    expect(deduped.has('kernel-rt')).toBe(true);
+    expect(deduped.get('kernel-rt')).toEqual(sharedHistory);
+  });
+
+  it('keeps products with genuinely different fix histories separate', () => {
+    const index = new Map<string, RpmFixEntry[]>([
+      ['kernel', [{ cveId: 'CVE-2024-1', versionStart: null, versionEnd: '5.14.0-500.el9' }]],
+      ['nodejs', [{ cveId: 'CVE-2024-2', versionStart: null, versionEnd: '20.8.1-1.el9' }]],
+    ]);
+
+    const deduped = dedupeSiblingProducts(index);
+
+    expect(deduped.size).toBe(2);
+    expect(deduped.has('kernel')).toBe(true);
+    expect(deduped.has('nodejs')).toBe(true);
+  });
+
+  it('treats entry order within a product as insignificant', () => {
+    const index = new Map<string, RpmFixEntry[]>([
+      ['a-package', [
+        { cveId: 'CVE-2024-1', versionStart: null, versionEnd: '1.0' },
+        { cveId: 'CVE-2024-2', versionStart: null, versionEnd: '2.0' },
+      ]],
+      ['b-package', [
+        { cveId: 'CVE-2024-2', versionStart: null, versionEnd: '2.0' },
+        { cveId: 'CVE-2024-1', versionStart: null, versionEnd: '1.0' },
+      ]],
+    ]);
+
+    const deduped = dedupeSiblingProducts(index);
+
+    expect(deduped.size).toBe(1);
+    expect(deduped.has('a-package')).toBe(true);
   });
 });

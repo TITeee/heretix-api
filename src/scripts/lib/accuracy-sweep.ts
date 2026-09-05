@@ -189,6 +189,52 @@ export function expectedCVEsRpm(product: string, version: string, index: Map<str
   return result;
 }
 
+/**
+ * Collapse products that share byte-identical (cveId, versionStart, versionEnd)
+ * fix histories into one representative before generating boundary points.
+ *
+ * RHEL/Oracle Linux kernel packaging ships dozens of sub-packages per kernel
+ * variant (kernel-rt, kernel-rt-core, kernel-rt-devel, kernel-64k-*, ...) that
+ * are always built and fixed together -- confirmed live that 99 distinct
+ * "kernel*" product names exist under RHEL9 alone, together holding 58% of all
+ * RHEL AdvisoryAffectedProduct rows, and that sibling sets checked (kernel-rt /
+ * kernel-rt-core / kernel-rt-devel / kernel-rt-debug-core / kernel-rt-modules)
+ * have identical versionEnd sets. Sweeping every sibling independently
+ * multiplies boundary-point count (and the full-pagination HTTP cost per
+ * point) by the sibling-group size for zero additional coverage, since
+ * searchAdvisoryRpm() looks up strictly by (product, vendor) -- a sibling can
+ * only differ in behavior if the product name string itself trips some
+ * unrelated bug, not from the RPM version-comparison logic under test here.
+ * Keeps the alphabetically-first name per group as the representative.
+ */
+export function dedupeSiblingProducts(index: Map<string, RpmFixEntry[]>): Map<string, RpmFixEntry[]> {
+  const fingerprintOf = (entries: RpmFixEntry[]): string =>
+    entries.map(e => `${e.cveId}|${e.versionStart ?? ''}|${e.versionEnd}`).sort().join('\n');
+
+  const groupsByFingerprint = new Map<string, string[]>();
+  for (const [product, entries] of index) {
+    const fp = fingerprintOf(entries);
+    const group = groupsByFingerprint.get(fp);
+    if (group) group.push(product);
+    else groupsByFingerprint.set(fp, [product]);
+  }
+
+  const deduped = new Map<string, RpmFixEntry[]>();
+  let collapsed = 0;
+  for (const group of groupsByFingerprint.values()) {
+    group.sort();
+    const representative = group[0];
+    deduped.set(representative, index.get(representative)!);
+    collapsed += group.length - 1;
+  }
+
+  console.log(
+    `Deduplicated ${index.size} products to ${deduped.size} ` +
+    `(collapsed ${collapsed} sibling packages sharing an identical fix history)`,
+  );
+  return deduped;
+}
+
 export interface GenericFixEntry {
   id: string;              // cveId, falling back to the advisory's own externalId
   introduced: string | null;
