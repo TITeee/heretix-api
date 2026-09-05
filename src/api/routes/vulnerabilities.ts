@@ -19,6 +19,7 @@ import {
   matchesRpmVersionRange,
   buildAliases,
   DISTRO_ECOSYSTEM_PREFIXES,
+  RPM_ADVISORY_VENDOR_PREFIXES,
 } from '../../utils/search-helpers.js';
 
 const searchSchema = z.object({
@@ -371,6 +372,11 @@ async function searchAdvisory(
   const rows = await prisma.advisoryAffectedProduct.findMany({
     where: {
       product: { in: expandProductAliases(product) },
+      // RPM-vendor rows (RedHatFetcher/OracleLinuxFetcher OVAL, RedHatVexFetcher)
+      // are reachable only through searchAdvisoryRpm() via an explicit RHEL/Oracle
+      // Linux ecosystem -- see RPM_ADVISORY_VENDOR_PREFIXES's doc comment for why
+      // leaking them through this vendor-blind product-name search is unsafe.
+      NOT: { OR: RPM_ADVISORY_VENDOR_PREFIXES.map(p => ({ vendor: { startsWith: p } })) },
       AND: [
         versionWhere,
         { OR: [{ versionEnd: null }, { versionEnd: { not: { contains: '.module+' } } }] },
