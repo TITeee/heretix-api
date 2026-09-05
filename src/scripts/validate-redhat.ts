@@ -8,13 +8,12 @@
  * "ground truth" instead of testing anything useful).
  *
  * RedHatFetcher.source() always returns 'red-hat' regardless of the RHEL major
- * version constructor arg, so the RHEL 8 and RHEL 9 jobs both write into the
- * same vendor bucket in the DB -- ground truth fetches and merges both feeds
- * too, or entries that only exist in one major version look like false
- * positives/negatives that aren't actually bugs. The ecosystem string passed
- * to the search API ("Red Hat:9") only selects the rpmvercmp comparison path;
- * it does not filter by RHEL major version (the DB doesn't track that), so
- * either "Red Hat:8" or "Red Hat:9" returns the identical result set.
+ * version constructor arg, but AdvisoryAffectedProduct.vendor is keyed per OS
+ * major ("red-hat-8"/"red-hat-9", see rpmAdvisoryVendor() in search-helpers.ts) --
+ * ground truth fetches and merges both feeds, and queryLocalAPI() queries both
+ * "Red Hat:8" and "Red Hat:9" and unions the results, or entries that only
+ * exist in one major version (e.g. an RHEL8-only "elN_0" build) would look
+ * like false positives/negatives that aren't actually bugs.
  *
  * RHEL OVAL entries only ever express an exclusive upper bound (`versionEnd`,
  * "<package> is earlier than <version>") and never a lower bound, so there is
@@ -41,13 +40,20 @@ import axios from 'axios';
 import { RedHatFetcher } from '../worker/redhat-fetcher.js';
 import {
   bumpRpmVersion, aggregateSweep, printSweepReport, filterBySource, diffSets,
-  mapWithConcurrency, indexByProduct, expectedCVEsRpm, queryAllPages, type RpmFixEntry,
+  mapWithConcurrency, indexByProduct, expectedCVEsRpm, queryAllPages, dedupeSiblingProducts, type RpmFixEntry,
 } from './lib/accuracy-sweep.js';
 
 const PAGE_SIZE = 500; // API-enforced max (see zod schema in vulnerabilities.ts)
 
 const TARGET_SOURCE = 'red-hat';
-const ECOSYSTEM = 'Red Hat:9';
+// AdvisoryAffectedProduct.vendor is keyed per OS major ("red-hat-8", "red-hat-9"),
+// not one shared bucket -- a single hardcoded ecosystem only ever sees that one
+// major's rows, so a fix recorded solely under RHEL8 (e.g. an "elN_0" build,
+// like bpftool's CVE-2018-20784 fix) is invisible when only querying "Red Hat:9",
+// even though ground truth below merges both RHEL8+RHEL9 OVAL feeds. Query both
+// majors and union the results, matching how a real caller on either major
+// would see it (same fix already applied to validate-nodejs.ts).
+const ECOSYSTEMS = ['Red Hat:8', 'Red Hat:9'];
 
 interface ApiVulnerability {
   externalId: string;
@@ -58,20 +64,23 @@ async function queryLocalAPI(baseUrl: string, product: string, version: string):
   const headers: Record<string, string> = {};
   if (process.env.API_KEY) headers['x-api-key'] = process.env.API_KEY;
 
-  return queryAllPages(async (offset) => {
-    const url = `${baseUrl}/api/v1/vulnerabilities/search?package=${encodeURIComponent(product)}&version=${encodeURIComponent(version)}&ecosystem=${encodeURIComponent(ECOSYSTEM)}&limit=${PAGE_SIZE}&offset=${offset}`;
-    try {
-      const res = await axios.get<{ results: ApiVulnerability[] }>(url, { timeout: 30000, headers });
-      return res.data.results ?? [];
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.code === 'ECONNREFUSED') {
-        console.error(`ERROR: Could not reach local API at ${baseUrl}`);
-        console.error('       Is the server running? (pnpm dev)');
-        process.exit(1);
+  const perEcosystem = await Promise.all(ECOSYSTEMS.map(ecosystem =>
+    queryAllPages(async (offset) => {
+      const url = `${baseUrl}/api/v1/vulnerabilities/search?package=${encodeURIComponent(product)}&version=${encodeURIComponent(version)}&ecosystem=${encodeURIComponent(ecosystem)}&limit=${PAGE_SIZE}&offset=${offset}`;
+      try {
+        const res = await axios.get<{ results: ApiVulnerability[] }>(url, { timeout: 30000, headers });
+        return res.data.results ?? [];
+      } catch (err: unknown) {
+        if (axios.isAxiosError(err) && err.code === 'ECONNREFUSED') {
+          console.error(`ERROR: Could not reach local API at ${baseUrl}`);
+          console.error('       Is the server running? (pnpm dev)');
+          process.exit(1);
+        }
+        throw err;
       }
-      throw err;
-    }
-  }, PAGE_SIZE);
+    }, PAGE_SIZE),
+  ));
+  return perEcosystem.flat();
 }
 
 // ─── Boundary-Value Sweep ──────────────────────────────────────────────────────
@@ -174,7 +183,7 @@ async function main() {
   const index = indexByProduct(advisories);
 
   if (args === null) {
-    await runSweep(baseUrl, index, advisories.length);
+    await runSweep(baseUrl, dedupeSiblingProducts(index), advisories.length);
     return;
   }
 
