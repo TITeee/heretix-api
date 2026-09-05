@@ -426,15 +426,86 @@ async function searchAdvisory(
   });
 }
 
-/** Search Advisory table for RPM-based distros using rpmvercmp */
-async function searchAdvisoryRpm(
-  product: string,
-  version: string | undefined,
-  vendor: string,
-): Promise<VulnerabilityResult[]> {
-  const rows = await prisma.advisoryAffectedProduct.findMany({
+type RpmAdvisoryRow = {
+  versionStart: string | null;
+  versionEnd: string | null;
+  versionFixed: string | null;
+  patchAvailable: boolean | null;
+  advisory: {
+    id: string;
+    source: string;
+    externalId: string;
+    cveId: string | null;
+    severity: string | null;
+    cvssScore: number | null;
+    cvssVector: string | null;
+    summary: string | null;
+    publishedAt: Date | null;
+    masterVuln: Parameters<typeof masterToResult>[0] | null;
+  };
+};
+
+function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityResult {
+  const adv = r.advisory;
+  const fixedVersion = r.versionEnd ?? r.versionFixed ?? null;
+  if (adv.masterVuln) {
+    return masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId);
+  }
+  return {
+    id: adv.id,
+    externalId: adv.externalId,
+    source: adv.source,
+    sources: [adv.source],
+    severity: adv.severity,
+    cvssScore: adv.cvssScore,
+    cvssVector: adv.cvssVector,
+    summary: adv.summary,
+    publishedAt: adv.publishedAt,
+    approximateMatch: approximate,
+    isKev: false,
+    epssScore: null,
+    epssPercentile: null,
+    fixedVersion,
+    aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
+  };
+}
+
+/**
+ * Per-(product, vendor) index behind searchAdvisoryRpm(), rebuilt from the DB
+ * on a TTL.
+ *
+ * Some products (kernel/kernel-rt families) carry 10,000+ AdvisoryAffectedProduct
+ * rows, and most of those (e.g. Red Hat VEX's "confirmed unfixed" entries) have
+ * no versionEnd at all -- matchesRpmVersionRange() matches them unconditionally,
+ * regardless of the queried version (see its own doc comment). Fetching and
+ * re-evaluating that unconditional bucket on every single request, even though
+ * its membership can't change with the query version, was the dominant cost
+ * under concurrent load (each request blocks Node's single JS thread for the
+ * full fetch+filter+format of every row, so concurrent requests serialize).
+ * Split rows once into "always matches" (no versionEnd) vs "needs a per-query
+ * comparison" (has one), and cache both -- the unconditional bucket doesn't
+ * need re-filtering per request at all, and the ranged bucket is typically a
+ * small fraction of the total (kernel-rt: ~4,200 of ~17,000).
+ */
+const RPM_INDEX_TTL_MS = 5 * 60_000;
+const RPM_INDEX_MAX_TOTAL_ROWS = 200_000;
+interface RpmProductIndexEntry { unconditional: RpmAdvisoryRow[]; ranged: RpmAdvisoryRow[]; expiresAt: number }
+// Cache in-flight build promises, not just resolved entries: on a cold cache
+// (e.g. right after a restart), 20 concurrent requests for the same product
+// would otherwise all miss simultaneously and each kick off its own full
+// fetch+split -- exactly the thundering-herd this index exists to avoid.
+// Concurrent callers for the same key instead await the one build in flight.
+const rpmProductIndexCache = new Map<string, Promise<RpmProductIndexEntry>>();
+let rpmProductIndexRowCount = 0;
+
+async function buildRpmProductIndex(key: string, product: string, vendor: string): Promise<RpmProductIndexEntry> {
+  const rows: RpmAdvisoryRow[] = await prisma.advisoryAffectedProduct.findMany({
     where: { product, vendor },
-    include: {
+    select: {
+      versionStart: true,
+      versionEnd: true,
+      versionFixed: true,
+      patchAvailable: true,
       advisory: {
         select: {
           id: true,
@@ -452,35 +523,47 @@ async function searchAdvisoryRpm(
     },
   });
 
-  const filtered = version
-    ? rows.filter(r => matchesRpmVersionRange(r, version))
-    : rows;
-  const approximate = version === undefined;
+  const unconditional: RpmAdvisoryRow[] = [];
+  const ranged: RpmAdvisoryRow[] = [];
+  for (const r of rows) (r.versionEnd ? ranged : unconditional).push(r);
 
-  return filtered.map(r => {
-    const adv = r.advisory;
-    const fixedVersion = r.versionEnd ?? r.versionFixed ?? null;
-    if (adv.masterVuln) {
-      return masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId);
-    }
-    return {
-      id: adv.id,
-      externalId: adv.externalId,
-      source: adv.source,
-      sources: [adv.source],
-      severity: adv.severity,
-      cvssScore: adv.cvssScore,
-      cvssVector: adv.cvssVector,
-      summary: adv.summary,
-      publishedAt: adv.publishedAt,
-      approximateMatch: approximate,
-      isKev: false,
-      epssScore: null,
-      epssPercentile: null,
-      fixedVersion,
-      aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
-    };
-  });
+  for (const [k, pending] of rpmProductIndexCache) {
+    if (k === key) continue; // our own in-flight promise -- awaiting it here would deadlock
+    if (rpmProductIndexRowCount + rows.length <= RPM_INDEX_MAX_TOTAL_ROWS) break;
+    rpmProductIndexCache.delete(k);
+    const evicted = await pending;
+    rpmProductIndexRowCount -= evicted.unconditional.length + evicted.ranged.length;
+  }
+
+  rpmProductIndexRowCount += rows.length;
+  return { unconditional, ranged, expiresAt: Date.now() + RPM_INDEX_TTL_MS };
+}
+
+async function getRpmProductIndex(product: string, vendor: string): Promise<RpmProductIndexEntry> {
+  const key = `${product}\0${vendor}`;
+  const cached = rpmProductIndexCache.get(key);
+  if (cached) {
+    const entry = await cached;
+    if (entry.expiresAt > Date.now()) return entry;
+  }
+
+  const buildPromise = buildRpmProductIndex(key, product, vendor);
+  rpmProductIndexCache.set(key, buildPromise);
+  buildPromise.catch(() => rpmProductIndexCache.delete(key));
+  return buildPromise;
+}
+
+/** Search Advisory table for RPM-based distros using rpmvercmp (see getRpmProductIndex() above). */
+async function searchAdvisoryRpm(
+  product: string,
+  version: string | undefined,
+  vendor: string,
+): Promise<VulnerabilityResult[]> {
+  const approximate = version === undefined;
+  const { unconditional, ranged } = await getRpmProductIndex(product, vendor);
+
+  const matchedRanged = version ? ranged.filter(r => matchesRpmVersionRange(r, version)) : ranged;
+  return [...unconditional, ...matchedRanged].map(r => rpmRowToResult(r, approximate));
 }
 
 /** Search NVD table by CPE */
@@ -544,6 +627,44 @@ async function searchByCPE(
   });
 }
 
+// searchVulnerabilities() computes its full (pre-pagination) result set from
+// scratch on every call, but a single logical search is often paginated
+// through many requests in quick succession (a client walking every page, or
+// this repo's own accuracy-validation scripts, which page through up to 20
+// times per (package, version) point specifically for products with a large
+// result set -- see src/scripts/lib/osv-distro-sweep.ts's MAX_PAGES comment).
+// Cache the computed array per (package, version, ecosystem) briefly so only
+// the first page of a pagination run pays the full query cost; later pages
+// just slice the cached array. TTL is short since this exists purely to
+// collapse near-simultaneous repeat calls, not to serve stale data.
+//
+// Bounding by entry *count* alone isn't enough: some products (kernel/kernel-rt
+// families) return 10,000+ hydrated results per query, and a sweep touching
+// many distinct large-result packages in succession OOM'd the process at
+// ~4GB heap with a 500-entry cap. Track total cached *items* instead and
+// evict oldest entries (Map preserves insertion order) until back under
+// budget before inserting.
+const SEARCH_RESULT_CACHE_TTL_MS = 30_000;
+const SEARCH_RESULT_CACHE_MAX_TOTAL_ITEMS = 20_000;
+const searchResultCache = new Map<string, { results: VulnerabilityResult[]; expiresAt: number }>();
+let searchResultCacheItemCount = 0;
+
+function searchResultCacheKey(packageName: string, version: string | undefined, ecosystem: string | undefined): string {
+  return `${packageName}\0${version ?? ''}\0${ecosystem ?? ''}`;
+}
+
+function cacheSearchResults(cacheKey: string, results: VulnerabilityResult[]): void {
+  for (const [key, entry] of searchResultCache) {
+    if (searchResultCacheItemCount + results.length <= SEARCH_RESULT_CACHE_MAX_TOTAL_ITEMS) break;
+    searchResultCache.delete(key);
+    searchResultCacheItemCount -= entry.results.length;
+  }
+  // A single result set larger than the whole budget still gets cached (it's
+  // the case this cache matters most for) -- just don't evict anything else for it.
+  searchResultCache.set(cacheKey, { results, expiresAt: Date.now() + SEARCH_RESULT_CACHE_TTL_MS });
+  searchResultCacheItemCount += results.length;
+}
+
 /** Search OSV + NVD in parallel and deduplicate by master ID */
 async function searchVulnerabilities(
   packageName: string,
@@ -552,25 +673,35 @@ async function searchVulnerabilities(
   limit = 50,
   offset = 0,
 ): Promise<VulnerabilityResult[]> {
-  ecosystem = normalizeEcosystem(ecosystem);
-  const versionInt = version ? normalizeVersion(version) : null;
-  const isDistro = ecosystem ? isDistroEcosystem(ecosystem) : false;
-  // Language ecosystems (npm, PyPI, Go …) are fully covered by OSV.
-  // Querying NVD/Advisory for these would surface C-library or OS CVEs that share
-  // the same package name (e.g. C bzip2 → npm bzip2 false positive).
-  const isLanguage = ecosystem ? isLanguageEcosystem(ecosystem) : false;
+  const cacheKey = searchResultCacheKey(packageName, version, ecosystem);
+  const cached = searchResultCache.get(cacheKey);
 
-  const rpmVendor = ecosystem ? rpmAdvisoryVendor(ecosystem) : null;
+  let all: VulnerabilityResult[];
+  if (cached && cached.expiresAt > Date.now()) {
+    all = cached.results;
+  } else {
+    const normalizedEcosystem = normalizeEcosystem(ecosystem);
+    const versionInt = version ? normalizeVersion(version) : null;
+    const isDistro = normalizedEcosystem ? isDistroEcosystem(normalizedEcosystem) : false;
+    // Language ecosystems (npm, PyPI, Go …) are fully covered by OSV.
+    // Querying NVD/Advisory for these would surface C-library or OS CVEs that share
+    // the same package name (e.g. C bzip2 → npm bzip2 false positive).
+    const isLanguage = normalizedEcosystem ? isLanguageEcosystem(normalizedEcosystem) : false;
 
-  const [osvResults, nvdResults, advisoryResults] = await Promise.all([
-    searchOSV(packageName, version, versionInt, ecosystem),
-    isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, ecosystem),
-    rpmVendor
-      ? searchAdvisoryRpm(packageName, version, rpmVendor)
-      : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),
-  ]);
+    const rpmVendor = normalizedEcosystem ? rpmAdvisoryVendor(normalizedEcosystem) : null;
 
-  const all = dedup([...osvResults, ...nvdResults, ...advisoryResults]);
+    const [osvResults, nvdResults, advisoryResults] = await Promise.all([
+      searchOSV(packageName, version, versionInt, normalizedEcosystem),
+      isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, normalizedEcosystem),
+      rpmVendor
+        ? searchAdvisoryRpm(packageName, version, rpmVendor)
+        : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),
+    ]);
+
+    all = dedup([...osvResults, ...nvdResults, ...advisoryResults]);
+    cacheSearchResults(cacheKey, all);
+  }
+
   return all.slice(offset, offset + limit);
 }
 
