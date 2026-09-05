@@ -59,25 +59,51 @@ export function parseAffectsText(raw: string): VulnerableRange | null {
  * (<h3 id="Fixed_in_Apache_Tomcat_X.Y.Z">), each covering one or more CVEs
  * that share that fix version. Locate every section heading's position and
  * version so entries can be matched to "the nearest preceding heading".
+ *
+ * A heading id can combine multiple branches fixed together, e.g.
+ * "Fixed_in_Apache_Tomcat_8.5.5_and_8.0.37" -- capture every version present
+ * rather than just the first dotted run, otherwise the id fails to match
+ * `[\d.A-Za-z]+">` at all (the underscore isn't in the class) and the whole
+ * heading is silently skipped, misattributing its CVEs to the next-older
+ * heading instead.
  */
-function findFixedHeadings(html: string): Array<{ index: number; version: string }> {
-  const headingRegex = /<h3 id="Fixed_in_Apache_Tomcat_([\d.A-Za-z]+)">/g;
-  const headings: Array<{ index: number; version: string }> = [];
+function findFixedHeadings(html: string): Array<{ index: number; versions: string[] }> {
+  const headingRegex = /<h3 id="Fixed_in_Apache_Tomcat_([^"]+)">/g;
+  const headings: Array<{ index: number; versions: string[] }> = [];
   let m: RegExpExecArray | null;
   while ((m = headingRegex.exec(html)) !== null) {
-    headings.push({ index: m.index, version: m[1] });
+    const versions = m[1].match(/\d+(?:\.[\dA-Za-z]+)+/g) ?? [];
+    if (versions.length > 0) headings.push({ index: m.index, versions });
   }
   return headings;
 }
 
-/** Version of the nearest heading at or before `index` (headings are in ascending index order). */
-function fixedVersionAt(headings: Array<{ index: number; version: string }>, index: number): string | undefined {
-  let result: string | undefined;
+function majorMinor(version: string): string | undefined {
+  const m = version.match(/^(\d+)\.(\d+)/);
+  return m ? `${m[1]}.${m[2]}` : undefined;
+}
+
+/**
+ * Version of the nearest heading at or before `index` (headings are in
+ * ascending index order). When that heading combines multiple branches,
+ * pick the one sharing major.minor with the entry's own affected range
+ * instead of always taking the first-listed branch.
+ */
+function fixedVersionAt(
+  headings: Array<{ index: number; versions: string[] }>,
+  index: number,
+  range: VulnerableRange
+): string | undefined {
+  let result: string[] | undefined;
   for (const h of headings) {
     if (h.index > index) break;
-    result = h.version;
+    result = h.versions;
   }
-  return result;
+  if (!result) return undefined;
+  if (result.length === 1) return result[0];
+
+  const branchPrefix = majorMinor(range.lastAffected) ?? majorMinor(range.introduced);
+  return result.find(v => majorMinor(v) === branchPrefix) ?? result[0];
 }
 
 /**
@@ -111,7 +137,7 @@ export function parseTomcatPage(html: string, major: number): RawEntry[] {
 
     const sevMatch = headingArea.match(/\b(Critical|Important|Moderate|Low)\b/i);
     const severity = sevMatch ? sevMatch[1].toLowerCase() : 'unknown';
-    const versionFixed = fixedVersionAt(fixedHeadings, index);
+    const versionFixed = fixedVersionAt(fixedHeadings, index, range);
 
     for (const cveId of titleCVEs) {
       entries.push({ cveId, severity, range, major, versionFixed });

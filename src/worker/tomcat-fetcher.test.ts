@@ -69,6 +69,25 @@ describe('parseTomcatPage', () => {
     ]);
   });
 
+  it('resolves a compound heading ("X_and_Y", fixed simultaneously in two branches) to the version matching the entry\'s own branch', () => {
+    const html = `
+      <h3 id="Fixed_in_Apache_Tomcat_8.5.8">Fixed in Apache Tomcat 8.5.8</h3>
+      <p><strong>Low: Issue A</strong> <a href="#">CVE-2026-1111</a></p>
+      <p>Affects: 8.5.5 to 8.5.7</p>
+      <h3 id="Fixed_in_Apache_Tomcat_8.5.5_and_8.0.37">Fixed in Apache Tomcat 8.5.5 and 8.0.37</h3>
+      <p><strong>Low: Issue B</strong> <a href="#">CVE-2026-2222</a></p>
+      <p>Affects: 8.5.0 to 8.5.4</p>
+      <p><strong>Low: Issue C</strong> <a href="#">CVE-2026-3333</a></p>
+      <p>Affects: 8.0.0.RC1 to 8.0.36</p>
+    `;
+    const entries = parseTomcatPage(html, 8);
+    expect(entries.map(e => [e.cveId, e.versionFixed])).toEqual([
+      ['CVE-2026-1111', '8.5.8'],
+      ['CVE-2026-2222', '8.5.5'],
+      ['CVE-2026-3333', '8.0.37'],
+    ]);
+  });
+
   it('leaves versionFixed undefined when there is no preceding heading', () => {
     const html = `
       <p><strong>Important: Fix bypass</strong> <a href="#">CVE-2026-1111</a></p>

@@ -850,6 +850,8 @@ pnpm import:redhat-vex                # CSAF VEXアーカイブ全体（RHEL 8/9
 - RHEL 8/9(`RedHatFetcher`がサポートするバリアントと同じ)に限定——制限しない場合、アーカイブに含まれるサポート対象外の古いメジャーバージョン分がほぼそのまま件数に上乗せされ、フルアーカイブ処理時のOOMクラッシュの直接の原因になった
 - 該当パッケージはバージョン範囲情報を一切持たず`patchAvailable: false`として保存する——`matchesRpmVersionRange()`/`searchAdvisory()`(`src/utils/search-helpers.ts`、`src/api/routes/vulnerabilities.ts`)がこれを見て、クエリされたバージョンに関わらず無条件に一致させる（範囲が無く`patchAvailable`が`null`/未設定のままの通常行は、これまで通り一致しない。詳細は下記「高速バージョン検索の仕組み」参照）
 
+**Oracle Linux版は無し**: Oracle LinuxもRed Hatと全く同じ構造的ギャップを抱えている(OVALフィードは修正済みCVEの定義しか公開しない)が、ここへの取り込みは予定していない。Oracle自身も`linux.oracle.com/csaf/beta/vex/`にRed Hatと同じスキーマのCSAF VEXツリーを公開していることは実際に確認済みだが、Red Hatと違って`archive_latest.txt`/`.tar.zst`のような一括アーカイブが存在せず、年別ディレクトリ配下にCVEごとのJSONファイルが並んでいるだけ(1999年から全年、サンプルした2020/2023/2026年で年間約2,000〜6,600件)——`changes.csv`のような差分取得手段も無いため数万回規模の個別リクエストが必要になり、しかもプロダクトID(`P-1309V-10:dovecot`)がRed Hatの`red_hat_enterprise_linux_N:<パッケージ>`とは異なる未文書化の体系で`relationships`配列も無いため変換方法も別途調査が要る。これは本プロジェクトだけが対応を見送っている領域ではない: [Trivy公式ドキュメント](https://trivy.dev/docs/latest/coverage/os/oracle/)でもOracle Linuxの未修正脆弱性サポートは非対応と明記されており、Grypeのデータソース([vunnel](https://github.com/anchore/vunnel/tree/main/src/vunnel/providers/oracle))もOracle Linux向けはOVALのみ——実際にfetcherのソースを確認したところ、RHELプロバイダにあるようなCSAF/VEXクライアントは一切存在しなかった。
+
 > 確認済みの未修正ヒットは常に`fixedVersion: null`で、`sources[]`配列に`red-hat-vex`を含みます。`source`（単数）は該当CVEにNVD等の情報がある場合そちらを優先表示するため、VEX由来かどうかを判別するには`sources[]`を見る必要があります。
 
 ### Sophos
