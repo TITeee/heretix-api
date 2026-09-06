@@ -12,6 +12,9 @@ interface OSVVulnerability {
   id: string;
   modified: string;
   published?: string;
+  // Set when this record has been withdrawn (e.g. superseded by another record
+  // as a duplicate) -- see importOSVData()'s handling below.
+  withdrawn?: string;
   summary?: string;
   details?: string;
   aliases?: string[];
@@ -591,8 +594,22 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
         where: { vulnerabilityId: vulnerability.id },
       });
 
-      // Save affected packages and version ranges
-      if (osvData.affected) {
+      // Withdrawn records (e.g. duplicates superseded by another advisory) are
+      // excluded from search entirely, matching OSV.dev's own reference
+      // implementation (it excludes withdrawn records from its search/list
+      // results too -- see https://google.github.io/osv.dev/faq/#how-does-osvdev-handle-withdrawn-records).
+      // A withdrawn duplicate's own `fixed` event is often missing (folded into
+      // the record it duplicates instead), which otherwise leaves an unbounded
+      // "introduced, never fixed" range matching every version above it forever
+      // -- confirmed live with GHSA-fqj3-h9pc-443h (withdrawn as a duplicate of
+      // GHSA-mwf2-3pr3-8698 / CVE-2026-67318) still flagging axios 1.18.1 as
+      // vulnerable despite the real fix landing at 1.18.0. The OSVVulnerability
+      // row itself (and its rawData) is kept; only the affected-package rows
+      // that make it surface in search are skipped.
+      if (osvData.withdrawn) {
+        logger.info({ osvId: osvData.id, withdrawn: osvData.withdrawn },
+          'Skipping affected-package import for withdrawn OSV record');
+      } else if (osvData.affected) {
         for (const affected of osvData.affected) {
           if (!affected.package) continue;
 
