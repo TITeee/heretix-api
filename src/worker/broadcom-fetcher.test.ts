@@ -128,6 +128,12 @@ describe('parseResponseMatrixRow', () => {
     expect(parsed).toEqual({ products: ['VMware Workstation'], fixedVersions: ['26H1'] });
   });
 
+  it('accepts a Workstation/Fusion year-half release with an update suffix', () => {
+    // Real VMSA-2026-0007/CVE-2026-59346 row: "VMware Workstation" | "26H1u1"
+    const parsed = parseResponseMatrixRow('VMware Workstation', '26H1u1');
+    expect(parsed).toEqual({ products: ['VMware Workstation'], fixedVersions: ['26H1u1'] });
+  });
+
   it('splits a fixed-version cell listing multiple versions joined by "or"', () => {
     // Real VMSA-2026-0006 row: "VMware ESX" | "ESXi80U3i-25205845 or ESXi80U3j-25429389"
     const parsed = parseResponseMatrixRow('VMware ESX', 'ESXi80U3i-25205845 or ESXi80U3j-25429389');
