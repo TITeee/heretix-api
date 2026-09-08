@@ -218,6 +218,17 @@ export function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date
         affectedProducts.push({
           vendor:       'paloalto',
           product:      info.productName,
+          // A ">="/">" entry under known_affected is a lower bound on the
+          // affected range itself (e.g. "vers:generic/PAN-OS>=10.1.0" -- affected
+          // from this version onward, with no known upper bound), distinct from
+          // the ">="/">" entries fixedByProduct reads out of known_not_affected/
+          // fixed above (a lower bound on the *fix*). Without this, a CVE with no
+          // fixed version at all (PAN never shipped one -- e.g. a design-limitation
+          // advisory addressed only by a workaround) produced an entry with every
+          // version field left undefined, indistinguishable from "no data available"
+          // (confirmed live: CVE-2020-2035's 5 PAN-OS branches, each ">=" with no
+          // corresponding fixed/known_not_affected entry at all).
+          versionStart: (info.op === '>=' || info.op === '>') ? (info.version ?? undefined) : undefined,
           versionEnd:   info.op === '<'  ? (info.version ?? undefined) : undefined,
           lastAffected: info.op === '<=' ? (info.version ?? undefined) : undefined,
           versionFixed,

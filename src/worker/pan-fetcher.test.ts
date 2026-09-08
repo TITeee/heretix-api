@@ -103,6 +103,40 @@ describe('parseCsaf', () => {
     });
   });
 
+  it('sets versionStart (not just versionEnd/versionFixed) for a ">=" branch with no known fix', () => {
+    // Real shape confirmed live at https://security.paloaltonetworks.com/csaf/CVE-2020-2035:
+    // a design-limitation advisory PAN never shipped a version-specific fix for (only a
+    // workaround), so every affected branch is an open-ended ">=X" with no corresponding
+    // entry in known_not_affected/fixed at all. Before the fix, the ">="/">"  branch under
+    // known_affected only fed fixedByProduct's lookup (via a *different*, higher-version
+    // entry) -- it was never used as the affected range's own lower bound, so a CVE with
+    // no fix at all produced entries with every version field undefined, indistinguishable
+    // from "no data available".
+    const csaf: CsafDocument = {
+      document: { title: 't', tracking: { id: 'CVE-2020-2035', initial_release_date: '2020-08-12T00:00:00Z' } },
+      product_tree: {
+        branches: [{
+          name: 'PAN-OS',
+          category: 'product_name',
+          branches: [
+            { category: 'product_version_range', name: 'vers:generic/PAN-OS>=10.1.0', product: { name: 'PAN-OS', product_id: 'PANW-PAN-OS-118' } },
+            { category: 'product_version_range', name: 'vers:generic/PAN-OS>=9.0.0', product: { name: 'PAN-OS', product_id: 'PANW-PAN-OS-371' } },
+          ],
+        }],
+      },
+      vulnerabilities: [{
+        cve: 'CVE-2020-2035',
+        product_status: { known_affected: ['PANW-PAN-OS-118', 'PANW-PAN-OS-371'] },
+      }],
+    };
+
+    const advisory = parseCsaf(csaf, 'CVE-2020-2035');
+    expect(advisory!.affectedProducts).toEqual([
+      { vendor: 'paloalto', product: 'PAN-OS', versionStart: '10.1.0', versionEnd: undefined, lastAffected: undefined, versionFixed: undefined, patchAvailable: false },
+      { vendor: 'paloalto', product: 'PAN-OS', versionStart: '9.0.0', versionEnd: undefined, lastAffected: undefined, versionFixed: undefined, patchAvailable: false },
+    ]);
+  });
+
   it('returns null when there are no vulnerabilities at all', () => {
     const csaf: CsafDocument = {
       document: { title: 't', tracking: { id: 'X', initial_release_date: '2026-01-01T00:00:00Z' } },
