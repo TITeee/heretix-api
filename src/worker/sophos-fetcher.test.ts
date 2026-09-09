@@ -1,5 +1,44 @@
 import { describe, it, expect } from 'vitest';
-import { buildSophosAdvisories, type AdvisoryMeta } from './sophos-fetcher.js';
+import { buildSophosAdvisories, extractProduct, type AdvisoryMeta } from './sophos-fetcher.js';
+
+// Real titles confirmed live across ~120 stored Sophos advisories.
+describe('extractProduct', () => {
+  it('still parses the original "in Sophos X Firmware/Software" shape', () => {
+    expect(extractProduct('Resolved: Multiple vulnerabilities in Sophos Firewall Firmware')).toBe('Sophos Firewall');
+  });
+
+  it('parses a "Sophos X vY.Z [MR/GA] Resolves ..." bulletin, stripping parens', () => {
+    expect(extractProduct('Sophos Firewall v18.5 MR3 Resolves Security Vulnerabilities (CVE-2022-0331)')).toBe('Sophos Firewall');
+    expect(extractProduct('Sophos (SG) UTM 9.710 MR10 Resolves Security Vulnerabilities (CVE-2022-0386, CVE-2022-0652)')).toBe('Sophos SG UTM');
+  });
+
+  it('parses a "Sophos X N.N.N.N Resolves ..." bulletin with a bare version (no "v" prefix)', () => {
+    expect(extractProduct('Sophos Web Appliance 4.3.10.4 Resolves Security Vulnerabilities')).toBe('Sophos Web Appliance');
+  });
+
+  it('parses "Resolved ... in ProductName (CVE-...)" even without a "Sophos" prefix', () => {
+    expect(extractProduct('Resolved RCE in SG UTM WebAdmin (CVE-2020-25223)')).toBe('SG UTM WebAdmin');
+    expect(extractProduct('Resolved LPE in HitmanPro (CVE-2021-25271)')).toBe('HitmanPro');
+    expect(extractProduct('Resolved LPE vulnerability in Taegis Endpoint Agent (Linux) (CVE-2024-13861)')).toBe('Taegis Endpoint Agent');
+  });
+
+  it('parses "Resolved ... on Sophos ProductName (CVE-...)", preserving the "Sophos " prefix', () => {
+    expect(extractProduct('Resolved App Password Bypass on Sophos Secure Workspace for Android (CVE-2021-36808)')).toBe('Sophos Secure Workspace for Android');
+  });
+
+  it('drops a version token embedded mid-title instead of folding it into the product name', () => {
+    expect(extractProduct('Resolved buffer overflow in XG Firewall v17.x User Portal (CVE-2020-15069)')).toBe('XG Firewall');
+  });
+
+  it('falls back to generic "Sophos" when the only captured text is a bare component name', () => {
+    expect(extractProduct('Resolved authenticated RCE issues in User Portal (CVE-2020-17352)')).toBe('Sophos');
+  });
+
+  it('falls back to generic "Sophos" for third-party/non-product-specific advisories', () => {
+    expect(extractProduct('Advisory: OpenSSL DoS vulnerability (CVE-2022-0778)')).toBe('Sophos');
+    expect(extractProduct('Advisory: Log4j zero-day vulnerability AKA Log4Shell (CVE-2021-44228)')).toBe('Sophos');
+  });
+});
 
 function baseMeta(overrides: Partial<AdvisoryMeta> = {}): AdvisoryMeta {
   return {
