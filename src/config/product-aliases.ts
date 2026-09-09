@@ -44,10 +44,64 @@ const VCENTER_PRODUCTS = [
   'VMware vCenter Server',
 ];
 
+// Sophos advisory titles name products under several historical/sub-brand
+// spellings that don't match the canonical name heretix-management's search
+// UI offers (see extractProduct(), src/worker/sophos-fetcher.ts, and
+// migrate-recompute-sophos-product-names.ts, which backfilled these from
+// already-stored advisory titles). Same "literal scraped strings, not
+// canonical names" situation as VCENTER_PRODUCTS above.
+// DB counts as of 2026-09-09 (AdvisoryAffectedProduct, vendor='sophos'),
+// after that backfill: Sophos Firewall=30, XG Firewall=1, Sophos SG UTM=2,
+// SG UTM User Portal=1, SG UTM WebAdmin=1, Cyberoam OS WebAdmin=1,
+// Sophos Endpoint for Windows=3, Endpoint for MacOS=2, HitmanPro=1,
+// HitmanPro.Alert=1, Sophos Intercept X for Windows=1,
+// Sophos Mobile managed on-premises=1, Sophos Connect=3,
+// Sophos Connect Client for Windows=1. "Sophos UTM"/"Sophos Central"/"Sophos
+// Intercept X"/"Sophos Mobile" (the bare canonical names) don't exist as
+// their own literal value yet -- kept as the alias key (and first list
+// entry) so a future advisory titled exactly that way is still covered.
+const SOPHOS_UTM_PRODUCTS = [
+  'Sophos UTM',
+  'Sophos SG UTM',
+  'SG UTM User Portal',
+  'SG UTM WebAdmin',
+  // Cyberoam was Sophos's UTM-class firewall line before being folded into
+  // SG UTM; its advisories use "Cyberoam OS" naming, never "Sophos".
+  'Cyberoam OS WebAdmin',
+];
+
+const SOPHOS_FIREWALL_PRODUCTS = [
+  'Sophos Firewall',
+  // Sophos Firewall's name before its 2020 rebrand.
+  'XG Firewall',
+];
+
+const SOPHOS_ENDPOINT_PRODUCTS = [
+  'Sophos Endpoint',
+  'Sophos Endpoint for Windows',
+  'Endpoint for MacOS',
+  // Endpoint-protection sub-brands Sophos acquired (2015/2020); always
+  // referred to by their own name, never "Sophos HitmanPro"/"Sophos Taegis".
+  'HitmanPro',
+  'HitmanPro.Alert',
+];
+
+const SOPHOS_INTERCEPT_X_PRODUCTS = ['Sophos Intercept X', 'Sophos Intercept X for Windows'];
+const SOPHOS_MOBILE_PRODUCTS = ['Sophos Mobile', 'Sophos Mobile managed on-premises'];
+const SOPHOS_CONNECT_PRODUCTS = ['Sophos Connect', 'Sophos Connect Client for Windows'];
+
 export const PRODUCT_ALIASES: Record<string, string[]> = {
   // ── VMware vCenter (Broadcom) ────────────────────────────────────────────────
   'vmware vcenter server': VCENTER_PRODUCTS,
   'vmware vcenter': VCENTER_PRODUCTS,
+
+  // ── Sophos ─────────────────────────────────────────────────────────────────
+  'sophos utm': SOPHOS_UTM_PRODUCTS,
+  'sophos firewall': SOPHOS_FIREWALL_PRODUCTS,
+  'sophos endpoint': SOPHOS_ENDPOINT_PRODUCTS,
+  'sophos intercept x': SOPHOS_INTERCEPT_X_PRODUCTS,
+  'sophos mobile': SOPHOS_MOBILE_PRODUCTS,
+  'sophos connect': SOPHOS_CONNECT_PRODUCTS,
 
   // ── nginx ──────────────────────────────────────────────────────────────────
   // After F5 acquired NGINX, the NVD CPE product name changed.

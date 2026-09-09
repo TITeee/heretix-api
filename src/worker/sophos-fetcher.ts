@@ -46,9 +46,59 @@ function extractSeverity(description: string): string | undefined {
   return ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(raw) ? raw : undefined;
 }
 
-function extractProduct(title: string): string {
-  const m = title.match(/\bin\s+Sophos\s+(.+?)(?:\s+Firmware|\s+Software|\s*\(CVE|\s*\||\s*$)/i);
-  if (m) return `Sophos ${m[1].trim()}`;
+// Terms that name a feature/component shared across several Sophos products
+// rather than a distinguishable product on their own -- extracting one of
+// these verbatim (e.g. from "... issues in User Portal") would create a new,
+// ambiguous bucket instead of a genuinely searchable product name. A title
+// whose only captured text is one of these falls through to the next pattern
+// (or the generic 'Sophos' fallback) instead.
+const GENERIC_COMPONENT_TERMS = new Set(['User Portal', 'Console', 'Client', 'WebAdmin', 'Service']);
+
+/**
+ * Extract a product name from a Sophos advisory title. Sophos uses several
+ * distinct title conventions across its advisories (confirmed live across
+ * ~120 stored advisories); tries each in turn and falls back to the generic
+ * 'Sophos' bucket only when none match, rather than the single "in Sophos X
+ * Firmware/Software" pattern this originally supported -- that pattern alone
+ * missed ~80% of advisories with a real, specific product name (e.g. "Sophos
+ * Firewall v18.5 MR3 Resolves Security Vulnerabilities", "Resolved RCE in SG
+ * UTM WebAdmin"), silently collapsing genuinely distinguishable CVEs (UTM,
+ * Firewall, Endpoint, ...) into one undifferentiated "Sophos" product that
+ * couldn't be searched for by name.
+ */
+export function extractProduct(title: string): string {
+  // "... in Sophos X Firmware/Software" -- a product's firmware/software bulletin.
+  const firmwareMatch = title.match(/\bin\s+Sophos\s+(.+?)(?:\s+Firmware|\s+Software|\s*\(CVE|\s*\||\s*$)/i);
+  if (firmwareMatch) return `Sophos ${firmwareMatch[1].trim()}`;
+
+  // "Sophos X vY.Z [MRn|GA|RCn|betaN] Resolves ..." or "Sophos X N.N.N.N
+  // Resolves ..." -- a release-notes-style bulletin naming the product before
+  // its version number. Real examples: "Sophos Firewall v18.5 MR3 Resolves
+  // Security Vulnerabilities", "Sophos (SG) UTM 9.710 MR10 Resolves Security
+  // Vulnerabilities", "Sophos Web Appliance 4.3.10.4 Resolves Security
+  // Vulnerabilities".
+  const bulletinMatch = title.match(/^Sophos\s+(.+?)\s+(?:v\d[\d.]*|\d+\.\d+[\d.]*)\s*(?:MR\d*|GA|RC\d*|beta\d*)?\s*Resolves\b/i);
+  if (bulletinMatch) {
+    const product = bulletinMatch[1].replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+    return `Sophos ${product}`;
+  }
+
+  // "Resolved ... in/on [Sophos ]ProductName (CVE-...)" -- captures the
+  // Title-Case product name following "in"/"on" up to the first "(" or end of
+  // string. The "Sophos " prefix is optional and preserved when present:
+  // several sub-brands (HitmanPro, Taegis, SG UTM, Cyberoam) are never
+  // written with a "Sophos " prefix at all in Sophos's own titles.
+  const inOnMatch = title.match(/\b(?:in|on)\s+(Sophos\s+)?([A-Z][^(]*?)\s*(?:\(|$)/);
+  if (inOnMatch) {
+    // Drop a trailing version token and anything after it (e.g. "XG Firewall
+    // v17.x User Portal" -> "XG Firewall") -- a version number embedded in the
+    // product name defeats separate version-based searching, and the text
+    // describing which sub-component/portal it affects at that version isn't
+    // part of the product's own name.
+    const captured = `${inOnMatch[1] ?? ''}${inOnMatch[2]}`.replace(/\s+v?\d+(\.[\dx]+)*.*$/i, '').trim();
+    if (!GENERIC_COMPONENT_TERMS.has(captured)) return captured;
+  }
+
   return 'Sophos';
 }
 
