@@ -73,3 +73,51 @@ describe('importOSVData — orphaned master row regression', () => {
     expect(allMasters).toHaveLength(1);
   });
 });
+
+describe('importOSVData — withdrawn records', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('creates no OSVAffectedPackage rows for a withdrawn record', async () => {
+    await importOSVData(makeOsv({
+      withdrawn: '2026-09-01T18:35:34Z',
+      affected: [{
+        package: { ecosystem: 'npm', name: 'test-pkg' },
+        ranges: [{ type: 'SEMVER', events: [{ introduced: '1.0.0' }] }],
+      }],
+    }));
+
+    const vuln = await prisma.oSVVulnerability.findUnique({ where: { osvId: 'GHSA-test-0001' } });
+    const packages = await prisma.oSVAffectedPackage.findMany({ where: { vulnerabilityId: vuln!.id } });
+    expect(packages).toHaveLength(0);
+  });
+
+  it('removes previously-imported OSVAffectedPackage rows once a record becomes withdrawn', async () => {
+    // 1. Initial import while still active — creates affected-package rows.
+    await importOSVData(makeOsv({
+      affected: [{
+        package: { ecosystem: 'npm', name: 'test-pkg' },
+        ranges: [{ type: 'SEMVER', events: [{ introduced: '1.0.0' }, { fixed: '2.0.0' }] }],
+      }],
+    }));
+    const vuln = await prisma.oSVVulnerability.findUnique({ where: { osvId: 'GHSA-test-0001' } });
+    const before = await prisma.oSVAffectedPackage.findMany({ where: { vulnerabilityId: vuln!.id } });
+    expect(before.length).toBeGreaterThan(0);
+
+    // 2. Upstream withdraws the record (e.g. marked a duplicate) — re-import should clear it out.
+    await importOSVData(makeOsv({
+      withdrawn: '2026-09-01T18:35:34Z',
+      affected: [{
+        package: { ecosystem: 'npm', name: 'test-pkg' },
+        ranges: [{ type: 'SEMVER', events: [{ introduced: '1.0.0' }, { fixed: '2.0.0' }] }],
+      }],
+    }));
+    const after = await prisma.oSVAffectedPackage.findMany({ where: { vulnerabilityId: vuln!.id } });
+    expect(after).toHaveLength(0);
+  });
+});

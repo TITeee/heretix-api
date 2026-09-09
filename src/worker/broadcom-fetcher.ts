@@ -101,11 +101,14 @@ function parseProductNames(raw: string): string[] {
  * KB88287") that happens to sit in the Fixed Version column. Broadcom uses
  * three shapes across the Response Matrix: a dotted decimal ("9.0.2.0100",
  * "8.0 U3k"), an ESXi build id ("ESXi80U3k-25595708"), or a Workstation/Fusion
- * year-half release ("26H1").
+ * year-half release ("26H1"), optionally with a trailing update suffix
+ * ("26H1u1" -- confirmed live on VMSA-2026-0007/CVE-2026-59346, which this
+ * regex previously rejected outright, leaving Workstation/Fusion's fix
+ * version as "n/a" despite the advisory listing one).
  */
 function isVersionLike(v: string): boolean {
   if (!v || /n\/a|see\s+note/i.test(v)) return false;
-  return /\d+\.\d+/.test(v) || /^ESXi[\w.-]*-\d+$/i.test(v) || /^\d{2}H\d$/i.test(v);
+  return /\d+\.\d+/.test(v) || /^ESXi[\w.-]*-\d+$/i.test(v) || /^\d{2}H\d(u\d+)?$/i.test(v);
 }
 
 /**
