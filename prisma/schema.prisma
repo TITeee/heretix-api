@@ -342,3 +342,10 @@ model JobConfig {
   enabled   Boolean  @default(true)
   updatedAt DateTime @updatedAt
 }
+
+// migrate-all.js が実行済みの migrate-*.ts スクリプト名を記録する台帳。
+// 一度成功したスクリプトは次回以降のコンテナ起動時にスキップされる。
+model DataMigration {
+  name      String   @id
+  appliedAt DateTime @default(now())
+}
