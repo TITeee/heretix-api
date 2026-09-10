@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { parseCPE } from '../../utils/cpe.js';
-import { expandProductAliases } from '../../config/product-aliases.js';
+import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
 import {
   type VulnerabilityResult,
   dedup,
@@ -369,15 +369,23 @@ async function searchAdvisory(
     versionWhere = { OR: [{ affectedVersions: { has: version } }, UNFIXED_NO_RANGE_WHERE] };
   }
 
+  // Oracle CPU product names need a startsWith prefix match rather than the
+  // exact-list match every other vendor uses -- see oracleProductPrefixes()'s
+  // doc comment for why an enumerated list goes stale here.
+  const oraclePrefixes = oracleProductPrefixes(product);
+  const productWhere = oraclePrefixes
+    ? { OR: oraclePrefixes.map(p => ({ product: { startsWith: p } })) }
+    : { product: { in: expandProductAliases(product) } };
+
   const rows = await prisma.advisoryAffectedProduct.findMany({
     where: {
-      product: { in: expandProductAliases(product) },
       // RPM-vendor rows (RedHatFetcher/OracleLinuxFetcher OVAL, RedHatVexFetcher)
       // are reachable only through searchAdvisoryRpm() via an explicit RHEL/Oracle
       // Linux ecosystem -- see RPM_ADVISORY_VENDOR_PREFIXES's doc comment for why
       // leaking them through this vendor-blind product-name search is unsafe.
       NOT: { OR: RPM_ADVISORY_VENDOR_PREFIXES.map(p => ({ vendor: { startsWith: p } })) },
       AND: [
+        productWhere,
         versionWhere,
         { OR: [{ versionEnd: null }, { versionEnd: { not: { contains: '.module+' } } }] },
       ],

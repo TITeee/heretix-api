@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { expandProductAliases, PRODUCT_ALIASES } from './product-aliases.js';
+import { expandProductAliases, PRODUCT_ALIASES, oracleProductPrefixes, ORACLE_PRODUCT_PREFIXES } from './product-aliases.js';
 
 describe('expandProductAliases', () => {
   it('expands nginx to all post-acquisition CPE product names', () => {
@@ -74,6 +74,41 @@ describe('expandProductAliases', () => {
     ];
     expect(expandProductAliases('VMware vCenter Server')).toEqual(expected);
     expect(expandProductAliases('VMware vCenter')).toEqual(expected);
+  });
+});
+
+describe('oracleProductPrefixes', () => {
+  it('returns the prefix list for a known umbrella category', () => {
+    expect(oracleProductPrefixes('PeopleSoft')).toEqual(['PeopleSoft']);
+    expect(oracleProductPrefixes('Communications')).toEqual(['Communications']);
+  });
+
+  it('is case-insensitive on the lookup key', () => {
+    expect(oracleProductPrefixes('peoplesoft')).toEqual(['PeopleSoft']);
+    expect(oracleProductPrefixes('SIEBEL CRM')).toEqual(['Siebel']);
+  });
+
+  it('lists two prefixes for "database", since "Oracle Database" does not itself start with "Database"', () => {
+    expect(oracleProductPrefixes('database')).toEqual(['Database', 'Oracle Database']);
+  });
+
+  it('returns undefined for a product with no Oracle prefix mapping (exact-match search unaffected)', () => {
+    expect(oracleProductPrefixes('Java SE')).toBeUndefined();
+    expect(oracleProductPrefixes('unknown-tool')).toBeUndefined();
+  });
+});
+
+describe('ORACLE_PRODUCT_PREFIXES data integrity', () => {
+  it('uses lowercase keys throughout (lookup is case-insensitive, so uppercase keys would be unreachable)', () => {
+    for (const key of Object.keys(ORACLE_PRODUCT_PREFIXES)) {
+      expect(key).toBe(key.toLowerCase());
+    }
+  });
+
+  it('has no empty prefix lists', () => {
+    for (const [key, prefixes] of Object.entries(ORACLE_PRODUCT_PREFIXES)) {
+      expect(prefixes.length, `prefix list for "${key}" is empty`).toBeGreaterThan(0);
+    }
   });
 });
 
