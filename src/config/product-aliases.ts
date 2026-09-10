@@ -194,3 +194,34 @@ export const PRODUCT_ALIASES: Record<string, string[]> = {
 export function expandProductAliases(product: string): string[] {
   return PRODUCT_ALIASES[product.toLowerCase()] ?? [product];
 }
+
+/**
+ * Oracle CPU (Critical Patch Update) advisories store literal per-component
+ * product names straight off Oracle's own CVRF documents (oracle-cpu-fetcher.ts
+ * does no renaming) rather than the umbrella product-family name
+ * heretix-management's search UI offers. Unlike every PRODUCT_ALIASES entry
+ * above, a fixed enumerated list would immediately go stale here — e.g.
+ * "PeopleSoft" alone covers 60+ literal spellings ("PeopleSoft Enterprise
+ * PeopleTools", "PeopleSoft Enterprise CS Campus Community", ...) and Oracle
+ * adds new sub-component names with every quarterly CPU. A startsWith prefix
+ * match instead absorbs future sub-components automatically.
+ *
+ * "database" additionally lists the literal "Oracle Database" (its own
+ * prefix, since it doesn't start with "Database") but deliberately excludes
+ * other real DB counts as of 2026-09-11 that share the substring "Database"
+ * but are distinct product lines: "TimesTen In-Memory Database", "NoSQL
+ * Database", "Audit Vault and Database Firewall", "Enterprise Manager for
+ * Oracle/MySQL Database".
+ */
+export const ORACLE_PRODUCT_PREFIXES: Record<string, string[]> = {
+  database: ['Database', 'Oracle Database'],
+  peoplesoft: ['PeopleSoft'],
+  'siebel crm': ['Siebel'],
+  communications: ['Communications'],
+  'financial services': ['Financial Services'],
+  'e-business suite': ['E-Business'],
+};
+
+export function oracleProductPrefixes(product: string): string[] | undefined {
+  return ORACLE_PRODUCT_PREFIXES[product.toLowerCase()];
+}
