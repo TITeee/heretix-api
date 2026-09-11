@@ -46,9 +46,17 @@ function hasPrereleaseMarker(withoutEpoch: string): boolean {
   return /\d-[a-zA-Z]/.test(withoutEpoch);
 }
 
+// Same pattern normalizeVersion() now recognizes for Go module pseudo-versions
+// (see its own comment) -- a 14-digit timestamp there is never a release
+// number, it's routed to a separate code path entirely. Without this mirror
+// check, a fixed pseudo-version would keep showing up here as a stale
+// "release overflow" even though normalizeVersion() no longer parses it that way.
+const PSEUDO_VERSION_SUFFIX = /[-.]\d{14}-[0-9a-fA-F]{7,40}$/;
+
 /** Returns the parsed release component, or null if this version has no hyphen-integer release. */
 function extractReleaseComponent(raw: string): number | null {
   const withoutEpoch = raw.replace(/^\d+:/, '');
+  if (PSEUDO_VERSION_SUFFIX.test(withoutEpoch)) return null;
   if (hasPrereleaseMarker(withoutEpoch)) return null;
   const parts = withoutEpoch.split('-');
   const m = parts[1]?.match(/^(\d+)/);
@@ -87,6 +95,13 @@ function printGroupCounts(rows: { group: string; n: bigint }[], total: number): 
 
 async function checkCollapsedRanges() {
   section('1. COLLAPSED / INVERTED RANGES (lowerInt >= upperInt -- matches nothing)');
+  // A large, expected share of the Go count here is not a bug: a Go module
+  // pseudo-version whose base is 0.0.0 (no tag reachable from that commit --
+  // see normalizeVersion()'s pseudo-version handling) normalizes to 0, and
+  // when the paired introduced bound is also "0" (common for CVEs assigned
+  // before the module had any release), that is exactly introducedInt=0 >=
+  // fixedInt=0 -- a correctly-empty range, since every real tagged version
+  // postdates an untagged commit and so can't fall inside it.
 
   const osv = await prisma.$queryRaw<{ group: string; n: bigint }[]>`
     SELECT ecosystem AS group, COUNT(*) AS n FROM "OSVAffectedPackage"

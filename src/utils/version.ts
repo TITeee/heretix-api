@@ -25,6 +25,27 @@ export function normalizeVersion(version: string): bigint | null {
   // Strip epoch prefix ("1:0.1.15-..." -> "0.1.15-...")
   let withoutEpoch = version.replace(/^\d+:/, '');
 
+  // Go module pseudo-version (https://go.dev/ref/mod#pseudo-versions):
+  // "vX.Y.Z-yyyymmddhhmmss-abcdefabcdef", possibly with a "-0"/"-pre.0"-style
+  // infix (dot-joined per spec) directly before the timestamp. The generic
+  // hyphen-suffix handling below misreads this: a hash starting with a digit
+  // gets the 14-digit timestamp read as an RPM release number and rejected as
+  // garbage (over MAX_COMPONENT below); one starting with a letter trips the
+  // pre-release check and collapses the whole value to 0 -- either way the
+  // actual base version is thrown away. Recognized here instead: normalize
+  // the base and treat the pseudo-version as one step below it, same
+  // convention as any other pre-release, since by construction it never
+  // reaches the tag it's measured from. Must not fall through to the generic
+  // logic below on a match (base==null) -- that would reintroduce the same
+  // misparse this exists to avoid.
+  const pseudoVersionSuffix = /[-.]\d{14}-[0-9a-fA-F]{7,40}$/;
+  if (pseudoVersionSuffix.test(withoutEpoch)) {
+    const base = withoutEpoch.replace(pseudoVersionSuffix, '').match(/^v?(\d+\.\d+\.\d+)/)?.[1];
+    const baseInt = base ? normalizeVersion(base) : null;
+    if (baseInt === null) return null;
+    return baseInt > 0n ? baseInt - 1n : baseInt;
+  }
+
   // Convert NVD "_update_?N" suffix to ".N" before stripping non-numerics.
   // Without this, "6_update_4" strips to "64" (major=64) instead of "6.4" (minor=4).
   // Examples: "6_update_4" → "6.4", "5.0_update13" → "5.0.13"

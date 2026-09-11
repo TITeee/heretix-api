@@ -6,6 +6,48 @@ describe('normalizeVersion', () => {
     expect(normalizeVersion('1.2.3')).toBe(1002003000n);
   });
 
+  describe('Go module pseudo-versions', () => {
+    // Real CVE-2022-29526 declaration: the fix is expressed as a pseudo-version
+    // with no earlier reachable tag (base 0.0.0). Before this fix, a digit-led
+    // hash misread the 14-digit timestamp as an RPM release number and
+    // overflowed MAX_COMPONENT, returning null -- which versionRangeWhere()
+    // treats as "no fix yet", matching every version queried forever.
+    it('normalizes a base-0.0.0 pseudo-version with a digit-led hash to 0, not null', () => {
+      expect(normalizeVersion('0.0.0-20220412211240-33da011f77ad')).toBe(0n);
+    });
+
+    // Real code.cloudfoundry.org/gorouter (CVE-2019-11289) declaration: a
+    // letter-led hash tripped the pre-release check, collapsing straight to 0
+    // -- already correct by accident for this base-0.0.0 case, so this locks
+    // in that the fix doesn't change it.
+    it('normalizes a base-0.0.0 pseudo-version with a letter-led hash to 0 as well', () => {
+      expect(normalizeVersion('0.0.0-20191101214924-b1b5c44e050f')).toBe(0n);
+    });
+
+    // Real data: a pseudo-version with a known prior/next tag as its base sits
+    // one step below that tag, same as any other pre-release.
+    it('normalizes a non-zero-base pseudo-version to one step below its base', () => {
+      const base = normalizeVersion('1.0.1');
+      expect(normalizeVersion('1.0.1-20260311144920-9eb2d33064b7')).toBe((base as bigint) - 1n);
+    });
+
+    it('handles the "v" prefix the same way as no prefix', () => {
+      expect(normalizeVersion('v0.0.0-20220412211240-33da011f77ad')).toBe(0n);
+    });
+
+    // Not observed in this DB's data, but valid per the Go spec: a "-0." or
+    // "-pre.0." infix joins the timestamp with a dot instead of a hyphen.
+    it('extracts the base through a dot-joined "-0." infix', () => {
+      const base = normalizeVersion('1.2.4');
+      expect(normalizeVersion('v1.2.4-0.20180830153604-fb81aa4f8c6e')).toBe((base as bigint) - 1n);
+    });
+
+    it('does not mistake an ordinary RPM release or pre-release for a pseudo-version', () => {
+      expect(normalizeVersion('2.9.13-6.el9')).toBe(2009013006n);
+      expect(normalizeVersion('2.0.0-beta.1')).toBe((normalizeVersion('2.0.0') as bigint) - 1n);
+    });
+  });
+
   it('includes the RPM release number as the 4th component', () => {
     expect(normalizeVersion('2.9.13-6.el9')).toBe(2009013006n);
   });

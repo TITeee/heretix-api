@@ -48,6 +48,7 @@
     "migrate:prune-orphaned-advisory-masters": "node dist/scripts/migrate-prune-orphaned-advisory-masters.js",
     "migrate:remove-withdrawn-osv-packages": "node dist/scripts/migrate-remove-withdrawn-osv-packages.js",
     "migrate:recompute-sophos-product-names": "node dist/scripts/migrate-recompute-sophos-product-names.js",
+    "migrate:recompute-osv-pseudo-versions": "node dist/scripts/migrate-recompute-osv-pseudo-versions.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
     "validate:apache": "node dist/scripts/validate-apache.js",
