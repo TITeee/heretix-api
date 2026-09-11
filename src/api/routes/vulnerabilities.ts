@@ -12,6 +12,8 @@ import {
   isDpkgStyleDistro,
   isRpmStyleOsvDistro,
   isLanguageEcosystem,
+  isAdvisoryOnlyEcosystem,
+  cnaVersionWhere,
   normalizeEcosystem,
   rpmAdvisoryVendor,
   matchesDpkgStyleVersion,
@@ -434,6 +436,53 @@ async function searchAdvisory(
   });
 }
 
+/**
+ * Search master via the CNA-declared affected products from CVE Records.
+ *
+ * Covers what nothing else in this database can match a product to: products
+ * with no dedicated advisory fetcher whose CVEs NVD has not CPE-enriched --
+ * measured at ~580 CVEs across network/appliance vendors alone (Totolink,
+ * Edimax, Tenda, WatchGuard, Moxa, D-Link, ...). Vendors that do have a
+ * dedicated fetcher barely appear in that gap (Palo Alto: 5 of 130), which is
+ * the intended division of labour: this is the long tail, not a replacement.
+ *
+ * Callers gate this by ecosystem -- see searchVulnerabilities().
+ */
+async function searchCna(
+  product: string,
+  version: string | undefined,
+): Promise<VulnerabilityResult[]> {
+  const versionInt = version ? normalizeVersion(version) : null;
+  const approximate = version !== undefined && versionInt === null;
+
+  const rows = await prisma.cnaAffectedProduct.findMany({
+    where: {
+      product: { in: expandProductAliases(product) },
+      AND: [cnaVersionWhere(versionInt, version)],
+    },
+    include: {
+      vulnerability: {
+        select: {
+          cveId: true,
+          masterVuln: { select: masterSelect },
+        },
+      },
+    },
+  });
+
+  return rows.flatMap(r => {
+    const master = r.vulnerability.masterVuln;
+    // Every CnaVulnerability is linked to a master at import time
+    // (cna-importer.ts creates one when none exists), so a null here means the
+    // master was removed out from under it rather than a pre-backfill row.
+    if (!master) return [];
+    // versionEnd is the exclusive upper bound the CNA declared, i.e. the
+    // version the fix landed in. lastAffected is inclusive and therefore is
+    // *not* a fixed version.
+    return [masterToResult(master, approximate, 'cna', r.versionEnd, r.vulnerability.cveId)];
+  });
+}
+
 type RpmAdvisoryRow = {
   versionStart: string | null;
   versionEnd: string | null;
@@ -695,18 +744,23 @@ async function searchVulnerabilities(
     // Querying NVD/Advisory for these would surface C-library or OS CVEs that share
     // the same package name (e.g. C bzip2 → npm bzip2 false positive).
     const isLanguage = normalizedEcosystem ? isLanguageEcosystem(normalizedEcosystem) : false;
+    // The "advisory" sentinel means the package came from a curated
+    // vendor-advisory list, which a dedicated fetcher already covers — CNA data
+    // is for products that have no such fetcher, so it is skipped there.
+    const isAdvisoryOnly = normalizedEcosystem ? isAdvisoryOnlyEcosystem(normalizedEcosystem) : false;
 
     const rpmVendor = normalizedEcosystem ? rpmAdvisoryVendor(normalizedEcosystem) : null;
 
-    const [osvResults, nvdResults, advisoryResults] = await Promise.all([
+    const [osvResults, nvdResults, advisoryResults, cnaResults] = await Promise.all([
       searchOSV(packageName, version, versionInt, normalizedEcosystem),
       isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, normalizedEcosystem),
       rpmVendor
         ? searchAdvisoryRpm(packageName, version, rpmVendor)
         : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),
+      isDistro || isLanguage || isAdvisoryOnly ? Promise.resolve([]) : searchCna(packageName, version),
     ]);
 
-    all = dedup([...osvResults, ...nvdResults, ...advisoryResults]);
+    all = dedup([...osvResults, ...nvdResults, ...advisoryResults, ...cnaResults]);
     cacheSearchResults(cacheKey, all);
   }
 
@@ -734,8 +788,12 @@ const cpeForCveSchema = z.object({
  * is the raw CPE <product> identifier ("http_server", not "Apache HTTP
  * Server"), which a user can't reasonably guess up front — this lets the UI
  * suggest real names as they type instead of requiring that lookup elsewhere.
- * Covers NVD and OSV only (not AdvisoryAffectedProduct): those vendor products
- * already have their own curated dropdown in the "Advisory" search mode.
+ * Covers NVD, OSV and CNA, but not AdvisoryAffectedProduct: those vendor
+ * products already have their own curated dropdown in the "Advisory" search
+ * mode. CNA product names have no such dropdown and are model numbers as often
+ * as not ("BR-6208AC"), so without completion there is no way to reach them --
+ * which matters most when registering an appliance as an asset, where the name
+ * has to match exactly for searchCna() to find anything.
  */
 async function suggestPackageNames(prefix: string, ecosystem: string | undefined, limit: number): Promise<string[]> {
   const ecosystemFilter = ecosystem ? { ecosystem: { startsWith: ecosystem } } : {};
@@ -745,18 +803,28 @@ async function suggestPackageNames(prefix: string, ecosystem: string | undefined
   // case-insensitive index.
   const where = { packageName: { startsWith: prefix }, ...ecosystemFilter };
 
-  const [nvdRows, osvRows] = await Promise.all([
+  const [nvdRows, osvRows, cnaRows] = await Promise.all([
     prisma.nVDAffectedPackage.findMany({
       where, distinct: ['packageName'], select: { packageName: true }, take: limit, orderBy: { packageName: 'asc' },
     }),
     prisma.oSVAffectedPackage.findMany({
       where, distinct: ['packageName'], select: { packageName: true }, take: limit, orderBy: { packageName: 'asc' },
     }),
+    // CnaAffectedProduct has no ecosystem column: its rows are products rather
+    // than ecosystem packages. An ecosystem-filtered request is asking for that
+    // ecosystem's packages, so CNA has nothing to contribute to it.
+    ecosystem
+      ? Promise.resolve([])
+      : prisma.cnaAffectedProduct.findMany({
+          where: { product: { startsWith: prefix } },
+          distinct: ['product'], select: { product: true }, take: limit, orderBy: { product: 'asc' },
+        }),
   ]);
 
   const names = new Set<string>();
   for (const r of nvdRows) names.add(r.packageName);
   for (const r of osvRows) names.add(r.packageName);
+  for (const r of cnaRows) names.add(r.product);
   return [...names].sort((a, b) => a.localeCompare(b)).slice(0, limit);
 }
 
@@ -878,6 +946,12 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
     nvdVulnerability: { include: { affectedPackages: true } },
     osvVulnerabilities: { include: { affectedPackages: true } },
     advisoryVulnerabilities: { include: { affectedProducts: true } },
+    // A finding can be reported by searchCna() alone, with no NVD CPE or
+    // advisory row behind it. Without this the detail view would show nothing
+    // that explains why it matched -- and the vendor shown here is the only
+    // thing distinguishing a generic CNA product name ("CMS", "ERP") from
+    // another vendor's identically-named product.
+    cnaVulnerability: { include: { affectedProducts: true } },
   } as const;
 
   fastify.get('/vulnerabilities/:id', async (request, reply) => {
