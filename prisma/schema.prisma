@@ -47,6 +47,7 @@ model Vulnerability {
   osvVulnerabilities     OSVVulnerability[]
   nvdVulnerability       NVDVulnerability?
   advisoryVulnerabilities AdvisoryVulnerability[]
+  cnaVulnerability       CnaVulnerability?
 
   @@index([severity])
   @@index([cvssScore])
@@ -307,6 +308,80 @@ model AdvisoryAffectedProduct {
   @@index([advisoryId])
 }
 
+// ─── CVE Record (CNA-declared affected) ──────────────────────
+//
+// vendor/product/versions as declared by the CNA itself in the CVE Record
+// (containers.cna.affected in cvelistV5). Its value is being available without
+// waiting for NVD's CPE enrichment: roughly half of the CVEs published in the
+// last year have no NVDAffectedPackage row at all, making them undetectable
+// through the NVD path.
+//
+// These live in their own tables rather than alongside NVD/OSV/Advisory data
+// because CNA product names are free-form and vary widely in quality; mixing
+// them into the existing search paths (searchAdvisory() matches on product name
+// alone) would let that noise cause false positives in already-working
+// features. Ingest and measure first, then decide how to expose it.
+// No search path reads these two tables today -- only validate-cna.ts.
+model CnaVulnerability {
+  id            String   @id @default(cuid())
+
+  cveId         String   @unique
+  cnaShortName  String                    // containers.cna.providerMetadata.shortName (per-CNA quality analysis)
+
+  datePublished DateTime?
+  dateUpdated   DateTime?                 // cveMetadata.dateUpdated (change detection for delta imports)
+
+  // Only containers.cna.affected is kept. The rest of the record is already in
+  // NVDVulnerability.rawData for nearly every CVE, so storing the whole record
+  // here would duplicate hundreds of MB.
+  rawAffected   Json
+
+  fetchedAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  masterVulnId  String?  @unique
+  masterVuln    Vulnerability? @relation(fields: [masterVulnId], references: [id])
+
+  affectedProducts CnaAffectedProduct[]
+
+  @@index([cnaShortName])
+  @@index([dateUpdated])
+}
+
+model CnaAffectedProduct {
+  id              String   @id @default(cuid())
+
+  vulnerabilityId String
+  vulnerability   CnaVulnerability @relation(fields: [vulnerabilityId], references: [id], onDelete: Cascade)
+
+  vendor          String
+  product         String
+  packageName     String?                 // affected[].packageName, when present
+  versionType     String?                 // semver / custom / maven / ... kept verbatim for per-CNA quality analysis
+
+  // Version range (strings). Same upper-bound semantics as AdvisoryAffectedProduct:
+  // versionEnd is exclusive (lessThan), lastAffected is inclusive (lessThanOrEqual).
+  versionStart    String?
+  versionEnd      String?
+  lastAffected    String?
+
+  versionStartInt BigInt?
+  versionEndInt   BigInt?
+  lastAffectedInt BigInt?
+
+  // Only single-version declarations carrying no range operator (lessThan /
+  // lessThanOrEqual) land here. Turning one into a range would wrongly widen it
+  // to "every version below this one", so it is matched by equality only --
+  // the same call apache-fetcher.ts makes for its exact-version advisories.
+  affectedVersions String[]
+
+  createdAt       DateTime @default(now())
+
+  @@index([vendor, product])
+  @@index([product, versionStartInt, versionEndInt])
+  @@index([vulnerabilityId])
+}
+
 // ─── ジョブ管理 ───────────────────────────────────────────────
 
 model CollectionJob {
@@ -343,8 +418,8 @@ model JobConfig {
   updatedAt DateTime @updatedAt
 }
 
-// migrate-all.js が実行済みの migrate-*.ts スクリプト名を記録する台帳。
-// 一度成功したスクリプトは次回以降のコンテナ起動時にスキップされる。
+// Ledger of the migrate-*.ts scripts migrate-all.js has already run. A script
+// recorded here is skipped on every later container start.
 model DataMigration {
   name      String   @id
   appliedAt DateTime @default(now())

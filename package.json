@@ -35,6 +35,7 @@
     "import:zabbix": "node dist/scripts/import-zabbix.js",
     "import:tomcat": "node dist/scripts/import-tomcat.js",
     "import:nginx": "node dist/scripts/import-nginx.js",
+    "import:cna": "node dist/scripts/import-cna.js",
     "migrate:all": "node dist/scripts/migrate-all.js",
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
     "migrate:module-version-start": "node dist/scripts/migrate-module-version-start.js",
@@ -62,7 +63,8 @@
     "validate:osv-coverage": "node dist/scripts/validate-osv-coverage.js",
     "validate:version-encoding": "node dist/scripts/validate-version-encoding.js",
     "validate:nodejs": "node dist/scripts/validate-nodejs.js",
-    "validate:broadcom": "node dist/scripts/validate-broadcom.js"
+    "validate:broadcom": "node dist/scripts/validate-broadcom.js",
+    "validate:cna": "node dist/scripts/validate-cna.js"
   },
   "keywords": [
     "vulnerability",
