@@ -30,6 +30,7 @@ import { ZabbixFetcher } from '../worker/zabbix-fetcher.js';
 import { TomcatFetcher } from '../worker/tomcat-fetcher.js';
 import { NginxFetcher } from '../worker/nginx-fetcher.js';
 import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
+import { importCnaDelta } from '../worker/cna-importer.js';
 import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
 import { importDebianSourceMappings } from '../worker/debian-sources-fetcher.js';
 import { SHARED_BUCKET_ECOSYSTEMS, osvBucketName } from './osv-bucket.js';
@@ -94,6 +95,18 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-zabbix',       label: 'Zabbix',             cron: '15 14 * * *', run: () => runAdvisory('advisory-zabbix', new ZabbixFetcher()) },
   { source: 'advisory-tomcat',       label: 'Tomcat',             cron: '30 14 * * *', run: () => runAdvisory('advisory-tomcat', new TomcatFetcher()) },
   { source: 'advisory-nginx',        label: 'Nginx',              cron: '45 14 * * *', run: () => runAdvisory('advisory-nginx', new NginxFetcher()) },
+  {
+    // Delta bundles only. The one-time bootstrap of historical years is run by
+    // hand (`pnpm import:cna --bootstrap`) since it downloads a ~600MB archive.
+    source: 'cna',
+    label: 'CVE Record (CNA)',
+    cron: '30 15 * * *',
+    run: async () => {
+      const since = await getDeltaCursor('cna', 25 * HOUR_MS);
+      const result = await importCnaDelta(since);
+      return { fetched: result.scanned, inserted: result.inserted, updated: result.updated, failed: result.failed };
+    },
+  },
   {
     source: 'debian-source-packages',
     label: 'Debian Source Packages',

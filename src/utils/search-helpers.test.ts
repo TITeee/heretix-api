@@ -12,6 +12,8 @@ import {
   matchesRpmStyleOsvVersion,
   matchesRpmVersionRange,
   isRpmStyleOsvDistro,
+  isAdvisoryOnlyEcosystem,
+  cnaVersionWhere,
   buildAliases,
   type VulnerabilityResult,
 } from './search-helpers.js';
@@ -133,6 +135,73 @@ describe('versionRangeWhere', () => {
         },
       ],
     });
+  });
+});
+
+describe('isAdvisoryOnlyEcosystem', () => {
+  it('recognizes the sentinel heretix-management sends for curated vendor products', () => {
+    expect(isAdvisoryOnlyEcosystem('advisory')).toBe(true);
+  });
+
+  it('does not mistake real ecosystems for it', () => {
+    for (const eco of ['npm', 'PyPI', 'Debian:12', 'Red Hat:9', 'Alpine:v3.20', '', 'advisories', 'Advisory']) {
+      expect(isAdvisoryOnlyEcosystem(eco), eco).toBe(false);
+    }
+  });
+});
+
+describe('cnaVersionWhere', () => {
+  it('matches an encodable version by range or by exact equality', () => {
+    expect(cnaVersionWhere(1002003000n, '1.2.3')).toEqual({
+      OR: [
+        {
+          AND: [
+            // The guard: a row with no bound at all must not reach the range
+            // comparison, where every null-fallback below would resolve true
+            // and match every version queried.
+            {
+              OR: [
+                { versionStartInt: { not: null } },
+                { versionEndInt: { not: null } },
+                { lastAffectedInt: { not: null } },
+              ],
+            },
+            { OR: [{ versionStartInt: { lte: 1002003000n } }, { versionStartInt: null }] },
+            {
+              OR: [
+                { versionEndInt: { gt: 1002003000n } },
+                {
+                  versionEndInt: null,
+                  OR: [{ lastAffectedInt: null }, { lastAffectedInt: { gte: 1002003000n } }],
+                },
+              ],
+            },
+          ],
+        },
+        { affectedVersions: { has: '1.2.3' } },
+      ],
+    });
+  });
+
+  it('treats versionEnd as exclusive and lastAffected as inclusive', () => {
+    const where = cnaVersionWhere(1002003000n, '1.2.3') as {
+      OR: [{ AND: [unknown, unknown, { OR: [{ versionEndInt: { gt: bigint } }, { OR: [unknown, { lastAffectedInt: { gte: bigint } }] }] }] }, unknown];
+    };
+    const upper = where.OR[0].AND[2].OR;
+    expect(upper[0]).toEqual({ versionEndInt: { gt: 1002003000n } });
+    expect(upper[1].OR[1]).toEqual({ lastAffectedInt: { gte: 1002003000n } });
+  });
+
+  it('falls back to exact equality when the version cannot be encoded', () => {
+    // Appliance firmware routinely fails normalizeVersion() but is exactly what
+    // the asset reports, and 94.5% of the appliance rows are exact-version.
+    expect(cnaVersionWhere(null, '4.1.2cu.5241_B20210927')).toEqual({
+      affectedVersions: { has: '4.1.2cu.5241_B20210927' },
+    });
+  });
+
+  it('places no version constraint when no version was given', () => {
+    expect(cnaVersionWhere(null, undefined)).toEqual({});
   });
 });
 

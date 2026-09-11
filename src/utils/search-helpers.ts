@@ -158,6 +158,76 @@ export function isLanguageEcosystem(eco: string): boolean {
   return LANGUAGE_ECOSYSTEMS.has(eco);
 }
 
+// Not a real ecosystem: heretix-management sends this sentinel when a package
+// was registered from, or is being searched through, its curated vendor-advisory
+// lists. Everything reached that way already has a dedicated advisory fetcher
+// behind it, so the intent is "vendor advisories only".
+//
+// Until now that intent held only by accident -- searchOSV() and searchNVD()
+// filter on `ecosystem startsWith "advisory"`, which nothing in either table
+// matches, and searchAdvisory() ignores the ecosystem entirely. Any new source
+// that likewise ignores it (searchCna does) would silently break the intent, so
+// the sentinel is named and checked explicitly here instead.
+const ADVISORY_ONLY_ECOSYSTEM = 'advisory';
+
+export function isAdvisoryOnlyEcosystem(eco: string): boolean {
+  return eco === ADVISORY_ONLY_ECOSYSTEM;
+}
+
+/**
+ * Version filter for CnaAffectedProduct, mirroring searchAdvisory()'s.
+ *
+ * Two branches, and the guard on the first one is the important part:
+ *
+ *  - Range: only applied to rows that actually carry a bound. Without that
+ *    guard every null-fallback inside it resolves to true for a row with no
+ *    bounds at all, matching every version queried. cna-fetcher.ts rejects
+ *    such rows at ingest (validate:cna reports 0), so this is defence in depth.
+ *  - Exact: equality against affectedVersions. This is the branch that matters
+ *    most in practice -- 94.5% of the network/appliance vendor rows this data
+ *    is here for declare a single firmware version rather than a range, and
+ *    equality sidesteps normalizeVersion() entirely.
+ *
+ * versionEnd is an exclusive upper bound, lastAffected an inclusive one.
+ * There is no CNA equivalent of Advisory's patchAvailable / module-stream
+ * handling, so neither is carried over.
+ */
+export function cnaVersionWhere(versionInt: bigint | null, version: string | undefined): object {
+  if (versionInt !== null) {
+    return {
+      OR: [
+        {
+          AND: [
+            {
+              OR: [
+                { versionStartInt: { not: null } },
+                { versionEndInt: { not: null } },
+                { lastAffectedInt: { not: null } },
+              ],
+            },
+            { OR: [{ versionStartInt: { lte: versionInt } }, { versionStartInt: null }] },
+            {
+              OR: [
+                { versionEndInt: { gt: versionInt } },
+                {
+                  versionEndInt: null,
+                  OR: [{ lastAffectedInt: null }, { lastAffectedInt: { gte: versionInt } }],
+                },
+              ],
+            },
+          ],
+        },
+        { affectedVersions: { has: version } },
+      ],
+    };
+  }
+  // A version that normalizeVersion() could not encode can still match a row
+  // exactly -- appliance firmware strings ("1.02", "4.1.2cu.5241_B20210927")
+  // routinely fail to encode but are what the asset actually reports.
+  if (version !== undefined) return { affectedVersions: { has: version } };
+  return {};
+}
+
 // Normalize ecosystem names from heretix-cli internal names to OSV ecosystem names
 const ECOSYSTEM_ALIASES: Record<string, string> = {
   'composer': 'Packagist',
