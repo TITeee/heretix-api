@@ -4,7 +4,7 @@
 
 ## 特徴
 
-- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU / Oracle Linux / Red Hat / Broadcom/VMware / Splunk / Apache HTTP Server / Apache Tomcat / nginx / Zabbix 等）に対応
+- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU / Oracle Linux / Red Hat / Broadcom/VMware / Splunk / Apache HTTP Server / Apache Tomcat / nginx / Zabbix / Check Point 等）に対応
 - **マルウェア検知**: OSV の `MAL-YYYY-NNNN` エントリ（悪意あるパッケージ）を [ossf/malicious-packages](https://github.com/ossf/malicious-packages) からインポートし、脆弱性検索エンドポイントで検索可能
 - **重複排除**: `Vulnerability` マスターテーブルが CVE ID をキーにソース間の重複を吸収
 - **CPE エイリアス対応**: NVD の CPE product 名変更（ベンダー買収等）に追従する `src/config/product-aliases.ts` で検索精度を維持
@@ -402,6 +402,7 @@ heretix-api/
 │   │   ├── import-zabbix.ts                 # Zabbix セキュリティアドバイザリインポートCLI
 │   │   ├── import-tomcat.ts                 # Apache Tomcat アドバイザリインポートCLI
 │   │   ├── import-nginx.ts                  # nginx アドバイザリインポートCLI
+│   │   ├── import-checkpoint.ts             # Check Point アドバイザリインポートCLI
 │   │   ├── validate-tomcat.ts               # Tomcat 検索精度検証
 │   │   ├── validate-apache.ts               # Apache HTTPD 検索精度検証
 │   │   ├── validate-nginx.ts                # nginx 検索精度検証
@@ -429,7 +430,8 @@ heretix-api/
 │   │   ├── zabbix-fetcher.ts       # Zabbix セキュリティアドバイザリ検索API取得・パース
 │   │   ├── tomcat-fetcher.ts       # Apache Tomcat 複数ブランチページ取得・パース
 │   │   ├── nginx-fetcher.ts        # nginx セキュリティアドバイザリページ取得・パース
-│   │   ├── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx, Vitest）
+│   │   ├── checkpoint-fetcher.ts   # Check Point アドバイザリJSON API+詳細ページ取得・パース
+│   │   ├── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint, Vitest）
 │   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData 結合テスト（Vitest、TEST_DATABASE_URL 必須）
 │   │   └── osv-fetcher.integration.test.ts       # importOSVData 結合テスト（孤立マスター行の回帰テスト）
 │   ├── config/
@@ -518,7 +520,7 @@ Vulnerability (マスター)
 - `AdvisoryFetcher` インターフェースを実装することで新規ベンダーを追加可能
 - `importAdvisoryData()` が `Vulnerability` マスターテーブルへの自動紐付けを担当
 - インポート時の優先度: CVE あり → 既存 NVD レコードにリンク / CVE なし → `advisoryId` でマスター管理
-- **消失アドバイザリの削除**: `runAdvisoryFetcher()`は、収集元から消えた（撤回・訂正された）アドバイザリを永久に残さず削除する。各`AdvisoryFetcher`は`isCompleteSnapshot(): boolean`を実装し、`fetch()`が常に**完全な現在のセット**を返す場合（全ページ再スクレイピング/全アーカイブ取得方式——Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPUの大多数がこれに該当）は`true`を、直近の一部だけを取得する設定の場合（PAN/Ciscoの`mode: 'latest'`、Oracle CPUの`latestOnly`）は`false`を返す——部分ウィンドウに対して削除判定を行うと、たまたまウィンドウ外にあるだけの正しいデータまで消してしまうため。削除対象になるのは完全スナップショット方式の実行時のみで、しかも1回消えただけでは削除せず、**3回連続**で見えなかった場合にのみハード削除する（`AdvisoryVulnerability.missingRunCount`、再度見つかれば0にリセット）——一時的なスクレイピング失敗を大量撤回と誤判定しないための猶予。フェッチ結果が0件の場合は削除判定自体を完全にスキップする（パーサー/フェッチのバグで空配列が返るケースと区別がつかないため、「全件撤回された」とは絶対に解釈しない）。アドバイザリを削除する際、そのマスター`Vulnerability`行が当該アドバイザリのみで管理されていた（CVE/OSVデータを持たない`advisoryId`管理のみ）場合は、他に参照するアドバイザリが無ければマスター行も一緒に削除する。
+- **消失アドバイザリの削除**: `runAdvisoryFetcher()`は、収集元から消えた（撤回・訂正された）アドバイザリを永久に残さず削除する。各`AdvisoryFetcher`は`isCompleteSnapshot(): boolean`を実装し、`fetch()`が常に**完全な現在のセット**を返す場合（全ページ再スクレイピング/全アーカイブ取得方式——Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPU, Check Pointの大多数がこれに該当）は`true`を、直近の一部だけを取得する設定の場合（PAN/Ciscoの`mode: 'latest'`、Oracle CPUの`latestOnly`）は`false`を返す——部分ウィンドウに対して削除判定を行うと、たまたまウィンドウ外にあるだけの正しいデータまで消してしまうため。削除対象になるのは完全スナップショット方式の実行時のみで、しかも1回消えただけでは削除せず、**3回連続**で見えなかった場合にのみハード削除する（`AdvisoryVulnerability.missingRunCount`、再度見つかれば0にリセット）——一時的なスクレイピング失敗を大量撤回と誤判定しないための猶予。フェッチ結果が0件の場合は削除判定自体を完全にスキップする（パーサー/フェッチのバグで空配列が返るケースと区別がつかないため、「全件撤回された」とは絶対に解釈しない）。アドバイザリを削除する際、そのマスター`Vulnerability`行が当該アドバイザリのみで管理されていた（CVE/OSVデータを持たない`advisoryId`管理のみ）場合は、他に参照するアドバイザリが無ければマスター行も一緒に削除する。
 
 #### Fortinet PSIRT取得 ([src/worker/fortinet-fetcher.ts](src/worker/fortinet-fetcher.ts))
 - PSIRT アドバイザリ一覧ページ (`fortiguard.fortinet.com/psirt?page=N`) を全ページスクレイピングして完全な過去アーカイブを取得。以前は RSS フィード (`https://filestore.fortinet.com/fortiguard/rss/ir.xml`) のみで新着を発見していたが、これは「新着」フィードであり直近の一部しか見えなかった（[境界値精度検証](ACCURACY.ja.md#境界値スイープfortinet--palo-alto-networks)の実装中に発見）
@@ -971,6 +973,20 @@ pnpm import:nginx                     # 全件（nginx.org/en/security_advisorie
 - 公式セキュリティアドバイザリページを解析。カンマ区切りの複数レンジ表記（例: `"0.6.18-1.25.2, 1.21.0-1.25.1"`）は1つのアドバイザリ内の複数 `affectedProducts` として扱う
 - `pnpm validate:nginx` の検証対象と同一ソース
 
+### Check Point
+
+Check Pointのセキュリティアドバイザリを収集します。認証不要。
+
+```bash
+pnpm import:checkpoint                # 全アクティブアドバイザリ（2026-09時点で155件）
+```
+
+- security-advisoriesページ自体はサーバー側データを持たないクライアントレンダリングのSPAのため、ページ本体ではなく、そのJSバンドルが内部で呼んでいる認証不要のJSON API（`iapi-services-ucs.checkpoint.com/.../securityAdvisories/getAllActive`）を直接叩く
+- 各アドバイザリの`products[]`は、リリース系列（`"R81.20"`）とその系列内の影響範囲文字列の組を持つ。系列ごとのfloor + 系列内のJHF(Jumbo Hotfix Accumulator)のTake番号による増分、というRHEL/Oracle LinuxのDNFモジュールストリームと同じ構造。実データにある約50種類の`affected`文字列の分類（"None"のような明示的な非該当宣言を行として作らない、等）は`checkpoint-fetcher.ts`の`parseAffected()`を参照
+- 各アドバイザリの詳細ページ（`support.checkpoint.com/results/sk/skNNNNNNN`、サーバーレンダリング）からSolution/Mitigationセクションも取得する
+- 1つのSK記事が複数の別CVEをまとめて説明しているケースがある（例: sk182899はApache HTTP Server関連の7つの別CVEをカバー）ため、`externalId`は`<skId>/<cveId>`という複合キーにして別アドバイザリとして区別する（Sophos/Broadcomと同じ形式）
+- 意図的に対応しない範囲: Harmony Endpointのクライアントビルド番号（`E86.x`〜`E89.x`、`R`系列とは別体系で、`affected`側が`version`と異なるメジャー番号を参照する実例もある）、`Hardware`/`Other`/`Cloud`（リリース系列自体が無い）、裸の数値のみの`affected`値（例: `"17"`、実際の修正Take番号との対応が実データ上一貫していない）。これらは推測せずに行を作らずスキップする。詳細は`checkpoint-fetcher.ts`の`parseVersionLine()`/`parseAffected()`を参照
+
 ### 新規ベンダーの追加方法
 
 `AdvisoryFetcher` インターフェースを実装するだけで新規ベンダーを追加できます:
@@ -1072,6 +1088,7 @@ TEST_DATABASE_URL="postgresql://...heretix_test" pnpm exec prisma migrate deploy
 | Zabbix アドバイザリ | 毎日 14:15 UTC |
 | Apache Tomcat アドバイザリ | 毎日 14:30 UTC |
 | nginx アドバイザリ | 毎日 14:45 UTC |
+| Check Point アドバイザリ | 毎日 16:00 UTC |
 | OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
 | MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
 

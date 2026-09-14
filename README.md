@@ -6,7 +6,7 @@ A simple, high-performance vulnerability management API backed by PostgreSQL. It
 
 ## Features
 
-- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, and more)
+- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, Check Point, and more)
 - **Malware detection**: OSV `MAL-YYYY-NNNN` entries (malicious packages) are imported from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) and searchable via the same vulnerability search endpoint
 - **Deduplication**: A `Vulnerability` master table uses CVE ID as the primary key to merge duplicate entries across sources
 - **CPE alias support**: `src/config/product-aliases.ts` tracks CPE product name changes (e.g., post-acquisition renames) so search accuracy stays high
@@ -410,6 +410,7 @@ heretix-api/
 │   │   ├── import-zabbix.ts         # Zabbix security advisory import CLI
 │   │   ├── import-tomcat.ts         # Apache Tomcat advisory import CLI
 │   │   ├── import-nginx.ts          # nginx advisory import CLI
+│   │   ├── import-checkpoint.ts     # Check Point advisory import CLI
 │   │   ├── validate-tomcat.ts       # Tomcat search accuracy validator
 │   │   ├── validate-apache.ts       # Apache HTTPD search accuracy validator
 │   │   ├── validate-nginx.ts        # nginx search accuracy validator
@@ -437,7 +438,8 @@ heretix-api/
 │   │   ├── zabbix-fetcher.ts        # Zabbix security advisory search API fetch & parse
 │   │   ├── tomcat-fetcher.ts        # Apache Tomcat multi-branch security page fetch & parse
 │   │   ├── nginx-fetcher.ts         # nginx security advisories page fetch & parse
-│   │   ├── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx, Vitest)
+│   │   ├── checkpoint-fetcher.ts    # Check Point advisory JSON API + detail-page fetch & parse
+│   │   ├── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint, Vitest)
 │   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData integration test (Vitest, requires TEST_DATABASE_URL)
 │   │   └── osv-fetcher.integration.test.ts       # importOSVData integration test — orphaned-master-row regression
 │   ├── config/
@@ -526,7 +528,7 @@ Semantic versions are converted to integers for fast range queries:
 - Implement the `AdvisoryFetcher` interface to add new vendors
 - `importAdvisoryData()` handles master table linkage automatically
 - Import priority: CVE present → link to existing NVD record / no CVE → manage via `advisoryId`
-- **Stale-advisory pruning**: `runAdvisoryFetcher()` deletes advisories that have vanished from the source (retracted, corrected) rather than keeping them forever. Each `AdvisoryFetcher` implements `isCompleteSnapshot(): boolean` — `true` for fetchers whose `fetch()` always returns the *complete* current set (a full re-scrape/archive fetch, the vast majority — Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPU), `false` when configured for a partial recent window (PAN/Cisco's `mode: 'latest'`, Oracle CPU's `latestOnly`) — pruning against a partial window would delete perfectly valid advisories that just fall outside it. Only complete-snapshot runs are eligible for pruning, and even then an advisory must be missing for 3 consecutive runs (`AdvisoryVulnerability.missingRunCount`, resets to 0 whenever it's seen again) before being hard-deleted, to tolerate a transient scrape hiccup rather than treating one bad run as a mass retraction. A run that returns zero advisories at all skips pruning entirely (indistinguishable from a parser/fetch bug returning an empty array without throwing — never treated as "everything was retracted"). Deleting an advisory also deletes its master `Vulnerability` row if that row was solely `advisoryId`-managed (no CVE/OSV data) and no other advisory still references it.
+- **Stale-advisory pruning**: `runAdvisoryFetcher()` deletes advisories that have vanished from the source (retracted, corrected) rather than keeping them forever. Each `AdvisoryFetcher` implements `isCompleteSnapshot(): boolean` — `true` for fetchers whose `fetch()` always returns the *complete* current set (a full re-scrape/archive fetch, the vast majority — Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPU, Check Point), `false` when configured for a partial recent window (PAN/Cisco's `mode: 'latest'`, Oracle CPU's `latestOnly`) — pruning against a partial window would delete perfectly valid advisories that just fall outside it. Only complete-snapshot runs are eligible for pruning, and even then an advisory must be missing for 3 consecutive runs (`AdvisoryVulnerability.missingRunCount`, resets to 0 whenever it's seen again) before being hard-deleted, to tolerate a transient scrape hiccup rather than treating one bad run as a mass retraction. A run that returns zero advisories at all skips pruning entirely (indistinguishable from a parser/fetch bug returning an empty array without throwing — never treated as "everything was retracted"). Deleting an advisory also deletes its master `Vulnerability` row if that row was solely `advisoryId`-managed (no CVE/OSV data) and no other advisory still references it.
 
 ### Fortinet PSIRT ([src/worker/fortinet-fetcher.ts](src/worker/fortinet-fetcher.ts))
 
@@ -869,6 +871,20 @@ pnpm import:nginx                     # All advisories (nginx.org/en/security_ad
 - Parses the official security advisories page; handles comma-separated multi-range notation (e.g. `"0.6.18-1.25.2, 1.21.0-1.25.1"`) as separate `affectedProducts` entries under one advisory
 - Same source used by `pnpm validate:nginx` for accuracy validation
 
+### Check Point
+
+Check Point security advisories. No authentication required.
+
+```bash
+pnpm import:checkpoint                # All active advisories (155 as of 2026-09)
+```
+
+- Calls the unauthenticated JSON API the security-advisories page's own client-side bundle uses (`iapi-services-ucs.checkpoint.com/.../securityAdvisories/getAllActive`) rather than the page itself, which is a client-rendered SPA with no server-side data
+- Each advisory's `products[]` pairs a release line (`"R81.20"`) with an affected-range string; a per-line floor plus an in-line JHF (Jumbo Hotfix Accumulator) take-number increment, the same shape as RHEL/Oracle Linux's DNF module streams — see `checkpoint-fetcher.ts`'s `parseAffected()` for the full classification of the ~50 real string shapes this feed uses, including explicit not-affected declarations (`"None"`) that must not become a row at all
+- Also fetches each advisory's server-rendered detail page (`support.checkpoint.com/results/sk/skNNNNNNN`) for its Solution/Mitigation sections
+- A single sk article can document several distinct CVEs (e.g. sk182899 covers 7 separate Apache HTTP Server CVEs); `externalId` is `<skId>/<cveId>` to keep them as distinct advisories, the same composite-id shape used for Sophos/Broadcom
+- Not handled, by design: Harmony Endpoint's `E86.x`–`E89.x` client build numbering (a different scheme from the `R`-prefixed release lines, and one where `affected` can reference a different major than `version` itself); `Hardware`/`Other`/`Cloud` rows (no release line at all); and bare-number `affected` values (e.g. `"17"`) whose relationship to the actual fix take-number isn't consistent in real data. These rows are skipped rather than guessed at — see `parseVersionLine()`/`parseAffected()` in `checkpoint-fetcher.ts`
+
 ### Adding a new vendor
 
 Implement the `AdvisoryFetcher` interface:
@@ -970,6 +986,7 @@ Job definitions (source key, label, cron, run logic) are centralized in `src/job
 | Zabbix advisory | Daily at 14:15 UTC |
 | Apache Tomcat advisory | Daily at 14:30 UTC |
 | nginx advisory | Daily at 14:45 UTC |
+| Check Point advisory | Daily at 16:00 UTC |
 | OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
 
