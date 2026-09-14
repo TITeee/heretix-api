@@ -35,6 +35,7 @@
     "import:zabbix": "node dist/scripts/import-zabbix.js",
     "import:tomcat": "node dist/scripts/import-tomcat.js",
     "import:nginx": "node dist/scripts/import-nginx.js",
+    "import:checkpoint": "node dist/scripts/import-checkpoint.js",
     "import:cna": "node dist/scripts/import-cna.js",
     "migrate:all": "node dist/scripts/migrate-all.js",
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
