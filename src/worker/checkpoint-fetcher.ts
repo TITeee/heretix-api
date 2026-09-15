@@ -55,11 +55,22 @@ function asString(v: unknown): string | undefined {
  * build numbering, a completely different scheme -- see extractTakeCeiling()'s
  * doc comment for why this fetcher doesn't attempt it). Requiring the "R"
  * prefix is what naturally excludes all of those without listing them.
+ *
+ * Always returns a two-component "major.minor" floor, defaulting minor to
+ * "0" for a bare-major line ("R81" -> "81.0", not "81"). Without this, a
+ * later JHF take number appended in parseAffected() would land in the minor
+ * slot for a bare line but the patch slot for a dotted one -- and real data
+ * confirms bare-major and dotted-minor lines of the same major coexist as
+ * separate rows in the same advisory (e.g. sk1000118 lists both "R82" and
+ * "R82.10" for Security Gateway), so a bare line's take number (already seen
+ * as high as 122) can collide with an unrelated sibling line's own minor
+ * (e.g. "R82.10"'s 10) once normalized. Forcing the take number to the patch
+ * slot for every floor avoids that regardless of which minor values appear.
  */
 export function parseVersionLine(version: string): string | undefined {
   const m = version.match(/^R(\d+(?:\.\d+)?)/i);
   if (!m) return undefined;
-  return m[1];
+  return m[1].includes('.') ? m[1] : `${m[1]}.0`;
 }
 
 export type AffectedRange =
@@ -84,14 +95,24 @@ const INCLUSIVE_TAKE = /^Take (\d+) or below$/i;
  * not-affected declaration into a false positive, so the caller must not
  * create an AdvisoryAffectedProduct for them at all.
  *
- * "All" and "Details in SK" both get the floor with no upper bound. For
- * "Details in SK" this was a deliberate call, not the conservative default:
- * every one of the 18 real advisories using it in 2026-09 has an otherwise
- * normal release-line `version`, and roughly half are current, mainstream
- * issues (e.g. an OpenSSH sshd race condition, a RADIUS MD5-collision
- * forgery) rather than the legacy Wi-Fi-driver advisories the phrase also
- * appears on -- dropping the row would make those undetectable for no
- * better reason than Check Point choosing prose over a take number.
+ * "All" and "Details in SK" both get the floor, bounded to the top of this
+ * release line's own take-number range (`<floor>.999`, the same slot max
+ * normalizeVersion() clamps any patch component to) rather than left
+ * unbounded. An unbounded floor doesn't just mean "this line onward" -- since
+ * every release line for a product lives under the same product name here,
+ * it also swallows every *other* line the same advisory lists, including
+ * ones the advisory explicitly gives a different (if currently unparseable)
+ * status to, and any future line that doesn't exist yet (confirmed live:
+ * sk1000118's unbounded "R81 (EOS)"/All previously matched a probe version
+ * for the unrelated "R82.10" line it also lists, and even a nonexistent
+ * "R90"). For "Details in SK" this was a deliberate call, not the
+ * conservative default: every one of the 18 real advisories using it in
+ * 2026-09 has an otherwise normal release-line `version`, and roughly half
+ * are current, mainstream issues (e.g. an OpenSSH sshd race condition, a
+ * RADIUS MD5-collision forgery) rather than the legacy Wi-Fi-driver
+ * advisories the phrase also appears on -- dropping the row would make those
+ * undetectable for no better reason than Check Point choosing prose over a
+ * take number.
  *
  * A bare number ("17", "166") is deliberately left unparseable: sk1000117's
  * own real data pairs a documented fix of "take 24" with `affected` values
@@ -106,7 +127,7 @@ export function parseAffected(affected: string, versionFloor: string): AffectedR
     return { kind: 'not-affected' };
   }
   if (value === 'All' || value === 'Details in SK') {
-    return { kind: 'range' };
+    return { kind: 'range', lastAffected: `${versionFloor}.999` };
   }
 
   const exclusive = value.match(EXCLUSIVE_TAKE);

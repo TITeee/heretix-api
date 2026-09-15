@@ -90,6 +90,33 @@ const SOPHOS_INTERCEPT_X_PRODUCTS = ['Sophos Intercept X', 'Sophos Intercept X f
 const SOPHOS_MOBILE_PRODUCTS = ['Sophos Mobile', 'Sophos Mobile managed on-premises'];
 const SOPHOS_CONNECT_PRODUCTS = ['Sophos Connect', 'Sophos Connect Client for Windows'];
 
+// Check Point's own advisory feed (checkpoint-fetcher.ts stores products[].name
+// verbatim, same "literal source strings" situation as VCENTER_PRODUCTS/SOPHOS_*
+// above) names its two core products inconsistently across time and even across
+// advisories in the same year: the "Quantum" branding prefix (used exclusively
+// on 2021-2025 advisories) was dropped on 2026 advisories, and 2026 advisories
+// alone also mix singular/plural ("Security Gateway" vs "Security Gateways").
+// Confirmed same product in all spellings -- e.g. sk1000117/sk1000118's "Security
+// Gateway"/"Security Gateways" rows both describe the same VPN/certificate-
+// handling gateway appliance regardless of spelling.
+// DB counts as of 2026-09-15 (AdvisoryAffectedProduct, vendor='checkpoint'):
+// Quantum Security Gateways=56, Security Gateways=40, Security Gateway=9.
+const CHECKPOINT_SECURITY_GATEWAY_PRODUCTS = [
+  'Security Gateway',
+  'Security Gateways',
+  'Quantum Security Gateways',
+];
+
+// DB counts as of 2026-09-15: Quantum Security Management=45, Security
+// Management=28, Security Management Server=2. Distinct from "Multi-Domain
+// Security Management" (30) -- that's Check Point's actual multi-domain/MDS
+// product line, not a spelling of single-domain Security Management.
+const CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS = [
+  'Security Management',
+  'Security Management Server',
+  'Quantum Security Management',
+];
+
 export const PRODUCT_ALIASES: Record<string, string[]> = {
   // ── VMware vCenter (Broadcom) ────────────────────────────────────────────────
   'vmware vcenter server': VCENTER_PRODUCTS,
@@ -102,6 +129,15 @@ export const PRODUCT_ALIASES: Record<string, string[]> = {
   'sophos intercept x': SOPHOS_INTERCEPT_X_PRODUCTS,
   'sophos mobile': SOPHOS_MOBILE_PRODUCTS,
   'sophos connect': SOPHOS_CONNECT_PRODUCTS,
+
+  // ── Check Point ────────────────────────────────────────────────────────────
+  'security gateway': CHECKPOINT_SECURITY_GATEWAY_PRODUCTS,
+  'security gateways': CHECKPOINT_SECURITY_GATEWAY_PRODUCTS,
+  'quantum security gateway': CHECKPOINT_SECURITY_GATEWAY_PRODUCTS,
+  'quantum security gateways': CHECKPOINT_SECURITY_GATEWAY_PRODUCTS,
+  'security management': CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS,
+  'security management server': CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS,
+  'quantum security management': CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS,
 
   // ── nginx ──────────────────────────────────────────────────────────────────
   // After F5 acquired NGINX, the NVD CPE product name changed.

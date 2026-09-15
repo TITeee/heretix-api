@@ -7,7 +7,13 @@ import { parseVersionLine, parseAffected, buildCheckpointAffectedProducts } from
 describe('parseVersionLine', () => {
   it('extracts a plain release-line floor', () => {
     expect(parseVersionLine('R81.20')).toBe('81.20');
-    expect(parseVersionLine('R82')).toBe('82');
+  });
+
+  it('pads a bare-major line to two components (so a later take number lands in the patch slot, not the minor slot)', () => {
+    // Real data: sk1000118 lists both "R82" and "R82.10" for the same product in
+    // the same advisory -- a bare "82" floor would let R82's own take number
+    // collide with R82.10's minor once a take number is appended.
+    expect(parseVersionLine('R82')).toBe('82.0');
   });
 
   it('extracts the floor from a whole dot-line ("X" is a literal placeholder)', () => {
@@ -15,8 +21,8 @@ describe('parseVersionLine', () => {
     expect(parseVersionLine('R82.00.X')).toBe('82.00');
   });
 
-  it('strips the end-of-support annotation', () => {
-    expect(parseVersionLine('R80 (EOS)')).toBe('80');
+  it('strips the end-of-support annotation, padding a bare major the same way', () => {
+    expect(parseVersionLine('R80 (EOS)')).toBe('80.0');
     expect(parseVersionLine('R81.10 (EOS)')).toBe('81.10');
   });
 
@@ -45,16 +51,19 @@ describe('parseAffected', () => {
       .toEqual({ kind: 'not-affected' });
   });
 
-  it('gives "All" the floor with no upper bound', () => {
-    expect(parseAffected('All', '80')).toEqual({ kind: 'range' });
+  it('bounds "All" to the top of this release line\'s own take-number range', () => {
+    // Confirmed live: an unbounded floor here previously let sk1000118's "R81
+    // (EOS)"/All match a probe version belonging to the same advisory's
+    // separately-listed "R82.10" line, and even a nonexistent future line.
+    expect(parseAffected('All', '80.0')).toEqual({ kind: 'range', lastAffected: '80.0.999' });
   });
 
-  it('gives "Details in SK" the same floor-only treatment as "All"', () => {
+  it('gives "Details in SK" the same floor-bounded treatment as "All"', () => {
     // Deliberate, not the conservative default -- see parseAffected()'s doc
     // comment: every real advisory using this phrase has a normal release-line
     // version, and several (an OpenSSH sshd race condition, a RADIUS MD5
     // collision) are current mainstream issues, not just legacy Wi-Fi advisories.
-    expect(parseAffected('Details in SK', '81.20')).toEqual({ kind: 'range' });
+    expect(parseAffected('Details in SK', '81.20')).toEqual({ kind: 'range', lastAffected: '81.20.999' });
   });
 
   it('reads "Prior to JHF Take N" as an exclusive upper bound', () => {
@@ -102,12 +111,13 @@ describe('buildCheckpointAffectedProducts', () => {
     { name: 'Security Gateway', version: 'R82.10', affected: '44' },
   ];
 
-  it('keeps only the 7 "All" rows out of 12, dropping the 5 bare-number rows', () => {
+  it('keeps only the 7 "All" rows out of 12, dropping the 5 bare-number rows, each bounded to its own line', () => {
     const rows = buildCheckpointAffectedProducts(sk1000117Products);
     expect(rows).toHaveLength(7);
     expect(rows.every(r => r.vendor === 'checkpoint' && r.product === 'Security Gateway')).toBe(true);
-    expect(rows.every(r => r.versionEnd === undefined && r.lastAffected === undefined)).toBe(true);
-    expect(rows.map(r => r.versionStart)).toEqual(['80', '80.10', '80.20', '80.30', '80.40', '81', '81.10']);
+    expect(rows.every(r => r.versionEnd === undefined)).toBe(true);
+    expect(rows.map(r => r.versionStart)).toEqual(['80.0', '80.10', '80.20', '80.30', '80.40', '81.0', '81.10']);
+    expect(rows.map(r => r.lastAffected)).toEqual(['80.0.999', '80.10.999', '80.20.999', '80.30.999', '80.40.999', '81.0.999', '81.10.999']);
   });
 
   it('drops a "None" row while keeping the rest of the same advisory (real data: advisory 168)', () => {
@@ -119,6 +129,18 @@ describe('buildCheckpointAffectedProducts', () => {
     expect(rows).toHaveLength(2);
     expect(rows.map(r => r.versionStart)).toEqual(['81.10', '81.20']);
     expect(rows.map(r => r.versionEnd)).toEqual(['81.10.158', '81.20.79']);
+  });
+
+  it('bounds a bare-major take number to the patch slot, not the minor slot (real data: sk1000118 lists both "R82" and "R82.10")', () => {
+    const rows = buildCheckpointAffectedProducts([
+      { name: 'Security Gateway', version: 'R82', affected: 'Prior to JHF Take 103' },
+      { name: 'Security Gateway', version: 'R82.10', affected: '44' },
+    ]);
+    // R82.10's own row is dropped (bare number, unparseable) -- but the point of
+    // this test is that R82's bound doesn't reach into R82.10's numeric space.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].versionStart).toBe('82.0');
+    expect(rows[0].versionEnd).toBe('82.0.103');
   });
 
   it('skips a row with a missing name/version/affected instead of throwing', () => {

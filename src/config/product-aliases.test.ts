@@ -75,6 +75,22 @@ describe('expandProductAliases', () => {
     expect(expandProductAliases('VMware vCenter Server')).toEqual(expected);
     expect(expandProductAliases('VMware vCenter')).toEqual(expected);
   });
+
+  it('cross-maps Check Point Security Gateway spellings, including the pre-2026 "Quantum" branding', () => {
+    const expected = ['Security Gateway', 'Security Gateways', 'Quantum Security Gateways'];
+    expect(expandProductAliases('Security Gateway')).toEqual(expected);
+    expect(expandProductAliases('Security Gateways')).toEqual(expected);
+    expect(expandProductAliases('Quantum Security Gateway')).toEqual(expected);
+    expect(expandProductAliases('Quantum Security Gateways')).toEqual(expected);
+  });
+
+  it('cross-maps Check Point Security Management spellings, distinct from Multi-Domain Security Management', () => {
+    const expected = ['Security Management', 'Security Management Server', 'Quantum Security Management'];
+    expect(expandProductAliases('Security Management')).toEqual(expected);
+    expect(expandProductAliases('Security Management Server')).toEqual(expected);
+    expect(expandProductAliases('Quantum Security Management')).toEqual(expected);
+    expect(expandProductAliases('Multi-Domain Security Management')).toEqual(['Multi-Domain Security Management']);
+  });
 });
 
 describe('oracleProductPrefixes', () => {
