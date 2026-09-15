@@ -43,7 +43,13 @@ export interface CveRecordAffected {
 
 export interface CveRecord {
   cveMetadata?: { cveId?: unknown; datePublished?: unknown; dateUpdated?: unknown; state?: unknown };
-  containers?: { cna?: { providerMetadata?: { shortName?: unknown }; affected?: unknown } };
+  containers?: {
+    cna?: { providerMetadata?: { shortName?: unknown }; affected?: unknown };
+    // Authorized Data Publisher containers -- CISA's Vulnrichment (SSVC) data
+    // is one of these, alongside the CVE Program's own transferred-reference
+    // container and others. Array shape confirmed live (CVE-2024-3400).
+    adp?: unknown[];
+  };
 }
 
 // ─── Extraction ──────────────────────────────────────────────
@@ -298,6 +304,82 @@ export function parseCveRecord(record: CveRecord): ParsedCveRecord | null {
     rows,
     dropped,
   };
+}
+
+// ─── CISA Vulnrichment (SSVC) ──────────────────────────────────
+
+interface AdpEntry {
+  metrics?: unknown;
+  providerMetadata?: { shortName?: unknown };
+}
+
+interface SsvcMetricEntry {
+  other?: { type?: unknown; content?: unknown };
+}
+
+interface SsvcContent {
+  options?: unknown;
+  timestamp?: unknown;
+}
+
+export interface SsvcAssessment {
+  exploitation: string;
+  automatable: string;
+  technicalImpact: string;
+  timestamp: Date | null;
+}
+
+const SSVC_EXPLOITATION = new Set(['none', 'poc', 'active']);
+const SSVC_AUTOMATABLE = new Set(['yes', 'no']);
+const SSVC_TECHNICAL_IMPACT = new Set(['partial', 'total']);
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+/**
+ * CISA's SSVC assessment (Exploitation / Automatable / Technical Impact) from
+ * a CVE Record's `containers.adp`, or undefined when this record has none.
+ *
+ * Every field checked here is required: CISA always publishes exactly these
+ * three decision points together (confirmed live, e.g. CVE-2024-3400), never
+ * a subset, so a partial match means the shape changed and the whole
+ * assessment should be treated as absent rather than guessed at. Deliberately
+ * does NOT attempt to derive a final decision (Track, Track-star, Attend, or
+ * Act) -- that needs a fourth axis (Mission & Well-being impact) that is
+ * stakeholder-specific and CISA does not publish per CVE. Turning these three
+ * raw axes into a priority is left to the consumer (heretix-management).
+ */
+export function parseSsvc(record: CveRecord): SsvcAssessment | undefined {
+  const adp = record.containers?.adp;
+  if (!Array.isArray(adp)) return undefined;
+
+  const cisaAdp = adp.find(
+    (c): c is AdpEntry => isObject(c) && asString((c as AdpEntry).providerMetadata?.shortName) === 'CISA-ADP',
+  );
+  if (!cisaAdp || !Array.isArray(cisaAdp.metrics)) return undefined;
+
+  const ssvcMetric = (cisaAdp.metrics as unknown[]).find(
+    (m): m is SsvcMetricEntry => isObject(m) && isObject((m as SsvcMetricEntry).other) && (m as SsvcMetricEntry).other?.type === 'ssvc',
+  );
+  const content = ssvcMetric?.other?.content;
+  if (!isObject(content) || !Array.isArray((content as SsvcContent).options)) return undefined;
+
+  let exploitation: string | undefined;
+  let automatable: string | undefined;
+  let technicalImpact: string | undefined;
+  for (const opt of (content as SsvcContent).options as unknown[]) {
+    if (!isObject(opt)) continue;
+    if ('Exploitation' in opt) exploitation = asString(opt.Exploitation)?.toLowerCase();
+    if ('Automatable' in opt) automatable = asString(opt.Automatable)?.toLowerCase();
+    if ('Technical Impact' in opt) technicalImpact = asString(opt['Technical Impact'])?.toLowerCase();
+  }
+
+  if (!exploitation || !SSVC_EXPLOITATION.has(exploitation)) return undefined;
+  if (!automatable || !SSVC_AUTOMATABLE.has(automatable)) return undefined;
+  if (!technicalImpact || !SSVC_TECHNICAL_IMPACT.has(technicalImpact)) return undefined;
+
+  return { exploitation, automatable, technicalImpact, timestamp: toDate((content as SsvcContent).timestamp) };
 }
 
 // ─── Bundle download ─────────────────────────────────────────

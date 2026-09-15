@@ -10,7 +10,8 @@ A simple, high-performance vulnerability management API backed by PostgreSQL. It
 - **Malware detection**: OSV `MAL-YYYY-NNNN` entries (malicious packages) are imported from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) and searchable via the same vulnerability search endpoint
 - **Deduplication**: A `Vulnerability` master table uses CVE ID as the primary key to merge duplicate entries across sources
 - **CPE alias support**: `src/config/product-aliases.ts` tracks CPE product name changes (e.g., post-acquisition renames) so search accuracy stays high
-- **Risk scoring**: CISA KEV (known-exploited flag) and EPSS (exploitation probability score) are attached to each vulnerability
+- **Risk scoring**: CISA KEV (known-exploited flag), EPSS (exploitation probability score), and CISA Vulnrichment's SSVC assessment (exploitation state, automatability, technical impact) are attached to each vulnerability
+- **CVE Record ingestion**: CNA-declared affected products from every CVE Record ([CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5)), covering vendors with no dedicated advisory fetcher
 - **Simple**: Runs on PostgreSQL only — no Redis required. Docker Compose support included for easy deployment
 - **Fast search**: Version numbers are normalized to integers for high-speed range queries
 - **Scalable**: Raw data stored as JSONB, search fields kept normalized
@@ -310,6 +311,8 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/GHSA
 curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/FG-IR-25-934"
 ```
 
+When available, the response includes CISA Vulnrichment's SSVC assessment (`ssvcExploitation`, `ssvcAutomatable`, `ssvcTechnicalImpact`, `ssvcTimestamp`) alongside the existing KEV/EPSS fields — see [CVE Program (CNA) & CISA Vulnrichment](#cve-program-cna--cisa-vulnrichment). Not included in the general product+version search results (`GET /vulnerabilities/search`), only this by-ID lookup.
+
 ### Statistics
 
 ```
@@ -411,11 +414,13 @@ heretix-api/
 │   │   ├── import-tomcat.ts         # Apache Tomcat advisory import CLI
 │   │   ├── import-nginx.ts          # nginx advisory import CLI
 │   │   ├── import-checkpoint.ts     # Check Point advisory import CLI
+│   │   ├── import-cna.ts            # CVE Program (CNA affected products) + CISA Vulnrichment (SSVC) import CLI
 │   │   ├── validate-tomcat.ts       # Tomcat search accuracy validator
 │   │   ├── validate-apache.ts       # Apache HTTPD search accuracy validator
 │   │   ├── validate-nginx.ts        # nginx search accuracy validator
 │   │   ├── validate-openssl.ts      # OpenSSL search accuracy validator
 │   │   ├── validate-postgresql.ts   # PostgreSQL search accuracy validator
+│   │   ├── validate-cna.ts          # CNA affected-products search accuracy validator
 │   │   └── clear-db.ts              # Drop all tables including Vulnerability
 │   ├── worker/
 │   │   ├── osv-fetcher.ts           # OSV API integration
@@ -439,8 +444,11 @@ heretix-api/
 │   │   ├── tomcat-fetcher.ts        # Apache Tomcat multi-branch security page fetch & parse
 │   │   ├── nginx-fetcher.ts         # nginx security advisories page fetch & parse
 │   │   ├── checkpoint-fetcher.ts    # Check Point advisory JSON API + detail-page fetch & parse
-│   │   ├── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint, Vitest)
+│   │   ├── cna-fetcher.ts           # cvelistV5 bundle download & CVE Record / CISA Vulnrichment (SSVC) parsing (pure, no DB import)
+│   │   ├── cna-importer.ts          # CNA affected-products + SSVC persistence, bootstrap & delta orchestration
+│   │   ├── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint/cna, Vitest)
 │   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData integration test (Vitest, requires TEST_DATABASE_URL)
+│   │   ├── cna-importer.integration.test.ts      # CNA/SSVC import integration test (Vitest, requires TEST_DATABASE_URL)
 │   │   └── osv-fetcher.integration.test.ts       # importOSVData integration test — orphaned-master-row regression
 │   ├── config/
 │   │   ├── product-aliases.ts       # NVD CPE product name alias mappings
@@ -522,6 +530,12 @@ Semantic versions are converted to integers for fast range queries:
 
 - Paginates the FIRST.org EPSS API (10,000 entries/page, ~320,000 total)
 - Updates `epssScore` / `epssPercentile` in chunks of 1,000
+
+### CVE Program & CISA Vulnrichment ([src/worker/cna-fetcher.ts](src/worker/cna-fetcher.ts), [src/worker/cna-importer.ts](src/worker/cna-importer.ts))
+
+- `cna-fetcher.ts` downloads and parses cvelistV5 GitHub release bundles (pure parsing, no DB import — same split as the vendor advisory fetchers); `cna-importer.ts` handles persistence and bootstrap/delta orchestration
+- CNA-declared affected products (`containers.cna.affected`) go into their own `CnaVulnerability`/`CnaAffectedProduct` tables, not the vendor-advisory search path — see the `CnaVulnerability` model's doc comment in `prisma/schema.prisma`
+- CISA Vulnrichment's SSVC assessment (`containers.adp`, the `CISA-ADP` entry) is extracted independently of whether the CNA affected-products parse succeeds, and written directly onto the `Vulnerability` master row (`ssvcExploitation`/`ssvcAutomatable`/`ssvcTechnicalImpact`/`ssvcTimestamp`) — the same flat per-CVE shape as KEV/EPSS. No final priority decision is computed; see the CVE Program section under Data Collection
 
 ### Vendor advisory framework ([src/worker/advisory-fetcher.ts](src/worker/advisory-fetcher.ts))
 
@@ -704,6 +718,19 @@ pnpm import:epss full                    # Today's daily dataset
 pnpm import:epss full 2024-03-01         # Dataset for a specific date
 pnpm import:epss cve CVE-2021-44228      # Update a single CVE
 ```
+
+### CVE Program (CNA) & CISA Vulnrichment
+
+```bash
+pnpm import:cna              # Delta if already bootstrapped, else full-bundle bootstrap
+pnpm import:cna --bootstrap  # Force a full-bundle pass
+```
+
+Downloads CVE Records from [CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5)'s GitHub releases — a ~600MB full snapshot for the one-time bootstrap, then a few MB/day of hourly delta bundles. No API key, no rate limit.
+
+- **CNA-declared affected products**: `containers.cna.affected`, stored in `CnaAffectedProduct` (its own tables, not merged into the vendor-advisory search path — see `cna-importer.ts`'s doc comment). Bootstrap is restricted to `BOOTSTRAP_YEARS` (`src/scripts/import-cna.ts`) since older records predate the structured `versions` conventions this relies on; deltas apply to any year.
+- **CISA Vulnrichment (SSVC)**: the same CVE Record's `containers.adp` sometimes carries a CISA-ADP entry with an SSVC assessment (`Exploitation`: none/poc/active, `Automatable`: yes/no, `Technical Impact`: partial/total) — see [CISA's SSVC guide](https://www.cisa.gov/stakeholder-specific-vulnerability-categorization-ssvc). Stored directly on the `Vulnerability` master table (`ssvcExploitation`/`ssvcAutomatable`/`ssvcTechnicalImpact`/`ssvcTimestamp`), the same flat per-CVE shape as the existing KEV/EPSS fields, and returned by `GET /vulnerabilities/:id`. Deliberately **not** turned into a final Track/Track-star/Attend/Act decision: that needs a fourth axis (organization-specific Mission & Well-being impact) that CISA does not publish per CVE — left to the consumer (heretix-management) to combine with its own context.
+- Unlike CNA-affected-products, SSVC backfill during bootstrap is **not** restricted to `BOOTSTRAP_YEARS` — the full bundle is downloaded either way, so every year in it is scanned for SSVC data at no extra network cost (`bootstrapCna()`'s doc comment in `cna-importer.ts`).
 
 ### Vendor advisories
 
@@ -981,6 +1008,7 @@ Job definitions (source key, label, cron, run logic) are centralized in `src/job
 | Red Hat RHEL 9 advisory | Daily at 13:15 UTC |
 | Red Hat RHEL 8 advisory | Daily at 13:30 UTC |
 | Red Hat CSAF VEX (unfixed CVEs) | Daily at 15:00 UTC |
+| CVE Record (CNA) + CISA Vulnrichment delta | Daily at 15:30 UTC |
 | Splunk advisory | Daily at 13:45 UTC |
 | Apache HTTP Server advisory | Daily at 14:00 UTC |
 | Zabbix advisory | Daily at 14:15 UTC |
