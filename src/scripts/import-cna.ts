@@ -1,9 +1,12 @@
 /**
- * Import CNA-declared affected products from CVE Records (cvelistV5).
+ * Import CNA-declared affected products, and CISA Vulnrichment (SSVC)
+ * assessments, from CVE Records (cvelistV5).
  *
- * The first run bootstraps from the ~600MB full bundle, restricted to
- * BOOTSTRAP_YEARS. Every later run applies only the hourly delta bundles
- * published since the last completed job, which is a few MB a day.
+ * The first run bootstraps from the ~600MB full bundle: CNA-affected-products
+ * storage is restricted to BOOTSTRAP_YEARS, but SSVC has no such restriction
+ * and is backfilled for every year in the bundle (see bootstrapCna()'s doc
+ * comment). Every later run applies only the hourly delta bundles published
+ * since the last completed job, which is a few MB a day.
  *
  * Usage:
  *   pnpm import:cna              # delta if already bootstrapped, else bootstrap
@@ -17,7 +20,8 @@ import { getDeltaCursor } from '../jobs/executor.js';
 // Recent CVEs are where the NVD CPE gap is worst (roughly half of the last
 // year's CVEs have no CPE row at all, against a fifth across all time), and
 // older records mostly predate the structured `versions` conventions this
-// import relies on. Widen this once the measured value justifies it.
+// import relies on. Widen this once the measured value justifies it. Only
+// restricts CNA-affected-products storage -- SSVC backfill is unaffected.
 const BOOTSTRAP_YEARS = ['2025', '2026'];
 const DELTA_FALLBACK_MS = 25 * 60 * 60 * 1000;
 
@@ -48,14 +52,17 @@ async function main() {
         totalInserted: result.inserted,
         totalUpdated: result.updated,
         totalFailed: result.failed,
-        metadata: { bootstrap, rows: result.rows, usable: result.usable, pruned: result.pruned, dropped: result.dropped },
+        metadata: {
+          bootstrap, rows: result.rows, usable: result.usable, pruned: result.pruned,
+          dropped: result.dropped, ssvcUpdated: result.ssvcUpdated,
+        },
       },
     });
 
     console.log(
       `Done: ${result.scanned} records scanned, ${result.usable} usable, ` +
       `${result.inserted} inserted, ${result.updated} updated, ${result.pruned} pruned, ${result.failed} failed ` +
-      `(${result.rows} affected-product rows)`,
+      `(${result.rows} affected-product rows, ${result.ssvcUpdated} SSVC assessments)`,
     );
     console.log('Dropped by rule:', JSON.stringify(result.dropped));
   } catch (err) {

@@ -40,6 +40,14 @@ model Vulnerability {
   epssPercentile Float?     // 0.0–1.0 パーセンタイル
   epssUpdatedAt  DateTime?
 
+  // CISA Vulnrichment -- raw SSVC axes only. Deriving a final decision needs a
+  // 4th axis (organization-specific Mission & Well-being) CISA does not
+  // publish per CVE, so heretix-api does not compute one -- left to heretix-management.
+  ssvcExploitation    String?    // "none" | "poc" | "active"
+  ssvcAutomatable     String?    // "yes" | "no"
+  ssvcTechnicalImpact String?    // "partial" | "total"
+  ssvcTimestamp       DateTime?
+
   fetchedAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

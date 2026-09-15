@@ -8,7 +8,8 @@
 - **マルウェア検知**: OSV の `MAL-YYYY-NNNN` エントリ（悪意あるパッケージ）を [ossf/malicious-packages](https://github.com/ossf/malicious-packages) からインポートし、脆弱性検索エンドポイントで検索可能
 - **重複排除**: `Vulnerability` マスターテーブルが CVE ID をキーにソース間の重複を吸収
 - **CPE エイリアス対応**: NVD の CPE product 名変更（ベンダー買収等）に追従する `src/config/product-aliases.ts` で検索精度を維持
-- **リスク評価値**: CISA KEV（悪用実績フラグ）・EPSS（悪用予測スコア）を脆弱性に紐づけ
+- **リスク評価値**: CISA KEV（悪用実績フラグ）・EPSS（悪用予測スコア）・CISA Vulnrichmentの SSVC評価（悪用状況・自動化容易性・技術的影響度）を脆弱性に紐づけ
+- **CVE Record取り込み**: 全CVE Record（[CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5)）が持つCNA宣言の影響製品を取り込み。専用アドバイザリフェッチャーが無いベンダーもカバー
 - **シンプル**: PostgreSQLのみで動作。Docker Compose によるデプロイにも対応
 - **高速検索**: 正規化されたバージョン番号による整数比較で高速な範囲検索を実現
 - **スケーラブル**: 生データをJSONBで保存し、検索用フィールドを正規化
@@ -335,6 +336,8 @@ curl "http://localhost:3001/api/v1/vulnerabilities/GHSA-67hx-6x53-jw92"
 curl "http://localhost:3001/api/v1/vulnerabilities/FG-IR-25-934"
 ```
 
+利用可能な場合、既存のKEV/EPSSフィールドと合わせて、CISA VulnrichmentのSSVC評価(`ssvcExploitation`、`ssvcAutomatable`、`ssvcTechnicalImpact`、`ssvcTimestamp`)もレスポンスに含まれます――詳細は「CVE Program（CNA）＆ CISA Vulnrichment収集」を参照。通常の製品名+バージョン検索(`GET /vulnerabilities/search`)には含まれず、このID検索のみで返されます。
+
 ### 統計情報
 データベース内の脆弱性統計を取得します。
 ```
@@ -403,11 +406,13 @@ heretix-api/
 │   │   ├── import-tomcat.ts                 # Apache Tomcat アドバイザリインポートCLI
 │   │   ├── import-nginx.ts                  # nginx アドバイザリインポートCLI
 │   │   ├── import-checkpoint.ts             # Check Point アドバイザリインポートCLI
+│   │   ├── import-cna.ts                    # CVE Program（CNA影響製品）+ CISA Vulnrichment（SSVC）インポートCLI
 │   │   ├── validate-tomcat.ts               # Tomcat 検索精度検証
 │   │   ├── validate-apache.ts               # Apache HTTPD 検索精度検証
 │   │   ├── validate-nginx.ts                # nginx 検索精度検証
 │   │   ├── validate-openssl.ts              # OpenSSL 検索精度検証
 │   │   ├── validate-postgresql.ts           # PostgreSQL 検索精度検証
+│   │   ├── validate-cna.ts                  # CNA影響製品の検索精度検証
 │   │   └── clear-db.ts                      # DB全テーブル削除（Vulnerability含む全テーブル）
 │   ├── worker/
 │   │   ├── osv-fetcher.ts          # OSV API連携ロジック
@@ -431,8 +436,11 @@ heretix-api/
 │   │   ├── tomcat-fetcher.ts       # Apache Tomcat 複数ブランチページ取得・パース
 │   │   ├── nginx-fetcher.ts        # nginx セキュリティアドバイザリページ取得・パース
 │   │   ├── checkpoint-fetcher.ts   # Check Point アドバイザリJSON API+詳細ページ取得・パース
-│   │   ├── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint, Vitest）
+│   │   ├── cna-fetcher.ts          # cvelistV5バンドルダウンロード + CVE Record/CISA Vulnrichment（SSVC）パース（純粋関数、DBインポート無し）
+│   │   ├── cna-importer.ts         # CNA影響製品+SSVCの永続化、ブートストラップ・差分の制御
+│   │   ├── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint/cna, Vitest）
 │   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData 結合テスト（Vitest、TEST_DATABASE_URL 必須）
+│   │   ├── cna-importer.integration.test.ts      # CNA/SSVC インポート結合テスト（Vitest、TEST_DATABASE_URL 必須）
 │   │   └── osv-fetcher.integration.test.ts       # importOSVData 結合テスト（孤立マスター行の回帰テスト）
 │   ├── config/
 │   │   ├── product-aliases.ts      # NVD CPE product 名エイリアスマッピング
@@ -515,6 +523,11 @@ Vulnerability (マスター)
 #### EPSSデータ取得 ([src/worker/epss-fetcher.ts](src/worker/epss-fetcher.ts))
 - FIRST.org EPSS API (`https://api.first.org/data/v1/epss`) をページネーション（1万件/ページ）で全件取得（約32万件）
 - `Vulnerability.epssScore` / `epssPercentile` を 1000件チャンクで更新
+
+#### CVE Program & CISA Vulnrichment ([src/worker/cna-fetcher.ts](src/worker/cna-fetcher.ts), [src/worker/cna-importer.ts](src/worker/cna-importer.ts))
+- `cna-fetcher.ts`はcvelistV5のGitHub Releaseバンドルのダウンロードとパースを担当（DBインポート無しの純粋関数――ベンダーアドバイザリフェッチャーと同じ分離）、`cna-importer.ts`が永続化とブートストラップ・差分の制御を担当
+- CNAが宣言する影響製品(`containers.cna.affected`)は、ベンダーアドバイザリの検索経路には混ぜず、専用の`CnaVulnerability`/`CnaAffectedProduct`テーブルに保存する――詳細は`prisma/schema.prisma`の`CnaVulnerability`モデルのコメントを参照
+- CISA Vulnrichmentの SSVC評価(`containers.adp`の`CISA-ADP`エントリ)は、CNA影響製品側のパース成否とは無関係に独立して抽出し、`Vulnerability`マスター行に直接書き込む(`ssvcExploitation`/`ssvcAutomatable`/`ssvcTechnicalImpact`/`ssvcTimestamp`)――既存のKEV/EPSSと同じ、CVE単位のフラットな形。最終的な優先度判定は算出しない――詳細は「CVE Program（CNA）＆ CISA Vulnrichment収集」を参照
 
 #### ベンダーアドバイザリ基盤 ([src/worker/advisory-fetcher.ts](src/worker/advisory-fetcher.ts))
 - `AdvisoryFetcher` インターフェースを実装することで新規ベンダーを追加可能
@@ -718,6 +731,19 @@ pnpm import:epss cve CVE-2021-44228  # 単一CVEのみ更新
 - 約32万件の CVE にスコアが付与されている
 - 毎日更新（日次実行を推奨）
 - `epssScore`: 0〜1 の悪用確率、`epssPercentile`: 全CVEの中でのパーセンタイル
+
+## CVE Program（CNA）＆ CISA Vulnrichment収集
+
+```bash
+pnpm import:cna              # 既にブートストラップ済みなら差分、未実施ならフルバンドルからブートストラップ
+pnpm import:cna --bootstrap  # フルバンドル取り込みを強制実行
+```
+
+[CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5) のGitHub Releaseから CVE Record を取得します（初回ブートストラップは約600MBのフルスナップショット、以降は1時間毎の差分バンドルで数MB/日）。認証不要、レート制限もありません。
+
+- **CNAが宣言する影響製品**: `containers.cna.affected`を`CnaAffectedProduct`という専用テーブルに保存します（ベンダーアドバイザリの検索経路には混ぜません — `cna-importer.ts`内の`CnaVulnerability`モデルのコメントを参照）。ブートストラップは`BOOTSTRAP_YEARS`(`src/scripts/import-cna.ts`)に限定しています。これより古い年代のレコードは、この機能が前提とする構造化された`versions`表記に対応していないためです。差分更新には年代制限はありません。
+- **CISA Vulnrichment（SSVC）**: 同じCVE Recordの`containers.adp`に、CISA-ADPというSSVC評価(`Exploitation`: none/poc/active、`Automatable`: yes/no、`Technical Impact`: partial/total)が含まれることがあります（[CISAのSSVCガイド](https://www.cisa.gov/stakeholder-specific-vulnerability-categorization-ssvc)参照）。既存のKEV/EPSSと同じ、CVE単位のフラットな形で`Vulnerability`マスターテーブルに直接保存します(`ssvcExploitation`/`ssvcAutomatable`/`ssvcTechnicalImpact`/`ssvcTimestamp`)。CVE ID検索(`GET /vulnerabilities/:id`)で返されます。最終的な優先度判定(Track/Track-star/Attend/Act)は意図的に算出しません — 4軸目（組織固有のMission & Well-being impact）が必要で、CISAはCVE単位ではこれを公開していないため。優先度への変換は利用側(heretix-management)の責務です。
+- CNAの影響製品データとは異なり、SSVCのバックフィルはブートストラップ時に`BOOTSTRAP_YEARS`で制限しません。フルバンドル自体はどのみちダウンロードされるため、含まれる全年代をSSVC抽出の対象にしても追加のネットワークコストはかかりません(`cna-importer.ts`の`bootstrapCna()`のコメント参照)。
 
 ## ベンダーセキュリティアドバイザリ収集
 
@@ -1083,6 +1109,7 @@ TEST_DATABASE_URL="postgresql://...heretix_test" pnpm exec prisma migrate deploy
 | Red Hat RHEL 9 アドバイザリ | 毎日 13:15 UTC |
 | Red Hat RHEL 8 アドバイザリ | 毎日 13:30 UTC |
 | Red Hat CSAF VEX（未修正CVE） | 毎日 15:00 UTC |
+| CVE Record（CNA）+ CISA Vulnrichment 差分 | 毎日 15:30 UTC |
 | Splunk アドバイザリ | 毎日 13:45 UTC |
 | Apache HTTP Server アドバイザリ | 毎日 14:00 UTC |
 | Zabbix アドバイザリ | 毎日 14:15 UTC |

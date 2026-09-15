@@ -5,12 +5,14 @@ import {
   type CveRecord,
   type DropReason,
   type ParsedCveRecord,
+  type SsvcAssessment,
   cveIdOf,
   downloadZip,
   findDeltaBundles,
   findFullBundle,
   listReleases,
   parseCveRecord,
+  parseSsvc,
   recordsFromZip,
 } from './cna-fetcher.js';
 import type { Prisma } from '@prisma/client';
@@ -81,6 +83,39 @@ export async function importCnaRecord(parsed: ParsedCveRecord): Promise<'inserte
   });
 }
 
+/**
+ * Store one CVE's SSVC assessment directly on the Vulnerability master row,
+ * the same "flat, 1:1-per-CVE" shape as the existing KEV/EPSS fields --
+ * unlike CNA-affected-products, this has no separate table.
+ *
+ * Runs independently of parseCveRecord()/importCnaRecord(): a record can have
+ * a perfectly good CISA-ADP SSVC container while having nothing CNA-affected-
+ * products can use (or vice versa), so this must not be gated on that
+ * function's success.
+ */
+export async function importSsvcAssessment(cveId: string, ssvc: SsvcAssessment): Promise<void> {
+  await prisma.vulnerability.upsert({
+    where: { cveId },
+    create: {
+      cveId,
+      ssvcExploitation: ssvc.exploitation,
+      ssvcAutomatable: ssvc.automatable,
+      ssvcTechnicalImpact: ssvc.technicalImpact,
+      ssvcTimestamp: ssvc.timestamp,
+    },
+    update: {
+      ssvcExploitation: ssvc.exploitation,
+      ssvcAutomatable: ssvc.automatable,
+      ssvcTechnicalImpact: ssvc.technicalImpact,
+      ssvcTimestamp: ssvc.timestamp,
+    },
+  });
+}
+
+function cveYear(cveId: string): string | undefined {
+  return cveId.match(/^CVE-(\d{4})-/)?.[1];
+}
+
 export interface CnaImportResult {
   scanned: number;
   usable: number;
@@ -89,11 +124,12 @@ export interface CnaImportResult {
   pruned: number;
   failed: number;
   rows: number;
+  ssvcUpdated: number;
   dropped: Partial<Record<DropReason, number>>;
 }
 
 function emptyResult(): CnaImportResult {
-  return { scanned: 0, usable: 0, inserted: 0, updated: 0, pruned: 0, failed: 0, rows: 0, dropped: {} };
+  return { scanned: 0, usable: 0, inserted: 0, updated: 0, pruned: 0, failed: 0, rows: 0, ssvcUpdated: 0, dropped: {} };
 }
 
 /**
@@ -115,12 +151,39 @@ function mergeDropped(into: CnaImportResult, from: Partial<Record<DropReason, nu
   }
 }
 
-/** Parse, filter and store a stream of CVE Records. */
-export async function importCveRecords(records: Iterable<CveRecord>): Promise<CnaImportResult> {
+/**
+ * Parse, filter and store a stream of CVE Records.
+ *
+ * `cnaYears`, when given, restricts CNA-affected-products storage to CVE ids
+ * in those years (bootstrapCna()'s existing scope decision -- older records
+ * predate the structured `versions` conventions that feature relies on).
+ * SSVC has no such dependency and is always attempted for every record,
+ * regardless of this filter, so passing `cnaYears` costs nothing beyond what
+ * decompressing/parsing the full bundle already costs.
+ */
+export async function importCveRecords(records: Iterable<CveRecord>, cnaYears: Set<string> | null = null): Promise<CnaImportResult> {
   const result = emptyResult();
 
   for (const record of records) {
     result.scanned++;
+    const cveId = cveIdOf(record);
+
+    const ssvc = parseSsvc(record);
+    if (ssvc && cveId) {
+      try {
+        await importSsvcAssessment(cveId, ssvc);
+        result.ssvcUpdated++;
+      } catch (err) {
+        result.failed++;
+        logger.error({ err, cveId }, 'Failed to import SSVC assessment');
+      }
+    }
+
+    if (cnaYears) {
+      const year = cveId ? cveYear(cveId) : undefined;
+      if (!year || !cnaYears.has(year)) continue;
+    }
+
     const parsed = parseCveRecord(record);
 
     if (!parsed) {
@@ -128,7 +191,6 @@ export async function importCveRecords(records: Iterable<CveRecord>): Promise<Cn
       // usable rows (an earlier, looser import; a CNA correction) has none now.
       // Leaving its old rows in place would make the DB richer than the data
       // actually justifies -- see pruneCnaRecord()'s doc comment.
-      const cveId = cveIdOf(record);
       if (cveId) {
         try {
           if (await pruneCnaRecord(cveId)) result.pruned++;
@@ -160,7 +222,15 @@ export async function importCveRecords(records: Iterable<CveRecord>): Promise<Cn
 }
 
 /**
- * One-time bootstrap from the full bundle, restricted to the given years.
+ * One-time bootstrap from the full bundle. CNA-affected-products storage is
+ * restricted to `years`, but SSVC has no such restriction and is backfilled
+ * for every record in the bundle -- see importCveRecords()'s doc comment.
+ *
+ * Deliberately scans every record (no year filter at the zip level) rather
+ * than filtering to `years` there and only that: the ~600MB download is paid
+ * either way, so restricting the zip-level scan would silently drop SSVC
+ * backfill for the years it excludes instead of just skipping CNA-affected-
+ * products for them.
  *
  * The full bundle is ~600MB, so this is deliberately not the routine path --
  * importCnaDelta() handles everything after the first run.
@@ -173,7 +243,7 @@ export async function bootstrapCna(years: string[]): Promise<CnaImportResult> {
   const zip = await downloadZip(asset.browser_download_url, 30 * 60 * 1000);
   logger.info('Full CVE bundle downloaded, importing');
 
-  return importCveRecords(recordsFromZip(zip, new Set(years)));
+  return importCveRecords(recordsFromZip(zip, null), new Set(years));
 }
 
 /**
@@ -199,6 +269,7 @@ export async function importCnaDelta(since: Date): Promise<CnaImportResult> {
     total.pruned += result.pruned;
     total.failed += result.failed;
     total.rows += result.rows;
+    total.ssvcUpdated += result.ssvcUpdated;
     mergeDropped(total, result.dropped);
   }
 

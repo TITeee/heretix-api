@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import AdmZip from 'adm-zip';
-import { extractCnaRows, parseCveRecord, cveIdOf, isUsableVersion, recordsFromZip, findDeltaBundles, findFullBundle } from './cna-fetcher.js';
+import { extractCnaRows, parseCveRecord, parseSsvc, cveIdOf, isUsableVersion, recordsFromZip, findDeltaBundles, findFullBundle } from './cna-fetcher.js';
 import { normalizeVersion } from '../utils/version.js';
 
 // Every fixture below is a shape taken from real cvelistV5 data.
@@ -248,6 +248,98 @@ describe('parseCveRecord', () => {
       containers: { cna: { affected: record.containers.cna.affected } },
     });
     expect(parsed?.cnaShortName).toBe('unknown');
+  });
+});
+
+describe('parseSsvc', () => {
+  // Shape taken from the live CVE-2024-3400 record (containers.adp), confirmed
+  // identical to the same CVE's entry in cisagov/vulnrichment.
+  const cisaAdpRecord = {
+    containers: {
+      adp: [
+        {
+          metrics: [
+            {
+              other: {
+                type: 'ssvc',
+                content: {
+                  id: 'CVE-2024-3400',
+                  role: 'CISA Coordinator',
+                  options: [
+                    { Exploitation: 'active' },
+                    { Automatable: 'yes' },
+                    { 'Technical Impact': 'total' },
+                  ],
+                  version: '2.0.3',
+                  timestamp: '2024-04-17T04:00:13.543064Z',
+                },
+              },
+            },
+            { other: { type: 'kev', content: { dateAdded: '2024-04-12' } } },
+          ],
+          title: 'CISA ADP Vulnrichment',
+          providerMetadata: { orgId: '134c704f-9b21-4f2e-91b3-4a467353bcc0', shortName: 'CISA-ADP' },
+        },
+        {
+          title: 'CVE Program Container',
+          providerMetadata: { orgId: 'af854a3a-2127-422b-91ae-364da2661108', shortName: 'CVE' },
+        },
+      ],
+    },
+  };
+
+  it('reads the three SSVC decision points from the CISA-ADP container', () => {
+    expect(parseSsvc(cisaAdpRecord)).toEqual({
+      exploitation: 'active',
+      automatable: 'yes',
+      technicalImpact: 'total',
+      timestamp: new Date('2024-04-17T04:00:13.543064Z'),
+    });
+  });
+
+  it('returns undefined when there is no adp container at all', () => {
+    expect(parseSsvc({ containers: { cna: {} } })).toBeUndefined();
+  });
+
+  it('returns undefined when adp is present but has no CISA-ADP entry', () => {
+    expect(parseSsvc({
+      containers: { adp: [{ providerMetadata: { shortName: 'CVE' } }] },
+    })).toBeUndefined();
+  });
+
+  it('returns undefined when the CISA-ADP container has no ssvc metric', () => {
+    expect(parseSsvc({
+      containers: {
+        adp: [{ providerMetadata: { shortName: 'CISA-ADP' }, metrics: [{ other: { type: 'kev', content: {} } }] }],
+      },
+    })).toBeUndefined();
+  });
+
+  it('returns undefined when a decision point is missing or has an unrecognized value', () => {
+    const missingAutomatable = {
+      containers: {
+        adp: [{
+          providerMetadata: { shortName: 'CISA-ADP' },
+          metrics: [{ other: { type: 'ssvc', content: { options: [{ Exploitation: 'active' }, { 'Technical Impact': 'total' }] } } }],
+        }],
+      },
+    };
+    expect(parseSsvc(missingAutomatable)).toBeUndefined();
+
+    const unrecognizedValue = {
+      containers: {
+        adp: [{
+          providerMetadata: { shortName: 'CISA-ADP' },
+          metrics: [{
+            other: {
+              type: 'ssvc',
+              content: { options: [{ Exploitation: 'maybe' }, { Automatable: 'yes' }, { 'Technical Impact': 'total' }] },
+            },
+          }],
+        }],
+      },
+    };
+    expect(parseSsvc(unrecognizedValue)).toBeUndefined();
   });
 });
 
