@@ -16,7 +16,15 @@ const pool = new pg.Pool({
   password: dbUrl.password,
   database: dbUrl.pathname.slice(1), // Remove leading /
   ssl: false,
-  max: 20, // supports BATCH_CONCURRENCY=20 concurrent batch searches × 3 queries each
+  // A single /search issues up to 4 queries in parallel (OSV, NVD, advisory,
+  // CNA) and the batch endpoint runs BATCH_CONCURRENCY of those at a time, so
+  // peak demand is a multiple of this number, not equal to it -- the previous
+  // "20 batch searches × 3 queries" comment stopped being true when the CNA
+  // path was added. pg queues the excess rather than failing, which is fine
+  // as long as no single job holds a large share of the pool for minutes at a
+  // time (see importEPSSData()). Raise for a bigger Postgres or a higher
+  // BATCH_CONCURRENCY.
+  max: Number(process.env.DATABASE_POOL_MAX ?? 20),
 });
 
 // Prisma adapter

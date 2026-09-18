@@ -81,6 +81,7 @@ DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public
 PORT=5000
 NODE_ENV=development                # use "production" for a production deployment
 API_KEY=your-api-key-here           # Required. Requests without x-api-key header return 401
+DATABASE_POOL_MAX=20                # Optional. Postgres connection pool size (default 20)
 NVD_API_KEY=                        # Optional. Relaxes NVD rate limit from 10 → 50 req/min
 CISCO_CLIENT_ID=                    # Required for Cisco PSIRT import (openVuln API client ID)
 CISCO_CLIENT_SECRET=                # Required for Cisco PSIRT import (openVuln API client secret)
@@ -449,6 +450,7 @@ heretix-api/
 │   │   ├── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint/cna, Vitest)
 │   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData integration test (Vitest, requires TEST_DATABASE_URL)
 │   │   ├── cna-importer.integration.test.ts      # CNA/SSVC import integration test (Vitest, requires TEST_DATABASE_URL)
+│   │   ├── epss-fetcher.integration.test.ts      # importEPSSData integration test (raw bulk UPDATE semantics)
 │   │   └── osv-fetcher.integration.test.ts       # importOSVData integration test — orphaned-master-row regression
 │   ├── config/
 │   │   ├── product-aliases.ts       # NVD CPE product name alias mappings
