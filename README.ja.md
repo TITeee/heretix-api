@@ -107,7 +107,7 @@ pnpm db:studio
 
 ## インポートステータス ダッシュボード
 
-`/dashboard` にアクセスすると、インポート状況の確認と収集ジョブの操作ができる Web UI が表示されます（閲覧は認証不要）。
+`/dashboard` にアクセスすると、インポート状況の確認と収集ジョブの操作ができる Web UI が表示されます（ページの表示は認証不要ですが、データの読み込みには API キーが必要です）。
 
 ![インポートステータス ダッシュボード](docs/dashboard.png)
 
@@ -123,14 +123,16 @@ GET /dashboard
 60 秒ごとに自動リフレッシュ。JSON での取得も可能:
 
 ```
-GET /api/v1/import-status
+GET /api/v1/import-status     # x-api-key が必要
 ```
+
+ページ自体は認証不要ですが、そこに表示されるデータは認証が必要です。右上の入力欄に API キーを入力すると読み込まれます。キーはブラウザの `localStorage` に保存され、以降のリクエストに付与されます。
 
 ### ジョブの操作（ON/OFF・手動実行）
 
 各行の **On/Off トグル** でスケジューラによる自動実行を有効/無効にでき、**Run ボタン** でその場で手動実行できます。OSV はエコシステム単位で個別に制御できます。
 
-これらの操作は状態を変更するため、`x-api-key` による認証が必要です。ダッシュボード右上の入力欄に API キーを入力すると、ブラウザの `localStorage` に保存され、以降の操作で送信されます（閲覧のみなら不要）。
+これらの操作は状態を変更するため、`x-api-key` による認証が必要です（ダッシュボードがデータを読み込む際に使うものと同じキーです）。
 
 対応するエンドポイント（`/api/v1` 認証スコープ内）:
 
@@ -373,8 +375,10 @@ heretix-api/
 │   │   │   ├── vulnerabilities.ts  # 脆弱性API エンドポイント
 │   │   │   ├── vulnerabilities.integration.test.ts  # 検索ルート結合テスト（fastify.inject, Vitest）
 │   │   │   ├── dashboard.ts        # ダッシュボードUI・import-status API
+│   │   │   ├── dashboard.integration.test.ts  # import-status の認証・ダッシュボード出力エスケープのテスト
 │   │   │   └── jobs.ts             # ジョブ手動実行・有効/無効切り替えAPI
-│   │   └── server.ts               # Fastifyサーバー設定
+│   │   ├── server.ts               # Fastifyサーバー設定
+│   │   └── auth.ts                 # x-api-key 認証フック共通実装（タイミング安全比較）
 │   ├── jobs/
 │   │   ├── types.ts                # JobDefinition / JobResult 型
 │   │   ├── registry.ts             # 全ジョブ定義（STATIC_JOBS）+ 動的リゾルバ

@@ -137,14 +137,16 @@ Displays:
 Auto-refreshes every 60 seconds. Also available as JSON:
 
 ```
-GET /api/v1/import-status
+GET /api/v1/import-status     # requires x-api-key
 ```
+
+The page itself is public, but the data it renders is not: enter your API key in the field at the top-right to load it. The key is kept in the browser's `localStorage` and sent with every subsequent request.
 
 ### Job control (enable/disable & manual run)
 
 Each row has an **On/Off toggle** to enable/disable the scheduled run, and a **Run** button to trigger it on demand. OSV is controllable per ecosystem.
 
-These actions mutate state, so they require `x-api-key` authentication. Enter your API key in the field at the top-right of the dashboard — it is saved in the browser's `localStorage` and sent with subsequent actions (not needed for viewing).
+These actions mutate state, so they require `x-api-key` authentication — the same key the dashboard already needs to load its data.
 
 Corresponding endpoints (inside the `/api/v1` auth scope):
 
@@ -161,7 +163,7 @@ Example: `http://localhost:5000/dashboard`
 
 ## API Endpoints
 
-Endpoints require the `x-api-key` header to match the `API_KEY` environment variable, except the following public routes: `/health`, `/dashboard`, `/icon.png`, `/api/v1/import-status`.
+Endpoints require the `x-api-key` header to match the `API_KEY` environment variable, except the following public routes: `/health`, `/dashboard`, `/icon.png`. `/dashboard` serves only the HTML shell — the data it loads (`/api/v1/import-status`) is authenticated like everything else.
 
 ### Health check
 
@@ -381,8 +383,10 @@ heretix-api/
 │   │   │   ├── vulnerabilities.ts   # Vulnerability API endpoints
 │   │   │   ├── vulnerabilities.integration.test.ts  # search route integration test (fastify.inject, Vitest)
 │   │   │   ├── dashboard.ts         # Dashboard UI & import-status API
+│   │   │   ├── dashboard.integration.test.ts  # import-status auth & dashboard output-escaping tests
 │   │   │   └── jobs.ts              # Job manual-run & enable/disable API
-│   │   └── server.ts                # Fastify server configuration
+│   │   ├── server.ts                # Fastify server configuration
+│   │   └── auth.ts                  # Shared x-api-key hook (timing-safe compare)
 │   ├── jobs/
 │   │   ├── types.ts                 # JobDefinition / JobResult types
 │   │   ├── registry.ts              # All job definitions (STATIC_JOBS) + dynamic resolver

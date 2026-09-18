@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import vulnerabilitiesRoute from './routes/vulnerabilities.js';
 import dashboardRoute from './routes/dashboard.js';
 import jobsRoute from './routes/jobs.js';
+import { requireApiKey } from './auth.js';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
@@ -41,18 +42,13 @@ export async function createServer() {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
 
-  // Dashboard routes (no auth required)
+  // The dashboard HTML shell is public; the data endpoint it calls
+  // (/api/v1/import-status) enforces the API key itself -- see dashboard.ts.
   await fastify.register(dashboardRoute);
 
   // Routes (API Key auth registered in the same scope)
   await fastify.register(async (app) => {
-    const API_KEY = process.env.API_KEY;
-    app.addHook('onRequest', async (request, reply) => {
-      const key = request.headers['x-api-key'];
-      if (!API_KEY || !key || key !== API_KEY) {
-        return reply.status(401).send({ error: 'Unauthorized' });
-      }
-    });
+    app.addHook('onRequest', requireApiKey);
     await app.register(vulnerabilitiesRoute, { prefix: '/api/v1' });
     await app.register(jobsRoute, { prefix: '/api/v1' });
   });
