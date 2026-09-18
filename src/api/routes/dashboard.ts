@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { readFile } from 'fs/promises';
 import path from 'path';
+import { requireApiKey } from '../auth.js';
 import { prisma } from '../../db/client.js';
 import { STATIC_JOBS } from '../../jobs/registry.js';
 import { getEnabledMap, defaultEnabled } from '../../jobs/config.js';
@@ -39,7 +40,10 @@ const ADVISORY_SOURCE_MAP: Record<string, string> = {
 };
 
 export default async function dashboardRoute(fastify: FastifyInstance) {
-  fastify.get('/api/v1/import-status', async () => {
+  // Enforced per-route rather than by the scope hook in server.ts: the HTML
+  // shell below stays public, but the data it renders (job history, failure
+  // messages, per-ecosystem counts) does not.
+  fastify.get('/api/v1/import-status', { onRequest: requireApiKey }, async () => {
     const allJobs = await prisma.collectionJob.findMany({
       orderBy: { createdAt: 'desc' },
     });
@@ -205,8 +209,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         <input
           id="api-key-input"
           type="password"
-          placeholder="API key (for actions)"
-          onchange="saveApiKey(this.value)"
+          placeholder="API key"
           class="px-3 py-2 bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] text-sm rounded-md w-56 placeholder:text-[var(--muted-foreground)] focus:outline-none focus:border-[var(--primary)]"
         />
         <button
@@ -315,6 +318,21 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
   <script>
     const REFRESH_INTERVAL_MS = 60000;
 
+    // Everything rendered below goes through innerHTML, and several of the
+    // values are not ours: OSV ecosystem names come from upstream OSV data,
+    // and errorMessage is whatever a failing fetcher produced -- an axios
+    // error, for instance, can carry an upstream response body. Without this
+    // an injected script would run with access to the API key in localStorage.
+    function esc(v) {
+      if (v == null) return '';
+      return String(v)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function fmt(n) {
       if (n == null) return '-';
       return n.toLocaleString();
@@ -356,7 +374,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       const dot = status === 'running'
         ? '<span class="inline-block w-2 h-2 rounded-full bg-current animate-pulse mr-1"></span>'
         : '';
-      return '<span class="' + base + ' ' + cls + '">' + dot + status + '</span>';
+      return '<span class="' + base + ' ' + cls + '">' + dot + esc(status) + '</span>';
     }
 
     function fetchFailedBadge(n) {
@@ -368,8 +386,8 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     function errorCell(msg) {
       if (!msg) return '<span class="text-[var(--muted-foreground)]">-</span>';
       return '<span class="text-[var(--destructive)] font-mono text-xs block truncate max-w-[140px]" title="' +
-        msg.replace(/"/g, '&quot;') + '">' +
-        msg.substring(0, 60) + (msg.length > 60 ? '…' : '') +
+        esc(msg) + '">' +
+        esc(msg.substring(0, 60)) + (msg.length > 60 ? '…' : '') +
       '</span>';
     }
 
@@ -396,15 +414,20 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       toastTimer = setTimeout(() => { el.className = 'hidden'; }, 3000);
     }
 
+    // Handlers are attached by delegation (see below) rather than inlined as
+    // onclick="...". The source name is upstream-derived for OSV rows, and an
+    // inline handler would need it escaped for the HTML attribute *and* the JS
+    // string literal inside it -- a data attribute has only the one context.
     function actionCell(row) {
       const running = row.status === 'running';
-      const runBtn = '<button onclick="runJob(\\'' + row.source + '\\')" ' +
+      const runBtn = '<button data-action="run" data-source="' + esc(row.source) + '" ' +
         (running ? 'disabled ' : '') +
         'class="w-[72px] px-2.5 py-1 text-xs font-medium rounded-md border border-[var(--border)] text-center ' +
         (running ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[var(--accent)]') + '">' +
         (running ? 'Running…' : 'Run') + '</button>';
       const enabled = row.enabled !== false;
-      const toggleBtn = '<button onclick="toggleJob(\\'' + row.source + '\\', ' + (!enabled) + ')" ' +
+      const toggleBtn = '<button data-action="toggle" data-source="' + esc(row.source) + '" ' +
+        'data-enabled="' + (!enabled) + '" ' +
         'class="w-[52px] px-2.5 py-1 text-xs font-medium rounded-md border text-center ' +
         (enabled
           ? 'border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--accent)]'
@@ -412,6 +435,13 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         '">' + (enabled ? 'On' : 'Off') + '</button>';
       return '<div class="flex items-center justify-end gap-2">' + toggleBtn + runBtn + '</div>';
     }
+
+    document.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-action]');
+      if (!btn) return;
+      if (btn.dataset.action === 'run') void runJob(btn.dataset.source);
+      if (btn.dataset.action === 'toggle') void toggleJob(btn.dataset.source, btn.dataset.enabled === 'true');
+    });
 
     async function runJob(source) {
       const key = getApiKey();
@@ -471,14 +501,14 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       const tbody = document.getElementById(tbodyId);
       if (!rows.length) {
         tbody.innerHTML = '<tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">' +
-          (options.emptyMessage || 'No data found.') + '</td></tr>';
+          esc(options.emptyMessage || 'No data found.') + '</td></tr>';
         return;
       }
       const ordered = options.sort ? [...rows].sort((a, b) => getName(a).localeCompare(getName(b))) : rows;
       tbody.innerHTML = ordered.map(r =>
         '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors' +
           (r.enabled === false ? ' opacity-50' : '') + '">' +
-          '<td class="px-4 py-4 font-medium text-[var(--foreground)]">' + getName(r) + '</td>' +
+          '<td class="px-4 py-4 font-medium text-[var(--foreground)]">' + esc(getName(r)) + '</td>' +
           '<td class="px-4 py-4">' + statusBadge(r.status) + fetchFailedBadge(r.fetchFailed) + '</td>' +
           '<td class="px-4 py-4 text-[var(--muted-foreground)]">' + relativeTime(r.completedAt) + '</td>' +
           '<td class="px-4 py-4 text-right text-[var(--muted-foreground)] font-mono">' + formatDuration(r.durationMs) + '</td>' +
@@ -491,9 +521,25 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       ).join('');
     }
 
+    function tableMessage(html) {
+      const msg = '<tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">' + html + '</td></tr>';
+      document.getElementById('core-tbody').innerHTML = msg;
+      document.getElementById('advisory-tbody').innerHTML = msg;
+      document.getElementById('osv-tbody').innerHTML = msg;
+    }
+
     async function loadData() {
+      const key = getApiKey();
+      if (!key) {
+        tableMessage('Enter the API key above to load import status.');
+        return;
+      }
       try {
-        const res = await fetch('/api/v1/import-status');
+        const res = await fetch('/api/v1/import-status', { headers: { 'x-api-key': key } });
+        if (res.status === 401) {
+          tableMessage('Invalid API key.');
+          return;
+        }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         renderCards(data.recordCounts);
@@ -503,15 +549,18 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         document.getElementById('last-updated').textContent =
           'Updated ' + new Date().toLocaleTimeString();
       } catch (err) {
-        const msg = '<tr><td colspan="9" class="px-6 py-8 text-center text-[var(--destructive)]">Failed to load: ' + err.message + '</td></tr>';
-        document.getElementById('core-tbody').innerHTML = msg;
-        document.getElementById('advisory-tbody').innerHTML = msg;
-        document.getElementById('osv-tbody').innerHTML = msg;
+        tableMessage('<span class="text-[var(--destructive)]">Failed to load: ' + esc(err.message) + '</span>');
       }
     }
 
-    // Prefill API key input from localStorage
-    document.getElementById('api-key-input').value = getApiKey();
+    // Prefill API key input from localStorage. The key is required to load any
+    // data now, not just to run actions, so saving one reloads immediately.
+    const apiKeyInput = document.getElementById('api-key-input');
+    apiKeyInput.value = getApiKey();
+    apiKeyInput.addEventListener('change', () => {
+      saveApiKey(apiKeyInput.value);
+      void loadData();
+    });
 
     loadData();
     setInterval(loadData, REFRESH_INTERVAL_MS);
