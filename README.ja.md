@@ -78,6 +78,7 @@ DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public
 PORT=5000
 NODE_ENV=development                # 本番環境では "production"
 API_KEY=your-api-key-here           # 必須。x-api-key ヘッダーが一致しないリクエストは 401
+DATABASE_POOL_MAX=20                # 任意。PostgreSQL コネクションプールのサイズ（既定 20）
 NVD_API_KEY=                        # 任意。NVD のレート制限を 10→50 req/min に緩和
 CISCO_CLIENT_ID=                    # Cisco PSIRT インポートに必須（openVuln API クライアント ID）
 CISCO_CLIENT_SECRET=                # Cisco PSIRT インポートに必須（openVuln API クライアントシークレット）
@@ -445,6 +446,7 @@ heretix-api/
 │   │   ├── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint/cna, Vitest）
 │   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData 結合テスト（Vitest、TEST_DATABASE_URL 必須）
 │   │   ├── cna-importer.integration.test.ts      # CNA/SSVC インポート結合テスト（Vitest、TEST_DATABASE_URL 必須）
+│   │   ├── epss-fetcher.integration.test.ts      # importEPSSData 結合テスト（生の一括UPDATEの挙動）
 │   │   └── osv-fetcher.integration.test.ts       # importOSVData 結合テスト（孤立マスター行の回帰テスト）
 │   ├── config/
 │   │   ├── product-aliases.ts      # NVD CPE product 名エイリアスマッピング

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { Prisma } from '@prisma/client';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
 
@@ -86,8 +87,18 @@ export async function fetchEPSSBulk(date?: string): Promise<EPSSEntry[]> {
 const CHUNK_SIZE = 1000;
 
 /**
- * Apply EPSS entries to the Vulnerability master table
- * Updates in chunks of 1000
+ * Apply EPSS entries to the Vulnerability master table.
+ *
+ * One statement per chunk, joining against an inline VALUES list. The previous
+ * shape -- Promise.all over a chunk of per-CVE updateMany() calls -- issued
+ * CHUNK_SIZE queries at once against a pool of 20, so for the ~320k entries in
+ * a daily run it kept several hundred queries queued ahead of anything else
+ * for the whole import. Search requests arriving during that window waited
+ * behind the queue and timed out; nothing about the update itself needed that
+ * concurrency.
+ *
+ * Only rows whose cveId is already present are touched, exactly as the
+ * per-CVE updateMany() did -- the join filters the rest.
  */
 export async function importEPSSData(
   entries: EPSSEntry[],
@@ -98,21 +109,18 @@ export async function importEPSSData(
   for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
     const chunk = entries.slice(i, i + CHUNK_SIZE);
 
-    // Batch update all CVE IDs in this chunk
-    const results = await Promise.all(
-      chunk.map(entry =>
-        prisma.vulnerability.updateMany({
-          where: { cveId: entry.cve },
-          data: {
-            epssScore: entry.epss,
-            epssPercentile: entry.percentile,
-            epssUpdatedAt: updatedAt,
-          },
-        }),
-      ),
+    const values = Prisma.join(
+      chunk.map(e => Prisma.sql`(${e.cve}::text, ${e.epss}::double precision, ${e.percentile}::double precision)`),
     );
 
-    updated += results.reduce((sum, r) => sum + r.count, 0);
+    updated += await prisma.$executeRaw`
+      UPDATE "Vulnerability" AS v
+      SET "epssScore" = x.score,
+          "epssPercentile" = x.percentile,
+          "epssUpdatedAt" = ${updatedAt}
+      FROM (VALUES ${values}) AS x(cve, score, percentile)
+      WHERE v."cveId" = x.cve
+    `;
 
     if (i % 10000 === 0 && i > 0) {
       logger.info({ processed: i, updated }, 'EPSS import progress');
