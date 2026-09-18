@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { prisma } from '../db/client.js';
 import { resetDb } from '../test-utils/db.js';
-import { executeJob, getDeltaCursor, reconcileOrphanedJobs } from './executor.js';
+import { executeJob, getDeltaCursor, isJobRunning, reconcileOrphanedJobs } from './executor.js';
 import type { JobDefinition } from './types.js';
 
 describe('executeJob', () => {
@@ -57,6 +57,48 @@ describe('executeJob', () => {
     };
 
     await expect(executeJob(def)).resolves.toBeUndefined();
+  });
+
+  it('releases the running lock when recording the job start fails', async () => {
+    // Regression: the lock used to be taken before this write, outside the
+    // try/finally, so one transient DB failure here left the source locked
+    // until the process restarted -- and rejected into a fire-and-forget caller.
+    const run = vi.fn(async () => ({ fetched: 1 }));
+    const def: JobDefinition = { source: 'test-source-start-fails', label: 'Test', cron: '0 0 * * *', run };
+
+    const spy = vi.spyOn(prisma.collectionJob, 'create')
+      .mockRejectedValueOnce(new Error('connection terminated'));
+
+    await expect(executeJob(def)).resolves.toBeUndefined();
+    spy.mockRestore();
+
+    expect(isJobRunning('test-source-start-fails')).toBe(false);
+    // The run is skipped rather than performed untracked.
+    expect(run).not.toHaveBeenCalled();
+
+    // A later run of the same source is not blocked by the failed one.
+    await executeJob(def);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(isJobRunning('test-source-start-fails')).toBe(false);
+  });
+
+  it('does not propagate a failure to record the outcome', async () => {
+    // The DB being unreachable is frequently why a job failed in the first
+    // place; the bookkeeping write failing on top of that must not escape.
+    const def: JobDefinition = {
+      source: 'test-source-outcome-fails',
+      label: 'Test',
+      cron: '0 0 * * *',
+      run: async () => ({ fetched: 1 }),
+    };
+
+    const spy = vi.spyOn(prisma.collectionJob, 'update')
+      .mockRejectedValueOnce(new Error('connection terminated'));
+
+    await expect(executeJob(def)).resolves.toBeUndefined();
+    spy.mockRestore();
+
+    expect(isJobRunning('test-source-outcome-fails')).toBe(false);
   });
 });
 
