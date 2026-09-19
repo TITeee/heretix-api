@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
+import { createManyChunked } from '../db/bulk-insert.js';
 import { normalizeVersion } from '../utils/version.js';
 import AdmZip from 'adm-zip';
 import type { Prisma } from '@prisma/client';
@@ -610,6 +611,12 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
         logger.info({ osvId: osvData.id, withdrawn: osvData.withdrawn },
           'Skipping affected-package import for withdrawn OSV record');
       } else if (osvData.affected) {
+        // Rows are collected across every affected entry and written in one
+        // insert below. A record like a Linux kernel advisory emits hundreds
+        // of ranges, each of which was previously its own round trip inside
+        // this transaction.
+        const packageRows: Prisma.OSVAffectedPackageCreateManyInput[] = [];
+
         for (const affected of osvData.affected) {
           if (!affected.package) continue;
 
@@ -628,7 +635,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
               // Pair events rather than processing each independently to create range rows
               let currentIntroducedVersion: string | undefined = undefined;
 
-              const emitRange = async (
+              const emitRange = (
                 introducedVersion: string | undefined,
                 fixedVersion: string | undefined,
                 lastAffectedVersion: string | undefined,
@@ -668,20 +675,18 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
                     'Failed to normalize version');
                 }
 
-                await tx.oSVAffectedPackage.create({
-                  data: {
-                    vulnerabilityId: vulnerability.id,
-                    ecosystem,
-                    packageName,
-                    versionType: range.type.toLowerCase(),
-                    introducedVersion: introducedVersion ?? null,
-                    fixedVersion: fixedVersion ?? null,
-                    lastAffectedVersion: lastAffectedVersion ?? null,
-                    introducedInt,
-                    fixedInt,
-                    lastAffectedInt,
-                    affectedVersions,
-                  },
+                packageRows.push({
+                  vulnerabilityId: vulnerability.id,
+                  ecosystem,
+                  packageName,
+                  versionType: range.type.toLowerCase(),
+                  introducedVersion: introducedVersion ?? null,
+                  fixedVersion: fixedVersion ?? null,
+                  lastAffectedVersion: lastAffectedVersion ?? null,
+                  introducedInt,
+                  fixedInt,
+                  lastAffectedInt,
+                  affectedVersions,
                 });
               };
 
@@ -689,37 +694,37 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
                 if (event.introduced !== undefined) {
                   // If a previous introduced is unclosed, emit with no upper bound
                   if (currentIntroducedVersion !== undefined) {
-                    await emitRange(currentIntroducedVersion, undefined, undefined);
+                    emitRange(currentIntroducedVersion, undefined, undefined);
                   }
                   currentIntroducedVersion = event.introduced;
                 } else if (event.fixed !== undefined) {
-                  await emitRange(currentIntroducedVersion, event.fixed, undefined);
+                  emitRange(currentIntroducedVersion, event.fixed, undefined);
                   currentIntroducedVersion = undefined;
                 } else if (event.last_affected !== undefined) {
-                  await emitRange(currentIntroducedVersion, undefined, event.last_affected);
+                  emitRange(currentIntroducedVersion, undefined, event.last_affected);
                   currentIntroducedVersion = undefined;
                 }
               }
 
               // After loop: if an unclosed introduced remains, emit with no upper bound
               if (currentIntroducedVersion !== undefined) {
-                await emitRange(currentIntroducedVersion, undefined, undefined);
+                emitRange(currentIntroducedVersion, undefined, undefined);
               }
             }
           } else if (affectedVersions.length > 0) {
             // No ranges but versions[] present (e.g. MAL ecosystem entries).
             // Store with versionType 'versions' so the search layer can route to exact match.
-            await tx.oSVAffectedPackage.create({
-              data: {
-                vulnerabilityId: vulnerability.id,
-                ecosystem,
-                packageName,
-                versionType: 'versions',
-                affectedVersions,
-              },
+            packageRows.push({
+              vulnerabilityId: vulnerability.id,
+              ecosystem,
+              packageName,
+              versionType: 'versions',
+              affectedVersions,
             });
           }
         }
+
+        await createManyChunked(packageRows, chunk => tx.oSVAffectedPackage.createMany({ data: chunk }));
       }
 
       return existing ? 'updated' : 'inserted';

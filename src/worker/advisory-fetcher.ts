@@ -1,4 +1,5 @@
 import { prisma } from '../db/client.js';
+import { createManyChunked } from '../db/bulk-insert.js';
 import { normalizeVersion } from '../utils/version.js';
 import { logger } from '../utils/logger.js';
 import type { Prisma } from '@prisma/client';
@@ -181,37 +182,30 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
     // Delete existing affected products
     await tx.advisoryAffectedProduct.deleteMany({ where: { advisoryId: advisory.id } });
 
-    for (const prod of adv.affectedProducts) {
-      const versionStartInt = prod.versionStart
-        ? (normalizeVersion(prod.versionStart) ?? null)
-        : null;
+    // One insert for the whole advisory rather than one per product: a single
+    // vendor advisory routinely carries hundreds of rows, and every one of
+    // them was a separate round trip inside this transaction.
+    const productRows: Prisma.AdvisoryAffectedProductCreateManyInput[] = adv.affectedProducts.map(prod => {
       // versionFixed has the same exclusive-upper-bound semantics as versionEnd:
       // "fixed in X.Y.Z" means versions < X.Y.Z are affected → use as fallback for range queries.
       const effectiveVersionEnd = prod.versionEnd ?? prod.versionFixed;
-      const versionEndInt = effectiveVersionEnd
-        ? (normalizeVersion(effectiveVersionEnd) ?? null)
-        : null;
-      const lastAffectedInt = prod.lastAffected
-        ? (normalizeVersion(prod.lastAffected) ?? null)
-        : null;
+      return {
+        advisoryId: advisory.id,
+        vendor: prod.vendor.trim(),
+        product: prod.product.trim(),
+        versionStart: prod.versionStart ?? null,
+        versionEnd: prod.versionEnd ?? null,
+        versionFixed: prod.versionFixed ?? null,
+        lastAffected: prod.lastAffected ?? null,
+        versionStartInt: prod.versionStart ? (normalizeVersion(prod.versionStart) ?? null) : null,
+        versionEndInt: effectiveVersionEnd ? (normalizeVersion(effectiveVersionEnd) ?? null) : null,
+        lastAffectedInt: prod.lastAffected ? (normalizeVersion(prod.lastAffected) ?? null) : null,
+        affectedVersions: prod.affectedVersions ?? [],
+        patchAvailable: prod.patchAvailable ?? null,
+      };
+    });
 
-      await tx.advisoryAffectedProduct.create({
-        data: {
-          advisoryId: advisory.id,
-          vendor: prod.vendor.trim(),
-          product: prod.product.trim(),
-          versionStart: prod.versionStart ?? null,
-          versionEnd: prod.versionEnd ?? null,
-          versionFixed: prod.versionFixed ?? null,
-          lastAffected: prod.lastAffected ?? null,
-          versionStartInt,
-          versionEndInt,
-          lastAffectedInt,
-          affectedVersions: prod.affectedVersions ?? [],
-          patchAvailable: prod.patchAvailable ?? null,
-        },
-      });
-    }
+    await createManyChunked(productRows, chunk => tx.advisoryAffectedProduct.createMany({ data: chunk }));
 
     return existing ? 'updated' : 'inserted';
   });
