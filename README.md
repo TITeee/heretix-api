@@ -81,6 +81,7 @@ DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public
 PORT=5000
 NODE_ENV=development                # use "production" for a production deployment
 API_KEY=your-api-key-here           # Required. Requests without x-api-key header return 401
+ALLOWED_ORIGINS=                    # Optional, comma-separated. Browser origins allowed to read cross-origin responses (default: none). Server-to-server callers are unaffected either way — see below
 DATABASE_POOL_MAX=20                # Optional. Postgres connection pool size (default 20)
 NVD_API_KEY=                        # Optional. Relaxes NVD rate limit from 10 → 50 req/min
 CISCO_CLIENT_ID=                    # Required for Cisco PSIRT import (openVuln API client ID)
@@ -389,6 +390,7 @@ heretix-api/
 │   │   │   ├── dashboard.integration.test.ts  # import-status auth & dashboard output-escaping tests
 │   │   │   └── jobs.ts              # Job manual-run & enable/disable API
 │   │   ├── server.ts                # Fastify server configuration
+│   │   ├── server.integration.test.ts  # CORS behavior tests (Vitest, requires TEST_DATABASE_URL)
 │   │   └── auth.ts                  # Shared x-api-key hook (timing-safe compare)
 │   ├── jobs/
 │   │   ├── types.ts                 # JobDefinition / JobResult types

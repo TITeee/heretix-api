@@ -78,6 +78,7 @@ DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public
 PORT=5000
 NODE_ENV=development                # 本番環境では "production"
 API_KEY=your-api-key-here           # 必須。x-api-key ヘッダーが一致しないリクエストは 401
+ALLOWED_ORIGINS=                    # 任意、カンマ区切り。クロスオリジンのレスポンスをブラウザに読ませてよいオリジン（既定: なし）。サーバー間通信の呼び出し元には影響しない
 DATABASE_POOL_MAX=20                # 任意。PostgreSQL コネクションプールのサイズ（既定 20）
 NVD_API_KEY=                        # 任意。NVD のレート制限を 10→50 req/min に緩和
 CISCO_CLIENT_ID=                    # Cisco PSIRT インポートに必須（openVuln API クライアント ID）
@@ -381,6 +382,7 @@ heretix-api/
 │   │   │   ├── dashboard.integration.test.ts  # import-status の認証・ダッシュボード出力エスケープのテスト
 │   │   │   └── jobs.ts             # ジョブ手動実行・有効/無効切り替えAPI
 │   │   ├── server.ts               # Fastifyサーバー設定
+│   │   ├── server.integration.test.ts  # CORS挙動のテスト（Vitest、TEST_DATABASE_URL 必須）
 │   │   └── auth.ts                 # x-api-key 認証フック共通実装（タイミング安全比較）
 │   ├── jobs/
 │   │   ├── types.ts                # JobDefinition / JobResult 型
