@@ -32,9 +32,21 @@ export async function createServer() {
     },
   });
 
-  // CORS configuration
+  // CORS only governs whether a *browser* may read a cross-origin response;
+  // it has no effect on server-to-server callers (heretix-management, curl,
+  // scripts) regardless of this setting, since those never enforce it.
+  // origin: true reflected every request's Origin header, which only matters
+  // if a browser-based client ever calls this API cross-origin -- neither
+  // known consumer does (heretix-management calls server-side via Prisma/
+  // fetch, and the dashboard's own JS calls same-origin). Defaults closed;
+  // set ALLOWED_ORIGINS to a comma-separated list to open it for a future
+  // browser-based integration.
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
   await fastify.register(cors, {
-    origin: true,
+    origin: allowedOrigins.length > 0 ? allowedOrigins : false,
   });
 
   // Health check
