@@ -18,6 +18,32 @@ function jobDurationMs(job: { startedAt: Date | null; completedAt: Date | null }
   return job.completedAt.getTime() - job.startedAt.getTime();
 }
 
+// The per-ecosystem distinct-vulnerability count is a full scan over
+// OSVAffectedPackage (~3.07M rows in production) with no selective WHERE
+// clause to seek on -- measured at 5.7s even with a covering index (see the
+// index's comment in schema.prisma), because COUNT(DISTINCT ...) still has to
+// visit every row. The dashboard polls this endpoint every 60s per open tab,
+// and the underlying data only changes once a day (the OSV delta cron), so
+// re-running that scan on every poll buys nothing but load. Cached across all
+// callers for a few minutes instead.
+export const ECOSYSTEM_COUNTS_CACHE_TTL_MS = 5 * 60 * 1000;
+let ecosystemCountsCache: { rows: { ecosystem: string; count: bigint }[]; expiresAt: number } | null = null;
+
+async function getEcosystemCounts(): Promise<{ ecosystem: string; count: bigint }[]> {
+  if (ecosystemCountsCache && ecosystemCountsCache.expiresAt > Date.now()) {
+    return ecosystemCountsCache.rows;
+  }
+  const rows = await prisma.$queryRaw<{ ecosystem: string; count: bigint }[]>`
+    SELECT ecosystem, COUNT(DISTINCT "vulnerabilityId") AS count
+    FROM "OSVAffectedPackage"
+    WHERE ecosystem IS NOT NULL
+    GROUP BY ecosystem
+    ORDER BY ecosystem ASC
+  `;
+  ecosystemCountsCache = { rows, expiresAt: Date.now() + ECOSYSTEM_COUNTS_CACHE_TTL_MS };
+  return rows;
+}
+
 // Maps CollectionJob.source values to the AdvisoryVulnerability.source value
 // used by the corresponding fetcher (these naming conventions are inconsistent
 // across vendors, e.g. 'advisory-pan' -> 'paloalto', 'advisory-cisco' -> 'cisco').
@@ -55,13 +81,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
     // Per-ecosystem distinct vulnerability counts (OSVAffectedPackage is source of truth;
     // OSVVulnerability.ecosystem only stores affected[0] and is not updated on re-import)
-    const ecosystemCounts = await prisma.$queryRaw<{ ecosystem: string; count: bigint }[]>`
-      SELECT ecosystem, COUNT(DISTINCT "vulnerabilityId") AS count
-      FROM "OSVAffectedPackage"
-      WHERE ecosystem IS NOT NULL
-      GROUP BY ecosystem
-      ORDER BY ecosystem ASC
-    `;
+    const ecosystemCounts = await getEcosystemCounts();
 
     const enabledMap = await getEnabledMap();
     const isSourceEnabled = (source: string): boolean => enabledMap.get(source) ?? defaultEnabled(source);

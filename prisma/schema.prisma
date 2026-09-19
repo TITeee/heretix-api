@@ -138,6 +138,15 @@ model OSVAffectedPackage {
   @@index([ecosystem, packageName])
   @@index([packageName, introducedInt, fixedInt])
   @@index([vulnerabilityId])
+  // Covering index for the dashboard's per-ecosystem distinct-vulnerability
+  // count (COUNT(DISTINCT "vulnerabilityId") GROUP BY ecosystem). Measured on
+  // production-scale data (~3.07M rows): without this, Postgres does a full
+  // table scan regardless of planner statistics (ANALYZE alone made no
+  // difference) -- 13.7s. With it, an index-only scan over just these two
+  // columns -- 5.7s. Still expensive because it's a full index scan (the
+  // query has no selective WHERE clause to seek on), which is why this alone
+  // isn't the fix; see the response cache in dashboard.ts for the rest.
+  @@index([ecosystem, vulnerabilityId])
 }
 
 // Debian builds many binary packages from one source package (e.g. source

@@ -143,6 +143,8 @@ GET /api/v1/import-status     # requires x-api-key
 
 The page itself is public, but the data it renders is not: enter your API key in the field at the top-right to load it. The key is kept in the browser's `localStorage` and sent with every subsequent request.
 
+The per-ecosystem record counts (`osvEcosystems[].recordCount`) are cached for 5 minutes: the underlying `COUNT(DISTINCT ...)` scans the entire `OSVAffectedPackage` table (no selective `WHERE` clause to seek on) and only changes once a day via the OSV delta cron, so re-running it on every 60-second poll bought nothing but load. Everything else in the response is uncached.
+
 ### Job control (enable/disable & manual run)
 
 Each row has an **On/Off toggle** to enable/disable the scheduled run, and a **Run** button to trigger it on demand. OSV is controllable per ecosystem.
