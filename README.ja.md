@@ -387,7 +387,9 @@ heretix-api/
 │   │   ├── executor.integration.test.ts  # executeJob / getDeltaCursor 結合テスト（Vitest）
 │   │   └── config.ts               # ジョブ有効/無効（JobConfig）の読み書き
 │   ├── db/
-│   │   └── client.ts               # Prismaクライアント
+│   │   ├── client.ts               # Prismaクライアント
+│   │   ├── bulk-insert.ts          # createManyChunked() — PostgreSQLのバインドパラメータ上限に収まるよう createMany を分割
+│   │   └── bulk-insert.test.ts     # 単体テスト（Vitest）
 │   ├── test-utils/
 │   │   └── db.ts                   # resetDb() — 全テーブル truncate、結合テストの beforeEach で使用
 │   ├── scripts/

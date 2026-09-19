@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
+import { createManyChunked } from '../db/bulk-insert.js';
 import { normalizeVersion } from '../utils/version.js';
 import { computeExactVersion } from './nvd-helpers.js';
 import type { Prisma } from '@prisma/client';
@@ -554,7 +555,12 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<'inserted' | '
     // Delete existing affected packages
     await tx.nVDAffectedPackage.deleteMany({ where: { vulnerabilityId: vulnerability.id } });
 
-    // Extract and save affected packages from CPE
+    // Extract and save affected packages from CPE. Rows are collected across
+    // every configuration and written in one insert at the end: a CVE with
+    // broad CPE coverage produces hundreds of them, and each was previously a
+    // separate round trip inside this transaction.
+    const packageRows: Prisma.NVDAffectedPackageCreateManyInput[] = [];
+
     for (const config of cveItem.configurations ?? []) {
       const cpeMatches = flattenCpeMatches(config.nodes);
 
@@ -606,25 +612,28 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<'inserted' | '
 
         const exactVersion = computeExactVersion(pointVersion);
 
-        await tx.nVDAffectedPackage.create({
-          data: {
-            vulnerabilityId: vulnerability.id,
-            cpe: match.criteria,
-            vendor,
-            packageName,
-            ecosystem,
-            versionStartIncluding: vsi,
-            versionStartExcluding: vse,
-            versionEndIncluding: vei,
-            versionEndExcluding: vee,
-            introducedInt,
-            fixedInt,
-            lastAffectedInt,
-            exactVersion,
-          },
+        packageRows.push({
+          vulnerabilityId: vulnerability.id,
+          cpe: match.criteria,
+          vendor,
+          packageName,
+          ecosystem,
+          versionStartIncluding: vsi,
+          versionStartExcluding: vse,
+          versionEndIncluding: vei,
+          versionEndExcluding: vee,
+          introducedInt,
+          fixedInt,
+          lastAffectedInt,
+          exactVersion,
         });
       }
     }
+
+    // Chunked, not a single statement: CVE-2016-1409 alone carries 4,891 of
+    // these rows, past the ~4,600 this table's column count allows within
+    // Postgres' 65,535 bind-parameter limit.
+    await createManyChunked(packageRows, chunk => tx.nVDAffectedPackage.createMany({ data: chunk }));
 
     return existing ? 'updated' : 'inserted';
   });

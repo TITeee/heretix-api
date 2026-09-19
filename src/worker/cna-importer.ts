@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
+import { createManyChunked } from '../db/bulk-insert.js';
 import { normalizeVersion } from '../utils/version.js';
 import {
   type CveRecord,
@@ -60,24 +61,26 @@ export async function importCnaRecord(parsed: ParsedCveRecord): Promise<'inserte
 
     await tx.cnaAffectedProduct.deleteMany({ where: { vulnerabilityId: record.id } });
 
-    for (const row of parsed.rows) {
-      await tx.cnaAffectedProduct.create({
-        data: {
-          vulnerabilityId: record.id,
-          vendor: row.vendor,
-          product: row.product,
-          packageName: row.packageName ?? null,
-          versionType: row.versionType ?? null,
-          versionStart: row.versionStart ?? null,
-          versionEnd: row.versionEnd ?? null,
-          lastAffected: row.lastAffected ?? null,
-          versionStartInt: row.versionStart ? (normalizeVersion(row.versionStart) ?? null) : null,
-          versionEndInt: row.versionEnd ? (normalizeVersion(row.versionEnd) ?? null) : null,
-          lastAffectedInt: row.lastAffected ? (normalizeVersion(row.lastAffected) ?? null) : null,
-          affectedVersions: row.affectedVersions ?? [],
-        },
-      });
-    }
+    // One insert per CVE record rather than one per affected row -- a full
+    // bundle import writes six figures of these, each previously its own
+    // round trip inside this transaction.
+    await createManyChunked(
+      parsed.rows.map(row => ({
+        vulnerabilityId: record.id,
+        vendor: row.vendor,
+        product: row.product,
+        packageName: row.packageName ?? null,
+        versionType: row.versionType ?? null,
+        versionStart: row.versionStart ?? null,
+        versionEnd: row.versionEnd ?? null,
+        lastAffected: row.lastAffected ?? null,
+        versionStartInt: row.versionStart ? (normalizeVersion(row.versionStart) ?? null) : null,
+        versionEndInt: row.versionEnd ? (normalizeVersion(row.versionEnd) ?? null) : null,
+        lastAffectedInt: row.lastAffected ? (normalizeVersion(row.lastAffected) ?? null) : null,
+        affectedVersions: row.affectedVersions ?? [],
+      })),
+      chunk => tx.cnaAffectedProduct.createMany({ data: chunk }),
+    );
 
     return existing ? 'updated' : 'inserted';
   });

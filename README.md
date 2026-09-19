@@ -395,7 +395,9 @@ heretix-api/
 │   │   ├── executor.integration.test.ts  # executeJob / getDeltaCursor integration test (Vitest)
 │   │   └── config.ts                # Job enable/disable (JobConfig) accessors
 │   ├── db/
-│   │   └── client.ts                # Prisma client
+│   │   ├── client.ts                # Prisma client
+│   │   ├── bulk-insert.ts           # createManyChunked() — chunks createMany under Postgres' bind-parameter limit
+│   │   └── bulk-insert.test.ts      # Unit tests (Vitest)
 │   ├── test-utils/
 │   │   └── db.ts                    # resetDb() — truncates all tables, used by integration test beforeEach()
 │   ├── scripts/
