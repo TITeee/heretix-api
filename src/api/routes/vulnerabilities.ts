@@ -20,6 +20,8 @@ import {
   matchesRpmStyleOsvVersion,
   matchesRpmVersionRange,
   buildAliases,
+  summaryBudgetChars,
+  truncateSummaries,
   DISTRO_ECOSYSTEM_PREFIXES,
   RPM_ADVISORY_VENDOR_PREFIXES,
 } from '../../utils/search-helpers.js';
@@ -937,6 +939,24 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
           }),
         ),
       );
+    }
+
+    // Serializing this response can exceed V8's maximum string length, which
+    // fails the whole request with `RangeError: Invalid string length`. The
+    // existing caps already multiply past it: 1,000 packages x 500 results
+    // measured 718MB against a 537MB ceiling, crashing at ~750 packages.
+    // Shorten `summary` -- 74.9% of the payload -- by only as much as the
+    // batch's own size requires; see summaryBudgetChars.
+    const totalResults = results.reduce((n, r) => n + r.vulnerabilities.length, 0);
+    const maxSummaryChars = summaryBudgetChars(totalResults);
+    if (maxSummaryChars !== null) {
+      const truncated = truncateSummaries(results, maxSummaryChars);
+      if (truncated > 0) {
+        request.log.warn(
+          { packages: packages.length, totalResults, maxSummaryChars, truncated },
+          'batch response too large to serialize in full; shortened summaries',
+        );
+      }
     }
 
     return { results };
