@@ -67,6 +67,68 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
   return [...seen.values()];
 }
 
+// ─── Batch response size budget ───────────────────────────────
+//
+// Fastify serializes a response with JSON.stringify, which throws
+// `RangeError: Invalid string length` once the result exceeds V8's maximum
+// string length (536,870,888 chars). That is a hard engine limit, not memory
+// pressure, so no amount of configuration avoids it.
+//
+// The batch endpoint reached it on real data: 1,000 packages x 500 results
+// came to 718MB, 134% of the limit, crashing at roughly 750 packages. The
+// existing caps multiply past what can be serialized -- 1,000 packages
+// (batchSearchSchema) x 500 results per package -- so this is a design
+// arithmetic problem, not a pathological input.
+//
+// `summary` is what makes it big: measured at 1,062 bytes per result against
+// 374 for every other field combined (74.9% of the payload). Capping just
+// that field keeps the response shape byte-for-byte compatible, which matters
+// because heretix-cli is distributed as a prebuilt binary -- a shape change
+// would break every deployed copy until its users upgrade.
+const RESPONSE_BUDGET_CHARS = 400_000_000; // ~75% of the V8 limit
+const NON_SUMMARY_CHARS_PER_RESULT = 400;  // measured 374, rounded up
+const LONGEST_SUMMARY_CHARS = 4_000;       // longest in the DB is 3,998
+
+/**
+ * The longest `summary` each result may carry for a response of `totalResults`
+ * to stay inside the budget, or null when the batch is small enough that no
+ * result needs shortening at all.
+ *
+ * Derived from the batch size rather than fixed, so an ordinary scan is
+ * untouched and only a batch large enough to be at risk pays anything: at
+ * 500,000 results (the 1,000 x 500 worst case) this allows 400 chars, while
+ * at 50,000 it allows 7,600 -- more than any summary in the database.
+ */
+export function summaryBudgetChars(totalResults: number): number | null {
+  if (totalResults <= 0) return null;
+  const allowed = Math.floor(RESPONSE_BUDGET_CHARS / totalResults) - NON_SUMMARY_CHARS_PER_RESULT;
+  if (allowed >= LONGEST_SUMMARY_CHARS) return null;
+  return Math.max(allowed, 0);
+}
+
+/**
+ * Shorten `summary` on the results that exceed `maxChars`, returning how many
+ * were changed.
+ *
+ * Copies before writing: these objects can come straight out of
+ * searchResultCache, and mutating them would poison the cache so that later,
+ * smaller requests got the shortened text too.
+ */
+export function truncateSummaries(
+  results: Array<{ vulnerabilities: VulnerabilityResult[] }>,
+  maxChars: number,
+): number {
+  let truncated = 0;
+  for (const result of results) {
+    result.vulnerabilities = result.vulnerabilities.map(v => {
+      if (v.summary === null || v.summary.length <= maxChars) return v;
+      truncated++;
+      return { ...v, summary: v.summary.slice(0, maxChars) };
+    });
+  }
+  return truncated;
+}
+
 // ─── Version Range Filter Conditions ─────────────────────────
 
 export function versionRangeWhere(versionInt: bigint) {

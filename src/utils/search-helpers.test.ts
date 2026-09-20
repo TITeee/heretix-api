@@ -15,6 +15,8 @@ import {
   isAdvisoryOnlyEcosystem,
   cnaVersionWhere,
   buildAliases,
+  summaryBudgetChars,
+  truncateSummaries,
   type VulnerabilityResult,
 } from './search-helpers.js';
 
@@ -496,5 +498,61 @@ describe('matchesRpmVersionRange', () => {
   it('uses rpmvercmp ordering for sub-releases, not string comparison', () => {
     // rpmvercmp: "3.2.5-3.el9" < "3.2.5-3.el9_7.2"
     expect(matchesRpmVersionRange(row('3.2.5-3.el9_7.2'), '3.2.5-3.el9')).toBe(true);
+  });
+});
+
+describe('summaryBudgetChars', () => {
+  it('leaves ordinary batches alone', () => {
+    // 100 packages x 500 results allows 7,600 chars, well past the longest
+    // summary in the database (3,998), so nothing is shortened.
+    expect(summaryBudgetChars(50_000)).toBeNull();
+    expect(summaryBudgetChars(5_000)).toBeNull();
+    expect(summaryBudgetChars(500)).toBeNull();
+    expect(summaryBudgetChars(0)).toBeNull();
+  });
+
+  it('shortens only once the batch is big enough to overflow', () => {
+    // The crash case: 1,000 packages x 500 results.
+    expect(summaryBudgetChars(500_000)).toBe(400);
+  });
+
+  it('keeps every reachable batch inside the V8 string limit', () => {
+    // 500,000 is the worst case the schema permits: batchSearchSchema caps
+    // `packages` at 1,000 and the handler asks for 500 results each. Beyond
+    // that even a zero-length summary would not fit, so raising either cap
+    // needs more than this helper.
+    const V8_MAX = 536_870_888;
+    for (const total of [1, 5_000, 50_000, 90_000, 100_000, 250_000, 500_000]) {
+      const allowed = summaryBudgetChars(total) ?? 4_000;
+      expect(total * (allowed + 400), `${total} results`).toBeLessThan(V8_MAX);
+    }
+  });
+
+  it('never returns a negative length', () => {
+    expect(summaryBudgetChars(500_000_000)).toBe(0);
+  });
+});
+
+describe('truncateSummaries', () => {
+  it('shortens only summaries over the limit, leaving other fields intact', () => {
+    const long = makeResult({ id: 'v1', summary: 'x'.repeat(50), cvssScore: 7.5 });
+    const short = makeResult({ id: 'v2', summary: 'fine' });
+    const none = makeResult({ id: 'v3', summary: null });
+    const results = [{ vulnerabilities: [long, short, none] }];
+
+    expect(truncateSummaries(results, 10)).toBe(1);
+    expect(results[0].vulnerabilities[0].summary).toBe('x'.repeat(10));
+    expect(results[0].vulnerabilities[1].summary).toBe('fine');
+    expect(results[0].vulnerabilities[2].summary).toBeNull();
+    // Everything but summary survives untouched.
+    expect(results[0].vulnerabilities[0]).toEqual({ ...long, summary: 'x'.repeat(10) });
+  });
+
+  it('copies rather than mutating, so cached rows are not poisoned', () => {
+    // searchVulnerabilities can hand back objects held in searchResultCache;
+    // writing to them would shorten later, smaller requests too.
+    const cached = makeResult({ summary: 'y'.repeat(50) });
+    truncateSummaries([{ vulnerabilities: [cached] }], 10);
+    expect(cached.summary).toBe('y'.repeat(50));
   });
 });
