@@ -1,6 +1,8 @@
 # Heretix API
 
-A simple, high-performance vulnerability management API backed by PostgreSQL. It collects and normalizes data from **OSV**, **NIST NVD**, **CISA KEV**, **EPSS**, and **vendor security advisories**, then provides fast, deduplicated search through a unified master table.
+Part of the **[heretix](https://titeee.github.io/heretix-web/)** project — a self-hosted suite that tracks CVEs across servers, containers, and network appliances (firewalls, VPNs) in one inventory (Apache-2.0).
+
+This repository, heretix-api, is the vulnerability data layer: it aggregates and normalizes CVE data from **OSV**, **NIST NVD**, **CISA KEV**, **EPSS**, published **CVE Records** (including CISA Vulnrichment's SSVC assessment), and **vendor security advisories** into one deduplicated master table, then serves it over a REST API to [heretix-cli](https://github.com/TITeee/heretix-cli) and [heretix-management](https://github.com/TITeee/heretix-management).
 
 [日本語版 README](README.ja.md)
 
