@@ -1,6 +1,8 @@
 # Heretix API
 
-シンプルかつ高速な脆弱性管理APIです。**OSV**・**NIST NVD**・**CISA KEV**・**EPSS**・**ベンダーセキュリティアドバイザリ**などのデータを収集し、正規化されたマスターテーブルを通じて効率的な検索を提供します。
+**[heretix](https://titeee.github.io/heretix-web/)** プロジェクトの一部 — サーバ・コンテナ・ネットワーク機器（ファイアウォール・VPN）を横断してCVEを一元管理する、セルフホスト型の脆弱性管理スイートです（Apache-2.0）。
+
+このリポジトリ heretix-api は、脆弱性データ層です。**OSV**・**NIST NVD**・**CISA KEV**・**EPSS**・公開されている**CVE Record**（CISA Vulnrichment の SSVC 評価を含む）・**ベンダーセキュリティアドバイザリ**を収集・正規化して1つの重複排除済みマスターテーブルにまとめ、REST API として [heretix-cli](https://github.com/TITeee/heretix-cli) と [heretix-management](https://github.com/TITeee/heretix-management) に提供します。
 
 ## 特徴
 

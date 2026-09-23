@@ -1,6 +1,8 @@
 # Heretix API
 
-A simple, high-performance vulnerability management API backed by PostgreSQL. It collects and normalizes data from **OSV**, **NIST NVD**, **CISA KEV**, **EPSS**, and **vendor security advisories**, then provides fast, deduplicated search through a unified master table.
+Part of the **[heretix](https://titeee.github.io/heretix-web/)** project — a self-hosted suite that tracks CVEs across servers, containers, and network appliances (firewalls, VPNs) in one inventory (Apache-2.0).
+
+This repository, heretix-api, is the vulnerability data layer: it aggregates and normalizes CVE data from **OSV**, **NIST NVD**, **CISA KEV**, **EPSS**, published **CVE Records** (including CISA Vulnrichment's SSVC assessment), and **vendor security advisories** into one deduplicated master table, then serves it over a REST API to [heretix-cli](https://github.com/TITeee/heretix-cli) and [heretix-management](https://github.com/TITeee/heretix-management).
 
 [日本語版 README](README.ja.md)
 
@@ -191,9 +193,9 @@ GET /api/v1/vulnerabilities/search
 | Parameter | Required | Description |
 |---|---|---|
 | `package` | ✅ | Package or product name (e.g. `lodash`, `FortiOS`) |
-| `version` | ✅ | Version string (e.g. `4.17.20`, `7.4.3`) |
+| `version` | | Version string (e.g. `4.17.20`, `7.4.3`). Omit to match the package/ecosystem alone — every vulnerability comes back with `approximateMatch: true` |
 | `ecosystem` | | Ecosystem or vendor (e.g. `npm`, `PyPI`, `Go`, `composer`, `fortinet`) |
-| `severity` | | Filter by severity (array) |
+| `severity` | | Filter to one or more severities (e.g. `severity=CRITICAL` or `severity=CRITICAL&severity=HIGH`). Case-sensitive exact match against the `severity` value a result carries — round-tripping a value from a prior response always works. A result with no severity data never matches |
 | `limit` | | Max results (default: 500, max: 500) |
 | `offset` | | Pagination offset (default: 0) |
 
@@ -242,6 +244,7 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
       "id": "clxxx...",
       "externalId": "CVE-2019-10744",
       "source": "nvd",
+      "sources": ["nvd"],
       "severity": "CRITICAL",
       "cvssScore": 9.8,
       "cvssVector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
@@ -250,7 +253,9 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
       "approximateMatch": false,
       "isKev": true,
       "epssScore": 0.97,
-      "epssPercentile": 0.998
+      "epssPercentile": 0.998,
+      "fixedVersion": "4.17.21",
+      "aliases": ["CVE-2019-10744"]
     }
   ]
 }
@@ -258,11 +263,36 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 
 `source` values: `"nvd"` · `"osv"` · `"advisory"`
 
+> `sources` — every source that matched this finding (`["nvd", "osv"]` when both do), unlike `source` (singular), which names only the preferred one.
+
 > `approximateMatch: true` — version normalization failed; results matched by package name and ecosystem only.
 
 > `isKev: true` — listed in the CISA Known Exploited Vulnerabilities catalog.
 
 > `epssScore` — probability of exploitation within 30 days (0–1); `epssPercentile` — rank among all CVEs.
+
+> `fixedVersion` — the version that resolves this finding, when the matching source states one; otherwise `null`.
+
+> `aliases` — every identifier this finding is reachable by, including `externalId` itself. A vendor advisory or OSV record assigned a CVE after first publication keeps its own original id here even though `externalId` switches to the CVE.
+
+### Package name autocomplete
+
+Suggests real package names for a prefix, since NVD's `packageName` is the raw CPE `<product>` identifier (`http_server`, not "Apache HTTP Server") that a caller can't reasonably guess up front. Searches NVD, OSV, and CNA-declared products; not vendor-advisory products, which already have their own curated list elsewhere.
+
+```
+GET /api/v1/vulnerabilities/suggest
+```
+
+| Parameter | Required | Description |
+|---|---|---|
+| `q` | ✅ | Name prefix to match (case-sensitive) |
+| `ecosystem` | | Restrict to an ecosystem/vendor prefix |
+| `limit` | | Max suggestions (default: 10, max: 50) |
+
+```bash
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/suggest?q=lodash"
+# → { "suggestions": ["lodash", "lodash-amd", "lodash-electron", "lodash-es", ...] }
+```
 
 ### Search vulnerabilities (batch)
 
@@ -302,6 +332,23 @@ curl -H "x-api-key: $API_KEY" \
 ```
 
 When the `<version>` component is `*` or omitted, results are returned with `approximateMatch: true`.
+
+### CPE lookup by CVE + product
+
+Given a CVE and a product name, returns the CPE 2.3 string NVD recorded for it — useful for resolving a product name into the exact `vendor`/`product` pair to build a CPE search above. NVD table only; 404 when the CVE isn't in NVD, the product doesn't match any of its affected packages, or the product name matches more than one distinct vendor (ambiguous).
+
+```
+GET /api/v1/vulnerabilities/:id/cpe
+```
+
+| Parameter | Required | Description |
+|---|---|---|
+| `product` | ✅ | Product name to resolve (matched against NVD's affected-package names for this CVE) |
+
+```bash
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-2021-44228/cpe?product=log4j"
+# → { "cpe": "cpe:2.3:a:apache:log4j:*:*:*:*:*:*:*:*", "vendor": "apache", "product": "log4j" }
+```
 
 ### Vulnerability detail
 
@@ -1029,6 +1076,7 @@ Job definitions (source key, label, cron, run logic) are centralized in `src/job
 | Check Point advisory | Daily at 16:00 UTC |
 | OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
 | MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
+| Debian source package mappings | Weekly, Sunday at 07:00 UTC |
 
 Each OSV ecosystem runs as an independent job (`osv-{ecosystem}`) so its status, enable/disable toggle, and manual run appear separately in the dashboard. Jobs disabled via `JobConfig` are skipped at fire time (toggling takes effect immediately, without re-registering cron). Manual runs are also available via `POST /api/v1/jobs/:source/run` regardless of the enabled state.
 

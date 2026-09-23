@@ -79,6 +79,29 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     expect(body.results[0].sources.sort()).toEqual(['fortinet', 'nvd', 'osv']);
   });
 
+  it('filters by severity, accepting both a single value and repeated values', async () => {
+    for (const [id, severity] of [['CVE-2026-6001', 'CRITICAL'], ['CVE-2026-6002', 'HIGH'], ['CVE-2026-6003', 'MEDIUM']] as const) {
+      const master = await prisma.vulnerability.create({ data: { cveId: id, severity } });
+      const nvd = await prisma.nVDVulnerability.create({
+        data: { cveId: id, source: 'nvd', rawData: {}, masterVulnId: master.id },
+      });
+      await prisma.nVDAffectedPackage.create({
+        data: { vulnerabilityId: nvd.id, cpe: `cpe:2.3:a:vendor:severity-pkg:*:*:*:*:*:*:*:*`, vendor: 'vendor', packageName: 'severity-pkg' },
+      });
+    }
+
+    // A single occurrence (?severity=X) comes through Fastify's query parser
+    // as a bare string, not an array -- the schema must still accept it.
+    const single = await search(app, 'package=severity-pkg&severity=CRITICAL');
+    expect(single.body.results.map((r: { externalId: string }) => r.externalId)).toEqual(['CVE-2026-6001']);
+
+    const repeated = await search(app, 'package=severity-pkg&severity=CRITICAL&severity=HIGH');
+    expect(repeated.body.results.map((r: { externalId: string }) => r.externalId).sort()).toEqual(['CVE-2026-6001', 'CVE-2026-6002']);
+
+    const none = await search(app, 'package=severity-pkg');
+    expect(none.body.results).toHaveLength(3);
+  });
+
   it('filters OSV results by version range boundaries (introducedInt/fixedInt)', async () => {
     const master = await prisma.vulnerability.create({ data: { osvId: 'GHSA-range-0001' } });
     const osv = await prisma.oSVVulnerability.create({

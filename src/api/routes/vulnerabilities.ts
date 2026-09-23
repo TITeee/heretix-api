@@ -20,6 +20,7 @@ import {
   matchesRpmStyleOsvVersion,
   matchesRpmVersionRange,
   buildAliases,
+  filterBySeverity,
   summaryBudgetChars,
   truncateSummaries,
   DISTRO_ECOSYSTEM_PREFIXES,
@@ -30,7 +31,11 @@ const searchSchema = z.object({
   package: z.string().min(1),
   version: z.string().optional(),
   ecosystem: z.string().min(1).optional(),
-  severity: z.array(z.string()).optional(),
+  // Fastify's query parser only arrays a repeated key (?severity=A&severity=B);
+  // a single occurrence (?severity=A) comes through as a bare string, which
+  // z.array() alone would reject outright. Accept either shape and normalize.
+  severity: z.union([z.string(), z.array(z.string())]).optional()
+    .transform(v => v === undefined ? undefined : (Array.isArray(v) ? v : [v])),
   limit: z.coerce.number().int().positive().max(500).default(500),
   offset: z.coerce.number().int().nonnegative().default(0),
 });
@@ -731,6 +736,7 @@ async function searchVulnerabilities(
   ecosystem: string | undefined,
   limit = 50,
   offset = 0,
+  severity?: string[],
 ): Promise<VulnerabilityResult[]> {
   const cacheKey = searchResultCacheKey(packageName, version, ecosystem);
   const cached = searchResultCache.get(cacheKey);
@@ -766,7 +772,13 @@ async function searchVulnerabilities(
     cacheSearchResults(cacheKey, all);
   }
 
-  return all.slice(offset, offset + limit);
+  // Filtered fresh on every call, cached or not: cheap in-memory pass, and it
+  // must run before the slice below or pagination would undercount past a
+  // filtered-out result. The cache itself stays keyed without severity, same
+  // as it already excludes limit/offset -- it holds the one full pre-filter,
+  // pre-pagination set a search naturally reduces to.
+  const filtered = filterBySeverity(all, severity);
+  return filtered.slice(offset, offset + limit);
 }
 
 const cpeSearchSchema = z.object({
@@ -910,7 +922,7 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
     const params = searchSchema.parse(request.query);
     const results = await searchVulnerabilities(
       params.package, params.version, params.ecosystem,
-      params.limit, params.offset,
+      params.limit, params.offset, params.severity,
     );
     return { results };
   });

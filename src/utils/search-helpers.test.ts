@@ -15,6 +15,7 @@ import {
   isAdvisoryOnlyEcosystem,
   cnaVersionWhere,
   buildAliases,
+  filterBySeverity,
   summaryBudgetChars,
   truncateSummaries,
   type VulnerabilityResult,
@@ -554,5 +555,36 @@ describe('truncateSummaries', () => {
     const cached = makeResult({ summary: 'y'.repeat(50) });
     truncateSummaries([{ vulnerabilities: [cached] }], 10);
     expect(cached.summary).toBe('y'.repeat(50));
+  });
+});
+
+describe('filterBySeverity', () => {
+  it('passes everything through when no severity filter is given', () => {
+    const items = [makeResult({ severity: 'HIGH' }), makeResult({ severity: null })];
+    expect(filterBySeverity(items, undefined)).toEqual(items);
+    expect(filterBySeverity(items, [])).toEqual(items);
+  });
+
+  it('keeps only results matching one of the requested severities', () => {
+    const critical = makeResult({ id: 'v1', severity: 'CRITICAL' });
+    const high = makeResult({ id: 'v2', severity: 'HIGH' });
+    const medium = makeResult({ id: 'v3', severity: 'MEDIUM' });
+    expect(filterBySeverity([critical, high, medium], ['CRITICAL', 'HIGH'])).toEqual([critical, high]);
+  });
+
+  it('excludes a result with no severity, since there is nothing to compare', () => {
+    const unrated = makeResult({ severity: null });
+    expect(filterBySeverity([unrated], ['CRITICAL'])).toEqual([]);
+  });
+
+  it('matches case-sensitively, consistent with how ecosystem is matched', () => {
+    const high = makeResult({ severity: 'HIGH' });
+    expect(filterBySeverity([high], ['high'])).toEqual([]);
+    expect(filterBySeverity([high], ['HIGH'])).toEqual([high]);
+  });
+
+  it('supports a scale outside NVD\'s own (e.g. GHSA\'s MODERATE)', () => {
+    const moderate = makeResult({ severity: 'MODERATE' });
+    expect(filterBySeverity([moderate], ['MODERATE'])).toEqual([moderate]);
   });
 });
