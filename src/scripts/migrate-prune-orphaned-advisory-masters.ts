@@ -20,7 +20,7 @@
  *   pnpm migrate:prune-orphaned-advisory-masters
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 
 async function main() {
   const candidates = await prisma.vulnerability.findMany({
@@ -51,4 +51,7 @@ main()
     console.error(err);
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await closeDb();
+    process.exit(0);
+  });

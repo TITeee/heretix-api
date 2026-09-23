@@ -17,7 +17,7 @@
  *   pnpm migrate:recompute-sophos-product-names
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 import { extractProduct } from '../worker/sophos-fetcher.js';
 
 async function main() {
@@ -55,4 +55,7 @@ main()
     console.error(err);
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await closeDb();
+    process.exit(0);
+  });

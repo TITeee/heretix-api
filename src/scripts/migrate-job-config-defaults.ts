@@ -15,7 +15,7 @@
  *   pnpm migrate:job-config-defaults
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 import { STATIC_JOBS, listOsvEcosystemJobs } from '../jobs/registry.js';
 import { defaultEnabled } from '../jobs/config.js';
 
@@ -39,10 +39,12 @@ async function main() {
     console.log(`Inserted enabled:true rows for: ${toInsert.join(', ')}`);
   }
 
-  await prisma.$disconnect();
+  await closeDb();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

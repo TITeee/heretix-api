@@ -30,7 +30,7 @@
  *   pnpm migrate:module-version-start
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
 import { inferBareVersionStart, moduleStreamVersionStart, BARE_ROW_FALLBACK_PRODUCTS } from '../worker/advisory-helpers.js';
 
@@ -98,4 +98,7 @@ main()
     console.error(err);
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await closeDb();
+    process.exit(0);
+  });

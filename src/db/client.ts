@@ -47,3 +47,22 @@ prisma.$on('error', (e: Prisma.LogEvent) => {
 });
 
 export { prisma };
+
+/**
+ * Disconnect Prisma and close the underlying connection pool.
+ *
+ * prisma.$disconnect() alone does not do this: with a driver adapter, Prisma
+ * never created the pool, so it never owns it and never calls pool.end() on
+ * disconnect. A pool with any pooled socket left open keeps the event loop
+ * alive until node-postgres's own idle timeout (10s by default) closes it --
+ * confirmed at 10.35-10.40s per run against this app's pool. A one-shot
+ * script (each migrate-*.ts backfill, run once per container boot) does its
+ * actual work in well under a second and would then sit idle for that whole
+ * stretch, and a graceful server shutdown would race the same wait against
+ * SHUTDOWN_TIMEOUT_MS in index.ts. Call this instead of prisma.$disconnect()
+ * wherever the process is meant to exit afterward.
+ */
+export async function closeDb(): Promise<void> {
+  await prisma.$disconnect();
+  await pool.end();
+}

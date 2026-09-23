@@ -26,7 +26,7 @@
  *   pnpm migrate:fix-implausible-module-floor
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
 import { inferBareVersionStart } from '../worker/advisory-helpers.js';
 
@@ -47,7 +47,7 @@ async function main() {
   console.log(`Found ${implausible.length} rows with versionStart > versionEnd (out of ${records.length} rows checked).`);
   if (implausible.length === 0) {
     console.log('Nothing to do.');
-    await prisma.$disconnect();
+    await closeDb();
     return;
   }
 
@@ -68,10 +68,12 @@ async function main() {
   }
 
   console.log(`Done: ${clearedToBareFallback} recomputed via inferBareVersionStart(), ${clearedToNull} cleared to no floor (unverified product, matches pre-fix behavior).`);
-  await prisma.$disconnect();
+  await closeDb();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

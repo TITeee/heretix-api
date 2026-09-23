@@ -23,7 +23,7 @@
  *   pnpm migrate:nvd-exact-version
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 import { computeExactVersion } from '../worker/nvd-helpers.js';
 
 async function main() {
@@ -76,10 +76,12 @@ async function main() {
   }
 
   console.log(`Done: ${updated} updated, ${skippedWildcard} skipped (genuine CPE wildcard), ${skippedMismatch} skipped (start != end, not a point version).`);
-  await prisma.$disconnect();
+  await closeDb();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

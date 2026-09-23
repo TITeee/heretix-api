@@ -13,7 +13,7 @@
  *   pnpm migrate:version-end
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
 
 async function main() {
@@ -60,4 +60,7 @@ main()
     console.error(err);
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await closeDb();
+    process.exit(0);
+  });
