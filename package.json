@@ -80,7 +80,7 @@
     "@fastify/cors": "^11.2.0",
     "@prisma/adapter-pg": "^7.7.0",
     "@prisma/client": "^7.7.0",
-    "adm-zip": "^0.6.0",
+    "adm-zip": "^0.6.1",
     "axios": "^1.18.1",
     "bzip2": "^0.1.1",
     "dotenv": "^17.2.3",
@@ -108,7 +108,7 @@
       "follow-redirects": ">=1.16.0",
       "picomatch": ">=4.0.4",
       "dompurify": ">=3.4.11",
-      "hono": ">=4.12.34",
+      "hono": ">=4.13.5",
       "@hono/node-server": ">=2.0.5",
       "uuid": ">=14.0.0",
       "postcss": ">=8.5.18",
@@ -141,6 +141,6 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }
