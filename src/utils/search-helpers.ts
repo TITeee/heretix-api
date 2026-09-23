@@ -67,6 +67,26 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
   return [...seen.values()];
 }
 
+/**
+ * Keep only results whose severity is in `severities`. Exact, case-sensitive
+ * match against the value the API itself returns (CRITICAL/HIGH/MEDIUM/LOW,
+ * plus source-specific scales like GHSA's MODERATE) -- round-tripping a
+ * value straight from a prior response is always guaranteed to work, the
+ * same contract `ecosystem` already has (README: "case-sensitive"). A result
+ * with no severity at all never matches, since there's nothing to compare.
+ *
+ * Was accepted by the query schema and documented since the first release
+ * but never actually wired up: reaching this function is the fix.
+ */
+export function filterBySeverity(
+  items: VulnerabilityResult[],
+  severities: string[] | undefined,
+): VulnerabilityResult[] {
+  if (!severities || severities.length === 0) return items;
+  const wanted = new Set(severities);
+  return items.filter(item => item.severity !== null && wanted.has(item.severity));
+}
+
 // ─── Batch response size budget ───────────────────────────────
 //
 // Fastify serializes a response with JSON.stringify, which throws
