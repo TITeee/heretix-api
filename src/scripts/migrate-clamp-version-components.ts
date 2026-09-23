@@ -20,7 +20,7 @@
  *   pnpm migrate:clamp-version-components
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
 
 const CANDIDATE_PATTERN = '[0-9]{4,}';
@@ -134,10 +134,12 @@ async function main() {
   await migrateNvdIntroduced();
 
   console.log('\nDone.');
-  await prisma.$disconnect();
+  await closeDb();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

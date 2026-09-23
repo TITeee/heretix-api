@@ -23,7 +23,7 @@
  *   pnpm migrate:sophos-sonicwall-composite-externalid
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 
 const SOURCES = ['advisory-sophos', 'advisory-sonicwall'];
 
@@ -47,10 +47,12 @@ async function main() {
     console.log(`[${source}] Deleted ${result.count} rows (AdvisoryAffectedProduct cascaded).`);
   }
 
-  await prisma.$disconnect();
+  await closeDb();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

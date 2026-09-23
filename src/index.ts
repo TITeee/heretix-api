@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { startServer } from './api/server.js';
 import { startScheduler, stopScheduler } from './scheduler.js';
 import { reconcileOrphanedJobs } from './jobs/executor.js';
-import { prisma } from './db/client.js';
+import { closeDb } from './db/client.js';
 import { logger } from './utils/logger.js';
 
 // Long enough for an in-flight HTTP request to finish, short enough to stay
@@ -32,6 +32,12 @@ async function shutdown(server: FastifyInstance, signal: string, exitCode = 0): 
   // process exits on its own with the code set above -- and pino's transport
   // (a worker thread) gets to flush first. process.exit() here would race it
   // and truncate exactly the shutdown lines worth having.
+  //
+  // closeDb() has to actually close the pool for that to be true: prisma's
+  // own $disconnect() doesn't touch it (see closeDb()'s own comment), so a
+  // pooled socket from any recent query kept the event loop alive until
+  // node-postgres's own 10s idle timeout closed it -- indistinguishable from,
+  // and often slower than, the forced timeout below.
   const timer = setTimeout(() => {
     logger.error({ timeoutMs: SHUTDOWN_TIMEOUT_MS }, 'Shutdown timed out, forcing exit');
     process.exit(exitCode || 1);
@@ -41,7 +47,7 @@ async function shutdown(server: FastifyInstance, signal: string, exitCode = 0): 
   try {
     await stopScheduler();
     await server.close();
-    await prisma.$disconnect();
+    await closeDb();
     logger.info('Shutdown complete');
   } catch (err) {
     logger.error({ err }, 'Shutdown failed');

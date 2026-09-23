@@ -14,7 +14,7 @@
  *   pnpm migrate:recompute-osv-pseudo-versions
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 import { normalizeVersion } from '../utils/version.js';
 
 const PSEUDO_VERSION_SUFFIX = /[-.]\d{14}-[0-9a-fA-F]{7,40}$/;
@@ -78,4 +78,7 @@ main()
     console.error(err);
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await closeDb();
+    process.exit(0);
+  });

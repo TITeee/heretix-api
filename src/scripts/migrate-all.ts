@@ -30,7 +30,7 @@ import { execFileSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 
 const SELF = 'migrate-all.js';
 
@@ -59,4 +59,10 @@ main()
     console.error(err);
     process.exitCode = 1;
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    // closeDb() closes only this process's own pool; each script in `pending`
+    // above ran as its own child process with its own pool, already closed by
+    // the same fix in its own tail.
+    await closeDb();
+    process.exit(process.exitCode ?? 0);
+  });

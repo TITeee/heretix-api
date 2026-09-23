@@ -22,7 +22,7 @@
  *   pnpm migrate:broadcom-composite-externalid
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 
 async function main() {
   const stale = await prisma.advisoryVulnerability.findMany({
@@ -37,7 +37,7 @@ async function main() {
   console.log(`Found ${stale.length} old-format Broadcom advisory rows to remove.`);
   if (stale.length === 0) {
     console.log('Nothing to do.');
-    await prisma.$disconnect();
+    await closeDb();
     return;
   }
 
@@ -46,10 +46,12 @@ async function main() {
   });
   console.log(`Deleted ${result.count} rows (AdvisoryAffectedProduct cascaded). They'll be recreated in composite form on the next Broadcom fetch.`);
 
-  await prisma.$disconnect();
+  await closeDb();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

@@ -20,7 +20,7 @@
  *   pnpm migrate:remove-withdrawn-osv-packages
  */
 import 'dotenv/config';
-import { prisma } from '../db/client.js';
+import { closeDb, prisma } from '../db/client.js';
 
 async function main() {
   const withdrawn = await prisma.$queryRaw<Array<{ id: string; osvId: string }>>`
@@ -46,4 +46,7 @@ main()
     console.error(err);
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await closeDb();
+    process.exit(0);
+  });
