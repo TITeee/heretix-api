@@ -394,6 +394,13 @@ export async function importNVDByDateRange(
 /**
  * Fetch all NVD records via pagination and import sequentially
  * Progress is saved in CollectionJob metadata for resumability
+ *
+ * A page that cannot be fetched after retries aborts the run: the job is
+ * marked 'failed' (never 'completed') and the error is rethrown. Marking it
+ * completed would both hide a partial import behind a success message and move
+ * the baseline `import:nvd update` starts from (the latest completed job's
+ * completedAt), leaving the unfetched remainder permanently uncovered.
+ * Resume a failed run with the job id logged at startup.
  */
 export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; succeeded: number; failed: number }> {
   logger.info('Starting NVD full download');
@@ -401,64 +408,98 @@ export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; 
   // Retrieve previous progress
   let startIndex = 0;
   let savedJobId = jobId;
+  let inserted = 0;
+  let updated = 0;
+  let failed = 0;
 
   if (savedJobId) {
     const job = await prisma.collectionJob.findUnique({ where: { id: savedJobId } });
-    const meta = job?.metadata as Record<string, number> | null;
+    if (!job) throw new Error(`NVD full download job not found: ${savedJobId}`);
+    const meta = job.metadata as Record<string, number> | null;
     startIndex = meta?.lastStartIndex ?? 0;
-    logger.info({ startIndex }, 'Resuming NVD download from previous checkpoint');
+    // Carry the counts forward so a resumed run's totals cover the whole job.
+    inserted = job.totalInserted;
+    updated = job.totalUpdated;
+    failed = job.totalFailed;
+    await prisma.collectionJob.update({
+      where: { id: savedJobId },
+      data: { status: 'running', completedAt: null, errorMessage: null },
+    });
+    logger.info({ jobId: savedJobId, startIndex }, 'Resuming NVD download from previous checkpoint');
   } else {
     const job = await prisma.collectionJob.create({
       data: { source: 'nvd', status: 'running', startedAt: new Date() },
     });
     savedJobId = job.id;
+    logger.info({ jobId: savedJobId }, 'NVD full download job created');
   }
 
   let totalResults = Infinity;
-  let inserted = 0;
-  let updated = 0;
-  let failed = 0;
 
-  while (startIndex < totalResults) {
-    let page: NVDApiResponse;
-    try {
-      page = await fetchNVDPageWithRetry({ startIndex });
-    } catch (err) {
-      logger.error({ err, startIndex }, 'Failed to fetch NVD page');
-      break;
-    }
-
-    totalResults = page.totalResults;
-    const items = page.vulnerabilities.map(v => v.cve);
-
-    for (const item of items) {
+  try {
+    while (startIndex < totalResults) {
+      let page: NVDApiResponse;
       try {
-        const result = await importNVDData(item);
-        if (result === 'inserted') inserted++; else updated++;
+        page = await fetchNVDPageWithRetry({ startIndex });
       } catch (err) {
-        failed++;
-        logger.error({ err, cveId: item.id }, 'Failed to import NVD CVE');
+        logger.error({ err, startIndex }, 'Failed to fetch NVD page');
+        throw new Error(
+          `NVD full download aborted at startIndex ${startIndex} of ${Number.isFinite(totalResults) ? totalResults : 'unknown'}: ` +
+          `${err instanceof Error ? err.message : String(err)}. Resume with: pnpm import:nvd full ${savedJobId}`,
+          { cause: err },
+        );
+      }
+
+      totalResults = page.totalResults;
+      const items = page.vulnerabilities.map(v => v.cve);
+
+      for (const item of items) {
+        try {
+          const result = await importNVDData(item);
+          if (result === 'inserted') inserted++; else updated++;
+        } catch (err) {
+          failed++;
+          logger.error({ err, cveId: item.id }, 'Failed to import NVD CVE');
+        }
+      }
+
+      startIndex += items.length;
+
+      // Save progress
+      await prisma.collectionJob.update({
+        where: { id: savedJobId },
+        data: {
+          metadata: { lastStartIndex: startIndex, totalResults },
+          totalInserted: inserted,
+          totalUpdated: updated,
+          totalFailed: failed,
+        },
+      });
+
+      logger.info({ startIndex, totalResults, inserted, updated, failed }, 'NVD page imported');
+
+      if (startIndex < totalResults) {
+        await sleep(RATE_LIMIT_DELAY_MS);
       }
     }
-
-    startIndex += items.length;
-
-    // Save progress
-    await prisma.collectionJob.update({
-      where: { id: savedJobId },
-      data: {
-        metadata: { lastStartIndex: startIndex, totalResults },
-        totalInserted: inserted,
-        totalUpdated: updated,
-        totalFailed: failed,
-      },
-    });
-
-    logger.info({ startIndex, totalResults, inserted, updated, failed }, 'NVD page imported');
-
-    if (startIndex < totalResults) {
-      await sleep(RATE_LIMIT_DELAY_MS);
+  } catch (err) {
+    try {
+      await prisma.collectionJob.update({
+        where: { id: savedJobId },
+        data: {
+          status: 'failed',
+          completedAt: new Date(),
+          errorMessage: err instanceof Error ? err.message : String(err),
+          totalInserted: inserted,
+          totalUpdated: updated,
+          totalFailed: failed,
+        },
+      });
+    } catch (updateErr) {
+      // Don't let a bookkeeping failure (e.g. the DB itself being down) mask the original error.
+      logger.error({ err: updateErr, jobId: savedJobId }, 'Failed to mark NVD full download job as failed');
     }
+    throw err;
   }
 
   await prisma.collectionJob.update({
