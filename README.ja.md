@@ -16,7 +16,7 @@
 - **高速検索**: 正規化されたバージョン番号による整数比較で高速な範囲検索を実現
 - **スケーラブル**: 生データをJSONBで保存し、検索用フィールドを正規化
 - **RESTful API**: Fastifyベースの軽量で高速なAPIサーバー
-- **NVD全件ミラー**: NVD全CVE（約24万件）のローカルミラーに対応（差分更新も可能）
+- **NVD全件ミラー**: NVD全CVE（約40万件）のローカルミラーに対応（差分更新も可能）
 - **OSV差分更新**: `CollectionJob` で最終実行日時を管理し、変更があったエントリのみを処理する差分更新に対応
 
 
@@ -598,16 +598,15 @@ CPE にはバージョン範囲フィールド（`versionStartIncluding` 等）�
 ```bash
 pnpm import:nvd full
 ```
-約24万件のCVEを全件取得します。途中で失敗した場合は `CollectionJob` に進捗が保存されており、ジョブIDを指定して再開できます。
+約40万件のCVEを全件取得します。所要時間は**数時間**です（Docker Desktop for Mac での実測で約6時間。ハードウェアやNVDの応答時間により変動します）。NVD のレート制限が占める割合は小さく、時間の大半は2,000件/ページの取得と、CVEごとのDB書き込みに費やされます。フォアグラウンドで待つ前提にはしないでください。`NVD_API_KEY`（10→50 req/min）は引き続き設定を推奨します（無料キーは [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key) で取得できます）。
+
+フルダウンロードは**自動では再開されません**。`pnpm import:nvd full` を再実行すると、新しいジョブが最初から始まり、全件を再インポートします。リトライ後もページを取得できない場合、ジョブは `failed`（`completed` にはなりません）となり、コマンドは非ゼロで終了し、エラーメッセージの末尾に再開コマンドが表示されます。ジョブIDは開始時にもログへ出力され、進捗は `CollectionJob` にチェックポイントとして保存されているため、次のように再開します。
 
 ```bash
 pnpm import:nvd full <job-id>
 ```
 
-| 条件 | 所要時間の目安 |
-|---|---|
-| NVD_API_KEY なし (10 req/min) | 約12分 |
-| NVD_API_KEY あり (50 req/min) | 約2.5分 |
+`failed` のジョブが `pnpm import:nvd update` の起点になることはありません。差分更新に頼る前に、該当ジョブの `metadata.lastStartIndex` が `totalResults` に達していることを確認してください。
 
 ### 差分更新
 ```bash
