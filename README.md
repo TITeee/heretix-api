@@ -18,7 +18,7 @@ This repository, heretix-api, is the vulnerability data layer: it aggregates and
 - **Fast search**: Version numbers are normalized to integers for high-speed range queries
 - **Scalable**: Raw data stored as JSONB, search fields kept normalized
 - **RESTful API**: Lightweight, high-throughput Fastify server
-- **Full NVD mirror**: Local mirror of all ~240,000 NVD CVEs with incremental update support
+- **Full NVD mirror**: Local mirror of all ~400,000 NVD CVEs with incremental update support
 - **Incremental updates**: OSV ecosystems and MAL entries support delta updates via `CollectionJob`-tracked timestamps
 
 ## Setup
@@ -700,19 +700,22 @@ NVD sometimes uses multiple CPE product names for the same software (e.g., after
 ### NVD
 
 ```bash
-pnpm import:nvd full              # Full mirror (~240k CVEs); resumes from CollectionJob if interrupted
-pnpm import:nvd full <job-id>     # Resume a specific job
+pnpm import:nvd full              # Full mirror (~400k CVEs); starts a new job
+pnpm import:nvd full <job-id>     # Resume an interrupted or failed job from its checkpoint
 pnpm import:nvd update            # Incremental update (recent changes only)
 pnpm import:nvd cve CVE-2021-44228  # Single CVE
 pnpm import:nvd range 2024-01-01 2024-03-31  # Date range (auto-chunks at 120-day NVD limit)
 ```
 
-| Condition | Estimated time |
-|---|---|
-| Without `NVD_API_KEY` (10 req/min) | ~12 min |
-| With `NVD_API_KEY` (50 req/min) | ~2.5 min |
+The full mirror takes **several hours** (about 6 hours in one measured run on Docker Desktop for Mac; it varies with hardware and NVD's response times). The NVD rate limit is only a small part of that: most of the time goes into downloading 2,000-record pages and writing each CVE to the database, so don't plan on waiting for it in the foreground. `NVD_API_KEY` (50 req/min instead of 10) is still worth setting — get a free key at [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key).
 
-Get a free API key at [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key).
+A full download is **not** resumed automatically: running `pnpm import:nvd full` again starts a new job from the beginning and re-imports everything. If a page still cannot be fetched after retries, the job is marked `failed` (never `completed`), the command exits non-zero, and the error message ends with the resume command. The job id is also logged at startup, and progress is checkpointed in `CollectionJob`, so continue with:
+
+```bash
+pnpm import:nvd full <job-id>
+```
+
+A failed job is never used as the starting point of `pnpm import:nvd update`. Before relying on incremental updates, check that the job's `metadata.lastStartIndex` has reached `totalResults`.
 
 ### OSV
 
