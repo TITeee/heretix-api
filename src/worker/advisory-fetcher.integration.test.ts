@@ -164,14 +164,13 @@ describe('runAdvisoryFetcher — stale-advisory pruning', () => {
     await prisma.$disconnect();
   });
 
-  it('skips pruning entirely when the fetch returns zero advisories', async () => {
+  it('fails the run and skips pruning entirely when the fetch returns zero advisories', async () => {
     // A parser breaking and returning [] without throwing is indistinguishable
     // from "everything was retracted"; treating it as the latter would wipe
     // every advisory for the source. Nothing may be touched, not even counted
-    // as missing.
-    const result = await runAdvisoryFetcher(fakeFetcher('fortinet', []));
+    // as missing -- and the run must not look successful either.
+    await expect(runAdvisoryFetcher(fakeFetcher('fortinet', []))).rejects.toThrow(/zero advisories/);
 
-    expect(result.pruned).toBe(0);
     expect(await existsAdvisory(STALE)).toBe(true);
     expect(await missingRunCountOf(STALE)).toBe(0);
   });

@@ -43,7 +43,7 @@ pnpm validate:pan        # sweep mode: every PAN product (mode: 'all', matching 
 
 | Product | Boundary versions tested | TP | Precision | Recall | F1 |
 |---|---:|---:|---:|---:|---:|
-| Fortinet | 1,019 | 14,612 | 100.00% | 100.00% | 100.00% |
+| Fortinet | 1,037 | 15,047 | 100.00% | 100.00% | 100.00% |
 | Palo Alto Networks | 1,073 | 28,224 | 100.00% | 100.00% | 100.00% |
 
 *Reproduced 2026-07-26. Three real bugs surfaced during this work — two in the validation harness, one in production:
@@ -55,6 +55,8 @@ pnpm validate:pan        # sweep mode: every PAN product (mode: 'all', matching 
 *PAN re-measured 2026-09-29 after the hotfix-range rework (`pan-fetcher.ts` / `pan-version.ts`). The earlier 99.56% run could not see the underlying problem: 829 of the feed's 2,090 range bounds carried a hotfix suffix (`<10.2.9-h1`) and were dropped at parse time, and this sweep's ground truth is built from that same parse, so the dropped bounds vanished from both sides. The same applies now — this sweep checks that stored bounds and queried versions are encoded consistently, not that the CSAF is read correctly; the reading is covered by `pan-fetcher.test.ts` with real CSAF shapes. It also shares the Int encoding, so the Prisma Browser 4-component limitation in item 3 above still exists but no longer shows up as a mismatch here. The boundary count grew from 235 to 1,073 because every per-maintenance-release hotfix range now contributes its own edges (`panVersionsBelow()`).*
 
 The Fortinet numbers above are from the corrected `mode: 'all'` fetcher (254 advisories, vs. ~47 from RSS alone).*
+
+*Fortinet re-measured 2026-09-29 (266 advisories) after the listing page moved each row's link from an inline `onclick` to a script, which had made `FortinetFetcher` return zero advisories — while the scheduled job still reported success — from 2026-08-20 on. 49 listed advisories still have no CSAF file at the URL derived from their title and are not imported; that gap predates this change.*
 
 ## Boundary-value sweep (RHEL / Oracle Linux)
 
