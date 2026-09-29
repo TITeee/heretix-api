@@ -2,6 +2,14 @@ import axios from 'axios';
 import { XMLParser } from 'fast-xml-parser';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
+import {
+  type PanVersion,
+  comparePanVersions,
+  formatPanRelease,
+  nextPanMaintenanceLine,
+  panBranch,
+  parsePanVersion,
+} from '../utils/pan-version.js';
 
 const RSS_URL  = 'https://security.paloaltonetworks.com/rss.xml';
 const WEB_URL  = 'https://security.paloaltonetworks.com';
@@ -52,6 +60,7 @@ interface CsafVulnerability {
 
 interface ProductRangeInfo {
   productName: string;
+  name: string;           // the branch's own name, e.g. "PAN-OS 10.2 All"
   op: string | null;      // '<', '<=', '>=', '>', or null for a discrete/no-version entry
   version: string | null;
 }
@@ -74,19 +83,27 @@ interface ProductRangeInfo {
  *     legacy product-id string-matching, which can't resolve these IDs to a
  *     product name at all and silently drops the entire advisory as
  *     unparseable -- confirmed this affected ~46% of PAN's CVE advisories.
+ *
+ * One product_id can carry several branches: PAN reuses the same id for a
+ * "<10.2.0-h3" and a ">=10.2.0-h3" branch (the two sides of one fix point),
+ * so every branch is kept rather than the last one overwriting the others.
  */
-function buildProductMap(branches: CsafBranch[]): Map<string, ProductRangeInfo> {
-  const map = new Map<string, ProductRangeInfo>();
+function buildProductMap(branches: CsafBranch[]): Map<string, ProductRangeInfo[]> {
+  const map = new Map<string, ProductRangeInfo[]>();
+  const add = (id: string, info: ProductRangeInfo) => map.set(id, [...(map.get(id) ?? []), info]);
   function walk(bs: CsafBranch[], parentProductName?: string) {
     for (const b of bs) {
       const productName = b.category === 'product_name' ? b.name : parentProductName;
       if (b.product?.product_id && productName) {
-        // "vers:generic/<12.1.4", "vers:generic/>=11.2.10", "vers:generic/PAN-OS Firewall<12.1.4"
-        const m = b.name.match(/([<>]=?)([\d][\d.]*)$/);
+        // "vers:generic/<12.1.4", "vers:generic/PAN-OS>=10.2.9-h1",
+        // "vers:generic/GlobalProtect App<6.3.3-h2 (6.3.3-c676)". The version is
+        // everything after the operator -- a digits-and-dots-only capture used to
+        // drop every hotfix bound (829 of the feed's 2,090 range entries).
+        const m = b.name.match(/([<>]=?)(\d[^<>]*)$/);
         if (m) {
-          map.set(b.product.product_id, { productName, op: m[1], version: m[2] });
+          add(b.product.product_id, { productName, name: b.name, op: m[1], version: m[2].trim() });
         } else if (b.category === 'product_version' || b.category === 'product_version_range') {
-          map.set(b.product.product_id, { productName, op: null, version: null });
+          add(b.product.product_id, { productName, name: b.name, op: null, version: null });
         }
       }
       if (b.branches) walk(b.branches, productName);
@@ -154,6 +171,205 @@ function parseVersionOperator(str: string): { versionEnd?: string; versionFixed?
   return {};
 }
 
+// ─── Fix points → affected ranges ────────────────────────────
+
+type AffectedRow = NormalizedAdvisory['affectedProducts'][number];
+
+interface ProductStatusFacts {
+  fixPoints: Array<{ raw: string; v: PanVersion }>;
+  starts: Array<{ raw: string; v: PanVersion | null }>;
+  wholeBranches: PanVersion[];
+  lastAffected: string[];
+  hasAffectedEntry: boolean;
+  scoped: boolean;
+}
+
+// "PAN-OS 10.1 All" -- a whole branch listed by version, as opposed to the
+// version-less "Cloud NGFW All" PAN uses for SaaS products.
+const VERSIONED_BRANCH_NAME = /\s(\d+(?:\.\d+)*(?:-CE)?)\s+All$/;
+
+// PAN copies its advisory table's "Affected" column into known_affected even
+// when that column says "None" ("PAN-OS None", "Cortex XDR Agent 8.5 None"),
+// with the "Unaffected: All" side in known_not_affected. Such an entry means
+// *not* affected; read literally it used to become an unbounded "unfixed" row
+// that matched every version of the product (CVE-2024-6387 on PAN-OS).
+const NONE_ENTRY_NAME = /\sNone$/;
+
+function collectFacts(v: CsafVulnerability, productMap: Map<string, ProductRangeInfo[]>): Map<string, ProductStatusFacts> {
+  const facts = new Map<string, ProductStatusFacts>();
+  const factsFor = (product: string) => {
+    let f = facts.get(product);
+    if (!f) {
+      f = { fixPoints: [], starts: [], wholeBranches: [], lastAffected: [], hasAffectedEntry: false, scoped: false };
+      facts.set(product, f);
+    }
+    return f;
+  };
+  const addFixPoint = (f: ProductStatusFacts, raw: string) => {
+    const parsed = parsePanVersion(raw);
+    // An unorderable bound ("<All", "<5.1*") is dropped rather than turned
+    // into an unbounded row -- see affectedRangesFromStatus().
+    if (parsed && !f.fixPoints.some(p => comparePanVersions(p.v, parsed) === 0)) f.fixPoints.push({ raw, v: parsed });
+  };
+
+  for (const pid of v.product_status?.known_affected ?? []) {
+    const infos = productMap.get(pid) ?? [];
+    const hasUpper = infos.some(i => i.op === '<');
+    for (const info of infos) {
+      if (info.op === null && NONE_ENTRY_NAME.test(info.name)) continue;
+      const f = factsFor(info.productName);
+      f.hasAffectedEntry = true;
+      if (info.op === null) {
+        const branch = info.name.match(VERSIONED_BRANCH_NAME)?.[1];
+        const parsed = branch ? parsePanVersion(branch) : null;
+        if (parsed) {
+          f.wholeBranches.push(parsed);
+          f.scoped = true;
+        }
+        continue;
+      }
+      if (!info.version) continue;
+      if (info.op === '<') addFixPoint(f, info.version);
+      else if (info.op === '<=') f.lastAffected.push(info.version);
+      // A ">=" that is only the upper half of a "<X"/">=X" pair is that pair's
+      // fix point, already recorded via "<"; on its own it is where the
+      // affected range starts (CVE-2020-2035: ">=9.0.0", no fix at all).
+      else if ((info.op === '>=' || info.op === '>') && !hasUpper) {
+        f.starts.push({ raw: info.version, v: parsePanVersion(info.version) });
+        f.scoped = true;
+      }
+    }
+  }
+  for (const pid of v.product_status?.fixed ?? []) {
+    for (const info of productMap.get(pid) ?? []) {
+      if ((info.op === '>=' || info.op === '>') && info.version) addFixPoint(factsFor(info.productName), info.version);
+    }
+  }
+  for (const pid of v.product_status?.known_not_affected ?? []) {
+    for (const info of productMap.get(pid) ?? []) {
+      if (info.op !== null || VERSIONED_BRANCH_NAME.test(info.name)) factsFor(info.productName).scoped = true;
+    }
+  }
+  return facts;
+}
+
+/**
+ * Turn one CSAF vulnerability's product_status into affected ranges.
+ *
+ * PAN fixes each maintenance release separately with a hotfix, and lists every
+ * one of them as its own fix point: CVE-2025-0126's PAN-OS 10.2 row is
+ * "< 10.2.4-h25, < 10.2.9-h13, < 10.2.10-h6, >= 10.2.11". Within a branch
+ * (M.m) the fix points f1 < f2 < ... therefore mean
+ *   affected = [start, f1) ∪ [line after f1, f2) ∪ ...
+ * where "line after 10.2.4-h25" is 10.2.5 -- 10.2.5 is *not* fixed even though
+ * it orders above 10.2.4-h25; its own fix is 10.2.9-h13. A single
+ * "< fixed" range per product (the previous reading) called every later
+ * maintenance release fixed, and every earlier branch affected.
+ *
+ * A fix point is either side of how PAN spells it: a "<X" under known_affected
+ * or a ">=X" under fixed -- the feed uses both, often for the same X under one
+ * shared product_id.
+ *
+ * Where a branch's range starts:
+ *  - an explicit ">=X" under known_affected, when there is one in the branch;
+ *  - otherwise the branch's first release ("M.m.0") -- PAN's version table
+ *    lists branches individually, so a fix in 10.2 says nothing about 10.1;
+ *  - except for the lowest branch when nothing in the advisory says branches
+ *    are listed individually (no explicit start, no versioned not-affected
+ *    entry, e.g. Prisma Browser's "<135.16.8.96"): that one stays unbounded
+ *    below, as before, rather than dropping everything older.
+ */
+function affectedRangesFromStatus(v: CsafVulnerability, productMap: Map<string, ProductRangeInfo[]>): AffectedRow[] {
+  const rows: AffectedRow[] = [];
+
+  for (const [product, f] of collectFacts(v, productMap)) {
+    if (!f.hasAffectedEntry) continue;
+    const productRows: AffectedRow[] = [];
+
+    const byBranch = new Map<string, PanVersion[]>();
+    const rawOf = new Map<string, string>();
+    for (const p of [...f.fixPoints].sort((a, b) => comparePanVersions(a.v, b.v))) {
+      const list = byBranch.get(panBranch(p.v)) ?? [];
+      list.push(p.v);
+      byBranch.set(panBranch(p.v), list);
+      rawOf.set(JSON.stringify(p.v), p.raw);
+    }
+    const branchStarts = new Map<string, PanVersion>();
+    for (const s of f.starts) {
+      if (!s.v) continue;
+      const existing = branchStarts.get(panBranch(s.v));
+      if (!existing || comparePanVersions(s.v, existing) < 0) branchStarts.set(panBranch(s.v), s.v);
+    }
+
+    let lowest = true;
+    for (const [branch, fixes] of byBranch) {
+      let cur: PanVersion | undefined = branchStarts.get(branch)
+        ?? (lowest && !f.scoped ? undefined : { ...fixes[0], patch: 0, sub: 0 });
+      lowest = false;
+      for (const fix of fixes) {
+        if (!cur || comparePanVersions(cur, fix) < 0) {
+          const raw = rawOf.get(JSON.stringify(fix))!;
+          productRows.push({
+            vendor: 'paloalto',
+            product,
+            versionStart: cur ? formatPanRelease(cur) : undefined,
+            versionEnd: raw,
+            versionFixed: raw,
+            patchAvailable: true,
+          });
+        }
+        cur = nextPanMaintenanceLine(fix);
+      }
+    }
+
+    // A start with no fix point in its own branch: affected from there with no
+    // fix. Capped at the next branch when other branches do have fixes (their
+    // fixed releases are not affected); left open-ended when the advisory has
+    // no fix at all (CVE-2020-2035, a design limitation with only a workaround).
+    for (const s of f.starts) {
+      // A start this module cannot order would be stored as a row with no
+      // encodable bound at all -- i.e. unfixed and matching every version.
+      if (!s.v || byBranch.has(panBranch(s.v))) continue;
+      productRows.push({
+        vendor: 'paloalto',
+        product,
+        versionStart: s.raw,
+        versionEnd: byBranch.size > 0 ? `${s.v.major}.${s.v.minor + 1}.0` : undefined,
+        lastAffected: undefined,
+        versionFixed: undefined,
+        patchAvailable: false,
+      });
+    }
+
+    // "PAN-OS 10.1 All" under known_affected: the whole branch, no fix.
+    for (const b of f.wholeBranches) {
+      if (byBranch.has(panBranch(b))) continue;
+      productRows.push({
+        vendor: 'paloalto',
+        product,
+        versionStart: formatPanRelease({ ...b, patch: 0, sub: 0 }),
+        versionEnd: `${b.major}.${b.minor + 1}.0`,
+        patchAvailable: false,
+      });
+    }
+
+    for (const la of f.lastAffected) {
+      productRows.push({ vendor: 'paloalto', product, lastAffected: la, patchAvailable: f.fixPoints.length > 0 });
+    }
+
+    // Only discrete "affected" entries (or bounds too irregular to order) and
+    // nothing usable: one row with no range, as before. patchAvailable false
+    // makes it match every queried version (UNFIXED_NO_RANGE_WHERE) -- correct
+    // for "Cloud NGFW All", and the only honest reading when there is truly
+    // nothing to compare against.
+    if (productRows.length === 0) {
+      productRows.push({ vendor: 'paloalto', product, patchAvailable: f.fixPoints.length > 0 });
+    }
+    rows.push(...productRows);
+  }
+  return rows;
+}
+
 // ─── CSAF → NormalizedAdvisory Conversion ────────────────────
 
 export function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date): NormalizedAdvisory | null {
@@ -195,45 +411,13 @@ export function parseCsaf(csaf: CsafDocument, advisoryId: string, pubDate?: Date
   );
 
   if (useNewFormat) {
+    const seenRows = new Set<string>();
     for (const v of vulns) {
-      // Collect fixed versions per product from >= or > product_ids
-      const fixedByProduct = new Map<string, string>();
-      for (const pid of [...(v.product_status?.known_not_affected ?? []), ...(v.product_status?.fixed ?? [])]) {
-        const info = productMap.get(pid);
-        if (info && (info.op === '>=' || info.op === '>') && info.version) {
-          if (!fixedByProduct.has(info.productName)) {
-            fixedByProduct.set(info.productName, info.version);
-          }
-        }
-      }
-
-      for (const pid of v.product_status?.known_affected ?? []) {
-        if (seenPids.has(pid)) continue;
-        seenPids.add(pid);
-
-        const info = productMap.get(pid);
-        if (!info) continue;
-
-        const versionFixed = fixedByProduct.get(info.productName);
-        affectedProducts.push({
-          vendor:       'paloalto',
-          product:      info.productName,
-          // A ">="/">" entry under known_affected is a lower bound on the
-          // affected range itself (e.g. "vers:generic/PAN-OS>=10.1.0" -- affected
-          // from this version onward, with no known upper bound), distinct from
-          // the ">="/">" entries fixedByProduct reads out of known_not_affected/
-          // fixed above (a lower bound on the *fix*). Without this, a CVE with no
-          // fixed version at all (PAN never shipped one -- e.g. a design-limitation
-          // advisory addressed only by a workaround) produced an entry with every
-          // version field left undefined, indistinguishable from "no data available"
-          // (confirmed live: CVE-2020-2035's 5 PAN-OS branches, each ">=" with no
-          // corresponding fixed/known_not_affected entry at all).
-          versionStart: (info.op === '>=' || info.op === '>') ? (info.version ?? undefined) : undefined,
-          versionEnd:   info.op === '<'  ? (info.version ?? undefined) : undefined,
-          lastAffected: info.op === '<=' ? (info.version ?? undefined) : undefined,
-          versionFixed,
-          patchAvailable: !!versionFixed,
-        });
+      for (const row of affectedRangesFromStatus(v, productMap)) {
+        const key = JSON.stringify(row);
+        if (seenRows.has(key)) continue;
+        seenRows.add(key);
+        affectedProducts.push(row);
       }
     }
   } else {

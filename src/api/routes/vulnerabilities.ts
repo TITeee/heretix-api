@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
+import { PAN_VENDOR, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
 import {
@@ -328,10 +329,93 @@ async function searchAdvisory(
   product: string,
   version: string | undefined,
 ): Promise<VulnerabilityResult[]> {
+  // PAN rows are encoded with PAN's own version order (pan-version.ts), so the
+  // queried version has to be encoded the same way before it can be compared
+  // against them -- everything else keeps normalizeVersion().
   const versionInt = version ? normalizeVersion(version) : null;
+  const panVersionInt = version ? encodeAdvisoryVersion(PAN_VENDOR, version) : null;
   const approximate = version !== undefined && versionInt === null;
+  const panApproximate = version !== undefined && panVersionInt === null;
 
-  // Version range filter (range OR individual version list OR confirmed-unfixed)
+  const versionWhere = {
+    OR: [
+      { vendor: { not: PAN_VENDOR }, AND: [advisoryVersionWhere(version, versionInt)] },
+      { vendor: PAN_VENDOR, AND: [advisoryVersionWhere(version, panVersionInt)] },
+    ],
+  };
+
+  // Oracle CPU product names need a startsWith prefix match rather than the
+  // exact-list match every other vendor uses -- see oracleProductPrefixes()'s
+  // doc comment for why an enumerated list goes stale here.
+  const oraclePrefixes = oracleProductPrefixes(product);
+  const productWhere = oraclePrefixes
+    ? { OR: oraclePrefixes.map(p => ({ product: { startsWith: p } })) }
+    : { product: { in: expandProductAliases(product) } };
+
+  const rows = await prisma.advisoryAffectedProduct.findMany({
+    where: {
+      // RPM-vendor rows (RedHatFetcher/OracleLinuxFetcher OVAL, RedHatVexFetcher)
+      // are reachable only through searchAdvisoryRpm() via an explicit RHEL/Oracle
+      // Linux ecosystem -- see RPM_ADVISORY_VENDOR_PREFIXES's doc comment for why
+      // leaking them through this vendor-blind product-name search is unsafe.
+      NOT: { OR: RPM_ADVISORY_VENDOR_PREFIXES.map(p => ({ vendor: { startsWith: p } })) },
+      AND: [
+        productWhere,
+        versionWhere,
+        { OR: [{ versionEnd: null }, { versionEnd: { not: { contains: '.module+' } } }] },
+      ],
+    },
+    include: {
+      advisory: {
+        select: {
+          id: true,
+          source: true,
+          externalId: true,
+          cveId: true,
+          severity: true,
+          cvssScore: true,
+          cvssVector: true,
+          summary: true,
+          publishedAt: true,
+          masterVuln: { select: masterSelect },
+        },
+      },
+    },
+  });
+
+  return rows.map(r => {
+    const adv = r.advisory;
+    const fixedVersion = r.versionFixed ?? null;
+    const approximateMatch = version === undefined || (r.vendor === PAN_VENDOR ? panApproximate : approximate);
+    if (adv.masterVuln) {
+      return masterToResult(adv.masterVuln, approximateMatch, adv.source, fixedVersion, adv.externalId);
+    }
+    return {
+      id: adv.id,
+      externalId: adv.externalId,
+      source: adv.source,
+      sources: [adv.source],
+      severity: adv.severity,
+      cvssScore: adv.cvssScore,
+      cvssVector: adv.cvssVector,
+      summary: adv.summary,
+      publishedAt: adv.publishedAt,
+      approximateMatch,
+      isKev: false,
+      epssScore: null,
+      epssPercentile: null,
+      fixedVersion,
+      aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
+    };
+  });
+}
+
+/**
+ * searchAdvisory()'s version filter for one encoding of the queried version:
+ * range OR individual version list OR confirmed-unfixed. `versionInt` is the
+ * query encoded the way the rows it is applied to were (encodeAdvisoryVersion()).
+ */
+function advisoryVersionWhere(version: string | undefined, versionInt: bigint | null) {
   let versionWhere = {};
   if (versionInt !== null) {
     versionWhere = {
@@ -378,69 +462,7 @@ async function searchAdvisory(
     versionWhere = { OR: [{ affectedVersions: { has: version } }, UNFIXED_NO_RANGE_WHERE] };
   }
 
-  // Oracle CPU product names need a startsWith prefix match rather than the
-  // exact-list match every other vendor uses -- see oracleProductPrefixes()'s
-  // doc comment for why an enumerated list goes stale here.
-  const oraclePrefixes = oracleProductPrefixes(product);
-  const productWhere = oraclePrefixes
-    ? { OR: oraclePrefixes.map(p => ({ product: { startsWith: p } })) }
-    : { product: { in: expandProductAliases(product) } };
-
-  const rows = await prisma.advisoryAffectedProduct.findMany({
-    where: {
-      // RPM-vendor rows (RedHatFetcher/OracleLinuxFetcher OVAL, RedHatVexFetcher)
-      // are reachable only through searchAdvisoryRpm() via an explicit RHEL/Oracle
-      // Linux ecosystem -- see RPM_ADVISORY_VENDOR_PREFIXES's doc comment for why
-      // leaking them through this vendor-blind product-name search is unsafe.
-      NOT: { OR: RPM_ADVISORY_VENDOR_PREFIXES.map(p => ({ vendor: { startsWith: p } })) },
-      AND: [
-        productWhere,
-        versionWhere,
-        { OR: [{ versionEnd: null }, { versionEnd: { not: { contains: '.module+' } } }] },
-      ],
-    },
-    include: {
-      advisory: {
-        select: {
-          id: true,
-          source: true,
-          externalId: true,
-          cveId: true,
-          severity: true,
-          cvssScore: true,
-          cvssVector: true,
-          summary: true,
-          publishedAt: true,
-          masterVuln: { select: masterSelect },
-        },
-      },
-    },
-  });
-
-  return rows.map(r => {
-    const adv = r.advisory;
-    const fixedVersion = r.versionFixed ?? null;
-    if (adv.masterVuln) {
-      return masterToResult(adv.masterVuln, version === undefined || approximate, adv.source, fixedVersion, adv.externalId);
-    }
-    return {
-      id: adv.id,
-      externalId: adv.externalId,
-      source: adv.source,
-      sources: [adv.source],
-      severity: adv.severity,
-      cvssScore: adv.cvssScore,
-      cvssVector: adv.cvssVector,
-      summary: adv.summary,
-      publishedAt: adv.publishedAt,
-      approximateMatch: version === undefined || approximate,
-      isKev: false,
-      epssScore: null,
-      epssPercentile: null,
-      fixedVersion,
-      aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
-    };
-  });
+  return versionWhere;
 }
 
 /**

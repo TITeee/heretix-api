@@ -28,6 +28,7 @@
 import 'dotenv/config';
 import axios from 'axios';
 import { PanFetcher } from '../worker/pan-fetcher.js';
+import { panVersionToInt, panVersionsBelow } from '../utils/pan-version.js';
 import {
   aggregateSweep, printSweepReport, filterBySource, diffSets,
   mapWithConcurrency, indexGenericByProduct, expectedIdsGeneric, collectGenericBoundaryPoints,
@@ -64,12 +65,12 @@ async function queryLocalAPI(baseUrl: string, product: string, version: string):
 }
 
 async function runSweep(baseUrl: string, index: ReturnType<typeof indexGenericByProduct>, advisoryCount: number): Promise<void> {
-  const points = [...collectGenericBoundaryPoints(index).values()];
+  const points = [...collectGenericBoundaryPoints(index, panVersionsBelow).values()];
   console.log(`Sweeping ${points.length} (product, version) boundary points derived from ${advisoryCount} advisories (concurrency=${CONCURRENCY})...`);
 
   let done = 0;
   const entries: SweepEntry[] = await mapWithConcurrency(points, CONCURRENCY, async ({ product, version, reasons }) => {
-    const expected = expectedIdsGeneric(product, version, index);
+    const expected = expectedIdsGeneric(product, version, index, panVersionToInt);
     const allResults = await queryLocalAPI(baseUrl, product, version);
     const actual = filterBySource(allResults, TARGET_SOURCE);
     const { tp, fp, fn } = diffSets(expected, actual);
@@ -124,7 +125,7 @@ async function main() {
   }
 
   const { product, version } = args;
-  const expected = expectedIdsGeneric(product, version, index);
+  const expected = expectedIdsGeneric(product, version, index, panVersionToInt);
   console.log(`Ground truth for ${product} ${version}: ${expected.size} CVEs should match`);
 
   const allResults = await queryLocalAPI(baseUrl, product, version);

@@ -613,7 +613,9 @@ Semantic versions are converted to integers for fast range queries:
 
 - RSS feed + CSAF JSON (no authentication required)
 - Covers PAN-OS, Prisma Access, Cortex XDR, and more
-- Parses `vers:generic/` version ranges into `versionEnd` (exclusive) and `versionFixed`
+- Reads every `vers:generic/` bound (`<X` under known_affected, `>=X` under fixed) as a fix point and expands them into one affected range per branch (`M.m`) and maintenance release. PAN fixes each maintenance release with its own hotfix, so e.g. CVE-2025-0126's PAN-OS 10.2 becomes `[10.2.0, 10.2.4-h25)`, `[10.2.5, 10.2.9-h13)`, `[10.2.10, 10.2.10-h6)` — 10.2.5 orders above 10.2.4-h25 but is not fixed
+- Compares versions with a PAN-specific ordering ([src/utils/pan-version.ts](src/utils/pan-version.ts)): `10.2.9-h1` is the hotfix *after* 10.2.9, whereas the generic `normalizeVersion()` reads any `-<letter>` suffix as a pre-release. Stored bounds and queried versions both go through the same encoding
+- Treats `known_affected` entries like `PAN-OS None` as not affected (PAN copies its advisory table's "Affected: None" column into `known_affected` verbatim)
 
 ### Cisco PSIRT ([src/worker/cisco-fetcher.ts](src/worker/cisco-fetcher.ts))
 
