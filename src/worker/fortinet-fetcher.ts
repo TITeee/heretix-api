@@ -257,9 +257,44 @@ function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdvisory |
 
 // ─── Full PSIRT Listing (paginated) ──────────────────────────
 
-interface AdvisoryListEntry {
+export interface AdvisoryListEntry {
   advisoryId: string;
   title: string;
+}
+
+/**
+ * Advisory id + title of every row on one PSIRT listing page.
+ *
+ * Reads the row's own "<b>FG-IR-23-165 Title</b>" rather than the link: the
+ * row's link has already moved once -- from an inline
+ * `onclick="location.href = '/psirt/FG-IR-..'"` attribute to an
+ * `addEventListener` script at the end of the page (2026-08) -- and matching
+ * on it made every page look empty, so the fetcher silently returned nothing
+ * for six weeks. The CVE ids in the same cell are `<b class="cve">`, so a bare
+ * `<b>` holding an FG-IR id is the row heading and nothing else.
+ */
+export function parseListingPage(html: string): AdvisoryListEntry[] {
+  const seen = new Set<string>();
+  const entries: AdvisoryListEntry[] = [];
+  for (const m of html.matchAll(/<b>\s*(FG-IR-\d{2}-\d+)\s+([^<]+?)\s*<\/b>/g)) {
+    if (seen.has(m[1])) continue;
+    seen.add(m[1]);
+    entries.push({ advisoryId: m[1], title: decodeHtmlEntities(m[2]) });
+  }
+  return entries;
+}
+
+// The title feeds the CSAF file name (buildCsafUrl()), so an undecoded
+// "Products&#39; FortiCloud" turned into a "...-products-39-forticloud-..."
+// URL that does not exist (FG-IR-25-647).
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
 }
 
 /**
@@ -273,7 +308,6 @@ interface AdvisoryListEntry {
  */
 async function fetchAllAdvisoryEntries(): Promise<AdvisoryListEntry[]> {
   const entries: AdvisoryListEntry[] = [];
-  const rowPattern = /onclick="location\.href = '\/psirt\/(FG-IR-\d{2}-\d+)'">\s*<div class="col-md-3">\s*<b>FG-IR-\d{2}-\d+ ([^<]+)<\/b>/g;
 
   for (let page = 1; ; page++) {
     const { data } = await axios.get<string>(`${PSIRT_LIST_URL}?page=${page}`, {
@@ -282,11 +316,11 @@ async function fetchAllAdvisoryEntries(): Promise<AdvisoryListEntry[]> {
       responseType: 'text',
     });
 
-    const matches = [...data.matchAll(rowPattern)];
-    if (matches.length === 0) break;
+    const pageEntries = parseListingPage(data);
+    if (pageEntries.length === 0) break;
 
-    for (const m of matches) entries.push({ advisoryId: m[1], title: m[2].trim() });
-    logger.debug({ page, found: matches.length, total: entries.length }, 'Scraped Fortinet PSIRT listing page');
+    entries.push(...pageEntries);
+    logger.debug({ page, found: pageEntries.length, total: entries.length }, 'Scraped Fortinet PSIRT listing page');
     await new Promise(r => setTimeout(r, 500));
   }
 

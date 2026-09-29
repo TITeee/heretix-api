@@ -43,7 +43,7 @@ pnpm validate:pan        # sweep mode: every PAN product (mode: 'all', matching 
 
 | Product | Boundary versions tested | TP | Precision | Recall | F1 |
 |---|---:|---:|---:|---:|---:|
-| Fortinet | 1,019 | 14,612 | 100.00% | 100.00% | 100.00% |
+| Fortinet | 1,037 | 15,047 | 100.00% | 100.00% | 100.00% |
 | Palo Alto Networks | 235 | 5,881 | 99.56% | 99.98% | 99.77% |
 
 *Reproduced 2026-07-26. Three real bugs surfaced during this work — two in the validation harness, one in production:
@@ -53,6 +53,8 @@ pnpm validate:pan        # sweep mode: every PAN product (mode: 'all', matching 
 3. PAN's single remaining mismatch (CVE-2025-9132) is a real, accepted limitation: Chromium-style 4-component versions (Prisma Browser, e.g. `138.53.6.158`) get truncated to 3 components by `normalizeVersion()`, the same class of precision loss as the already-documented RPM sub-release issue (`el9` vs `el9_7.2`) — not fixed here for the same reason (see git history).
 
 The Fortinet numbers above are from the corrected `mode: 'all'` fetcher (254 advisories, vs. ~47 from RSS alone).*
+
+*Fortinet re-measured 2026-09-29 (266 advisories) after the listing page moved each row's link from an inline `onclick` to a script, which had made `FortinetFetcher` return zero advisories — while the scheduled job still reported success — from 2026-08-20 on. 49 listed advisories still have no CSAF file at the URL derived from their title and are not imported; that gap predates this change.*
 
 ## Boundary-value sweep (RHEL / Oracle Linux)
 

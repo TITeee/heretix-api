@@ -320,8 +320,15 @@ export async function runAdvisoryFetcher(fetcher: AdvisoryFetcher): Promise<{
   if (advisories.length === 0) {
     // A genuine zero-result fetch is indistinguishable here from a scrape/parse
     // bug returning an empty array without throwing — never treat that as
-    // "everything was retracted". Skip pruning entirely in that case.
-    logger.warn({ source }, 'Fetch returned zero advisories — skipping stale-advisory pruning');
+    // "everything was retracted", so nothing is pruned. Nor is it reported as a
+    // successful run: no source this runs for legitimately publishes zero
+    // advisories, and a "completed, 0 fetched" job is exactly how a changed
+    // page layout went unnoticed for weeks (FortinetFetcher, 2026-08 to 2026-09).
+    // Throwing lets every caller record the job as failed.
+    throw new Error(
+      `${source}: fetch returned zero advisories` +
+      (fetchFailed > 0 ? ` (${fetchFailed} item(s) failed to fetch)` : ' — the source page or feed format may have changed'),
+    );
   } else if (fetcher.isCompleteSnapshot()) {
     const seenIds = new Set(advisories.map(a => a.externalId));
     ({ deleted: pruned } = await pruneStaleAdvisories(source, seenIds));
