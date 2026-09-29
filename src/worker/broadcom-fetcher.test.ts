@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { buildBroadcomAdvisories, parseResponseMatrixRow, parseAffectedVersionCell } from './broadcom-fetcher.js';
+import {
+  buildBroadcomAdvisories,
+  parseResponseMatrixRow,
+  parseAffectedVersionCell,
+  productVersionsFromRows,
+  type MatrixRawRow,
+} from './broadcom-fetcher.js';
 
 function baseItem(overrides: Partial<Parameters<typeof buildBroadcomAdvisories>[0]> = {}) {
   return {
@@ -155,6 +161,17 @@ describe('parseResponseMatrixRow', () => {
       .toEqual({ products: ['VMware Cloud Foundation'], fixedVersions: [] });
   });
 
+  it('does not read a KB article with the release it applies to as a fixed version', () => {
+    // Real VMSA-2021-0020 row: "Cloud Foundation (vCenter Server)" | "KB85718 (4.3)" --
+    // passed the dotted-decimal check and encoded as 85718.4.3, above every version.
+    expect(parseResponseMatrixRow('Cloud Foundation (vCenter Server)', 'KB85718 (4.3)'))
+      .toEqual({ products: ['Cloud Foundation (vCenter Server)'], fixedVersions: [] });
+  });
+
+  it('returns null for an "Unaffected" row -- it clears the product, it does not name it', () => {
+    expect(parseResponseMatrixRow('vCenter Server', 'Unaffected')).toBeNull();
+  });
+
   it('keeps the product with an empty fixedVersions for "n/a" and "see note" cells', () => {
     expect(parseResponseMatrixRow('VMware ESX', 'N/A')).toEqual({ products: ['VMware ESX'], fixedVersions: [] });
     expect(parseResponseMatrixRow('VMware ESX', 'See note 1.2')).toEqual({ products: ['VMware ESX'], fixedVersions: [] });
@@ -216,6 +233,56 @@ describe('parseAffectedVersionCell', () => {
   it('returns an empty array for a blank cell', () => {
     expect(parseAffectedVersionCell('')).toEqual([]);
     expect(parseAffectedVersionCell('   ')).toEqual([]);
+  });
+});
+
+describe('Response Matrix rows are kept per row and per CVE (VMSA-2021-0020)', () => {
+  // Real rows from VMSA-2021-0020's three tables (one per vCenter branch),
+  // trimmed to the columns the scraper reads.
+  const rows: MatrixRawRow[] = [
+    { product: 'vCenter Server', affectedVer: '7.0', cveCell: 'CVE-2021-22015, CVE-2021-22019', fixedVer: '7.0 U2c' },
+    { product: 'vCenter Server', affectedVer: '7.0', cveCell: 'CVE-2021-22011, CVE-2021-22018', fixedVer: '7.0 U2d' },
+    { product: 'vCenter Server', affectedVer: '7.0', cveCell: 'CVE-2021-22012, CVE-2021-22013', fixedVer: 'Unaffected' },
+    { product: 'Cloud Foundation (vCenter Server)', affectedVer: '4.x', cveCell: 'CVE-2021-22015', fixedVer: 'KB85718 (4.3)' },
+    { product: 'vCenter Server', affectedVer: '6.7', cveCell: 'CVE-2021-22011, CVE-2021-22015', fixedVer: '6.7 U3o' },
+    { product: 'vCenter Server', affectedVer: '6.7', cveCell: 'CVE-2021-22012, CVE-2021-22013, CVE-2021-22018', fixedVer: 'Unaffected' },
+    { product: 'vCenter Server', affectedVer: '6.5', cveCell: 'CVE-2021-22011', fixedVer: '6.5 U3q' },
+    { product: 'vCenter Server', affectedVer: '6.5', cveCell: 'CVE-2021-22012, CVE-2021-22015', fixedVer: '6.5 U3q' },
+    { product: 'vCenter Server', affectedVer: '6.5', cveCell: 'CVE-2021-22018', fixedVer: 'Unaffected' },
+  ];
+  const item = baseItem({
+    title: 'VMSA-2021-0020: VMware vCenter Server updates address multiple security vulnerabilities',
+    affectedCve: 'CVE-2021-22011, CVE-2021-22012, CVE-2021-22015, CVE-2021-22018',
+  });
+  const byCve = (cve: string) =>
+    buildBroadcomAdvisories(item, productVersionsFromRows(rows)).find(a => a.cveId === cve)!.affectedProducts;
+
+  it('pairs each branch with its own row\'s fix, not every other branch\'s', () => {
+    // Previously every vCenter row was merged into one product entry and the
+    // branches crossed with every fix: [6.5, 7.0 U2c) among them, which called
+    // the fixed 6.7 U3o affected.
+    expect(byCve('CVE-2021-22015')).toEqual([
+      { vendor: 'broadcom', product: 'vCenter Server', versionStart: '7.0', versionFixed: '7.0 U2c', patchAvailable: true },
+      { vendor: 'broadcom', product: 'Cloud Foundation (vCenter Server)', versionStart: '4', versionEnd: '5', patchAvailable: false },
+      { vendor: 'broadcom', product: 'vCenter Server', versionStart: '6.7', versionFixed: '6.7 U3o', patchAvailable: true },
+      { vendor: 'broadcom', product: 'vCenter Server', versionStart: '6.5', versionFixed: '6.5 U3q', patchAvailable: true },
+    ]);
+  });
+
+  it('gives each CVE only the rows that list it', () => {
+    // 7.0 is fixed in 7.0 U2d for CVE-2021-22011, not in 7.0 U2c.
+    expect(byCve('CVE-2021-22011')).toEqual([
+      { vendor: 'broadcom', product: 'vCenter Server', versionStart: '7.0', versionFixed: '7.0 U2d', patchAvailable: true },
+      { vendor: 'broadcom', product: 'vCenter Server', versionStart: '6.7', versionFixed: '6.7 U3o', patchAvailable: true },
+      { vendor: 'broadcom', product: 'vCenter Server', versionStart: '6.5', versionFixed: '6.5 U3q', patchAvailable: true },
+    ]);
+  });
+
+  it('drops "Unaffected" rows instead of turning them into fix-less affected ranges', () => {
+    // CVE-2021-22018 affects only 7.0; 6.7 and 6.5 are "Unaffected".
+    expect(byCve('CVE-2021-22018')).toEqual([
+      { vendor: 'broadcom', product: 'vCenter Server', versionStart: '7.0', versionFixed: '7.0 U2d', patchAvailable: true },
+    ]);
   });
 });
 

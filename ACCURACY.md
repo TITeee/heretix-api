@@ -32,7 +32,7 @@ pnpm validate:apache
 
 *Reproduced 2026-07-21. All 483 boundary cases passed with zero false positives/negatives against each fetcher's own data.*
 
-## Boundary-value sweep (Fortinet / Palo Alto Networks)
+## Boundary-value sweep (Fortinet / Palo Alto Networks / Broadcom)
 
 Fortinet and PAN advisories mix two range representations per affected-product entry: an exact version list, or a range (`versionStart`/`versionEnd`/`versionFixed`/`lastAffected`). Both fetchers can set an inclusive `lastAffected` **and** a supplementary `versionFixed` on the same entry — `importAdvisoryData()` resolves this by preferring `versionEnd ?? versionFixed` (exclusive) and only falling back to `lastAffected` (inclusive) when neither is present. Ground truth (`indexGenericByProduct`/`expectedIdsGeneric` in `src/scripts/lib/accuracy-sweep.ts`) replicates that exact precedence rather than checking both independently, which would silently disagree with what the search endpoint actually does.
 
@@ -45,6 +45,7 @@ pnpm validate:pan        # sweep mode: every PAN product (mode: 'all', matching 
 |---|---:|---:|---:|---:|---:|
 | Fortinet | 1,037 | 15,047 | 100.00% | 100.00% | 100.00% |
 | Palo Alto Networks | 1,073 | 28,224 | 100.00% | 100.00% | 100.00% |
+| Broadcom/VMware | 1,157 | 6,036 | 100.00% | 100.00% | 100.00% |
 
 *Reproduced 2026-07-26. Three real bugs surfaced during this work — two in the validation harness, one in production:
 
@@ -57,6 +58,8 @@ pnpm validate:pan        # sweep mode: every PAN product (mode: 'all', matching 
 The Fortinet numbers above are from the corrected `mode: 'all'` fetcher (254 advisories, vs. ~47 from RSS alone).*
 
 *Fortinet re-measured 2026-09-29 (266 advisories) after the listing page moved each row's link from an inline `onclick` to a script, which had made `FortinetFetcher` return zero advisories — while the scheduled job still reported success — from 2026-08-20 on. 49 listed advisories still have no CSAF file at the URL derived from their title and are not imported; that gap predates this change.*
+
+*Broadcom measured 2026-09-30, after two fixes. **Parser**: `BroadcomFetcher` merged every Response Matrix row per product before crossing the ranges with the fixes, so each branch picked up every other branch's fix (`[6.5, 7.0 U2c)` called the fixed 6.7 U3o affected) and every CVE in a VMSA got every other CVE's rows; it also stored "Unaffected" rows as fix-less affected ranges and read `KB85718 (4.3)` as a version (encoded 85718.4.3, above everything). Rows are now kept per row and per CVE (`CVE Identifier` column). **Harness**: `expectedIdsGeneric()` now applies the search endpoint's own rules — product-alias expansion (`expandProductAliases()`) and bounds compared *after* encoding, so a row whose bounds are all unencodable (ESXi build ids) is not range-matched. Before the harness fix this sweep reported 90.16% precision (947 FP / 34 FN) before the parser fix and 93.17% (412 / 76) after; every remaining mismatch was one of those two harness gaps. The figures above score against a ground truth built from the imported rows (same parser as a live run) rather than a fresh live fetch, because ~190 of 340 detail pages time out on every run and a live ground truth differs from the DB wherever the two runs failed on different pages. As with PAN, this checks the endpoint against the parsed data; the parsing itself is covered by `broadcom-fetcher.test.ts` with real VMSA-2021-0020 rows.*
 
 ## Boundary-value sweep (RHEL / Oracle Linux)
 
