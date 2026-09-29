@@ -559,7 +559,9 @@ Vulnerability (マスター)
 #### Palo Alto Networks PSIRT取得 ([src/worker/pan-fetcher.ts](src/worker/pan-fetcher.ts))
 - RSS フィード (`https://security.paloaltonetworks.com/rss.xml`) からアドバイザリ一覧を取得
 - CSAF JSON (`https://security.paloaltonetworks.com/csaf/{ID}`) を個別取得・パース
-- `vers:generic/<VERSION` 形式のバージョン範囲を解析して `versionEnd` / `versionFixed` に変換
+- `vers:generic/<VERSION` / `>=VERSION` 形式の境界を「修正点」として読み、ブランチ（`M.m`）ごと・メンテナンスリリースごとの影響範囲に展開する。PAN はメンテナンスリリースごとにホットフィックスで修正するため、たとえば CVE-2025-0126 の PAN-OS 10.2 は `[10.2.0, 10.2.4-h25)`・`[10.2.5, 10.2.9-h13)`・`[10.2.10, 10.2.10-h6)` の3行になる（10.2.5 は 10.2.4-h25 より新しいが未修正）
+- バージョン比較は PAN 専用（[src/utils/pan-version.ts](src/utils/pan-version.ts)）。`10.2.9-h1` は 10.2.9 の**後**の版として扱う（汎用の `normalizeVersion()` は `-英字` をプレリリースとみなすため逆順になる）。保存時と検索時の両方で同じ符号化を使う
+- known_affected の `PAN-OS None` のような「None」エントリは影響なしとして扱う（PAN はアドバイザリ表の「Affected: None」をそのまま known_affected に入れている）
 - 認証不要・レート制限なし（公開フィード）
 
 #### Cisco PSIRT取得 ([src/worker/cisco-fetcher.ts](src/worker/cisco-fetcher.ts))
