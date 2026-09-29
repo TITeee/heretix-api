@@ -1,6 +1,6 @@
 import { prisma } from '../db/client.js';
 import { createManyChunked } from '../db/bulk-insert.js';
-import { normalizeVersion } from '../utils/version.js';
+import { encodeAdvisoryVersion } from '../utils/advisory-version.js';
 import { logger } from '../utils/logger.js';
 import type { Prisma } from '@prisma/client';
 
@@ -189,17 +189,19 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
       // versionFixed has the same exclusive-upper-bound semantics as versionEnd:
       // "fixed in X.Y.Z" means versions < X.Y.Z are affected → use as fallback for range queries.
       const effectiveVersionEnd = prod.versionEnd ?? prod.versionFixed;
+      const vendor = prod.vendor.trim();
+      const encode = (v: string | undefined) => (v ? encodeAdvisoryVersion(vendor, v) : null);
       return {
         advisoryId: advisory.id,
-        vendor: prod.vendor.trim(),
+        vendor,
         product: prod.product.trim(),
         versionStart: prod.versionStart ?? null,
         versionEnd: prod.versionEnd ?? null,
         versionFixed: prod.versionFixed ?? null,
         lastAffected: prod.lastAffected ?? null,
-        versionStartInt: prod.versionStart ? (normalizeVersion(prod.versionStart) ?? null) : null,
-        versionEndInt: effectiveVersionEnd ? (normalizeVersion(effectiveVersionEnd) ?? null) : null,
-        lastAffectedInt: prod.lastAffected ? (normalizeVersion(prod.lastAffected) ?? null) : null,
+        versionStartInt: encode(prod.versionStart),
+        versionEndInt: encode(effectiveVersionEnd),
+        lastAffectedInt: encode(prod.lastAffected),
         affectedVersions: prod.affectedVersions ?? [],
         patchAvailable: prod.patchAvailable ?? null,
       };

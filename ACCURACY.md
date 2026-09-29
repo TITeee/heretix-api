@@ -44,13 +44,15 @@ pnpm validate:pan        # sweep mode: every PAN product (mode: 'all', matching 
 | Product | Boundary versions tested | TP | Precision | Recall | F1 |
 |---|---:|---:|---:|---:|---:|
 | Fortinet | 1,037 | 15,047 | 100.00% | 100.00% | 100.00% |
-| Palo Alto Networks | 235 | 5,881 | 99.56% | 99.98% | 99.77% |
+| Palo Alto Networks | 1,073 | 28,224 | 100.00% | 100.00% | 100.00% |
 
 *Reproduced 2026-07-26. Three real bugs surfaced during this work — two in the validation harness, one in production:
 
 1. **Harness bug**: `expectedIdsGeneric` had a real logic gap — an exact-list-only entry (no range fields at all) that didn't match the queried version fell through every subsequent check (none of them had anything to compare against) straight to an unconditional match, so it incorrectly matched *every other version too*. Fixed in `accuracy-sweep.ts`.
 2. **Production gap**: `FortinetFetcher` discovered advisories via RSS only, which is a "what's new" feed exposing a rolling window of ~50 recent items — not a full archive (unlike PAN's `mode: 'all'`, which already paginates PAN's full advisory list). Older advisories the DB had from past scheduled runs were being flagged as false positives simply because a one-off ground-truth fetch couldn't see them. The real fix was adding a `mode: 'all'` to `FortinetFetcher` itself (defaulting to it, matching PAN's precedent) that paginates the full PSIRT advisory listing (`fortiguard.fortinet.com/psirt?page=N`, 21 pages / ~300 advisories back to 2018) instead of relying on RSS — this is a genuine data-completeness improvement to production, not just a validation-script workaround.
 3. PAN's single remaining mismatch (CVE-2025-9132) is a real, accepted limitation: Chromium-style 4-component versions (Prisma Browser, e.g. `138.53.6.158`) get truncated to 3 components by `normalizeVersion()`, the same class of precision loss as the already-documented RPM sub-release issue (`el9` vs `el9_7.2`) — not fixed here for the same reason (see git history).
+
+*PAN re-measured 2026-09-29 after the hotfix-range rework (`pan-fetcher.ts` / `pan-version.ts`). The earlier 99.56% run could not see the underlying problem: 829 of the feed's 2,090 range bounds carried a hotfix suffix (`<10.2.9-h1`) and were dropped at parse time, and this sweep's ground truth is built from that same parse, so the dropped bounds vanished from both sides. The same applies now — this sweep checks that stored bounds and queried versions are encoded consistently, not that the CSAF is read correctly; the reading is covered by `pan-fetcher.test.ts` with real CSAF shapes. It also shares the Int encoding, so the Prisma Browser 4-component limitation in item 3 above still exists but no longer shows up as a mismatch here. The boundary count grew from 235 to 1,073 because every per-maintenance-release hotfix range now contributes its own edges (`panVersionsBelow()`).*
 
 The Fortinet numbers above are from the corrected `mode: 'all'` fetcher (254 advisories, vs. ~47 from RSS alone).*
 

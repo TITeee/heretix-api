@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../../db/client.js';
 import { resetDb } from '../../test-utils/db.js';
 import { createServer } from '../server.js';
+import { importAdvisoryData } from '../../worker/advisory-fetcher.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
 
@@ -180,6 +181,44 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     const rhelEcosystem = await search(app, 'package=php&ecosystem=Red%20Hat:9');
     expect(rhelEcosystem.body.results).toHaveLength(1);
     expect(rhelEcosystem.body.results[0].externalId).toBe('CVE-2023-0568');
+  });
+
+  it('compares PAN rows in hotfix order, and every other vendor as before', async () => {
+    // One PAN-OS maintenance-release range as parseCsaf() now writes it
+    // (CVE-2025-0126's 10.2 line: 10.2.5 up to, not including, 10.2.9-h13).
+    await importAdvisoryData({
+      externalId: 'CVE-2026-7001',
+      cveId: 'CVE-2026-7001',
+      rawData: {},
+      affectedProducts: [
+        { vendor: 'paloalto', product: 'PAN-OS', versionStart: '10.2.5', versionEnd: '10.2.9-h13', versionFixed: '10.2.9-h13', patchAvailable: true },
+      ],
+    }, 'paloalto');
+    // A non-PAN vendor whose "-<letter>" suffix still means a pre-release.
+    await importAdvisoryData({
+      externalId: 'CVE-2026-7002',
+      cveId: 'CVE-2026-7002',
+      rawData: {},
+      affectedProducts: [{ vendor: 'examplevendor', product: 'example-product', versionEnd: '2.0.0', patchAvailable: true }],
+    }, 'advisory-example');
+
+    const hits = async (query: string) => (await search(app, query)).body.results.map((r: { externalId: string }) => r.externalId);
+
+    for (const affected of ['10.2.5', '10.2.9', '10.2.9-h1', '10.2.9-h12']) {
+      expect(await hits(`package=PAN-OS&version=${affected}`), affected).toEqual(['CVE-2026-7001']);
+    }
+    // With normalizeVersion() the bound "10.2.9-h13" encoded below 10.2.9, so
+    // 10.2.9 itself fell outside the range and the fixed hotfix was not
+    // distinguishable from the ones before it.
+    for (const unaffected of ['10.2.4', '10.2.4-h30', '10.2.9-h13', '10.2.9-h14', '10.2.10']) {
+      expect(await hits(`package=PAN-OS&version=${unaffected}`), unaffected).toEqual([]);
+    }
+
+    const pan = await search(app, 'package=PAN-OS&version=10.2.9-h1');
+    expect(pan.body.results[0]).toMatchObject({ fixedVersion: '10.2.9-h13', approximateMatch: false });
+
+    expect(await hits('package=example-product&version=2.0.0-beta')).toEqual(['CVE-2026-7002']);
+    expect(await hits('package=example-product&version=2.0.0')).toEqual([]);
   });
 });
 

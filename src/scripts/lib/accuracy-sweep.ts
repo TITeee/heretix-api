@@ -241,6 +241,9 @@ export interface GenericFixEntry {
   exclusiveEnd: string | null; // versionEnd, falling back to versionFixed
   inclusiveEnd: string | null; // lastAffected — only meaningful when exclusiveEnd is absent
   exact: string[] | null;      // affectedVersions, when the advisory uses an exact list instead of a range
+  // patchAvailable false with no range or list at all ("Cloud NGFW All"): the
+  // search endpoint matches these for every version (UNFIXED_NO_RANGE_WHERE).
+  unfixedNoRange: boolean;
 }
 
 /**
@@ -264,6 +267,7 @@ export function indexGenericByProduct(
       versionFixed?: string;
       lastAffected?: string;
       affectedVersions?: string[];
+      patchAvailable?: boolean;
     }[];
   }[],
 ): Map<string, GenericFixEntry[]> {
@@ -272,25 +276,39 @@ export function indexGenericByProduct(
     const id = adv.cveId ?? adv.externalId;
     for (const p of adv.affectedProducts) {
       const exclusiveEnd = p.versionEnd ?? p.versionFixed ?? null;
+      const exact = p.affectedVersions && p.affectedVersions.length > 0 ? p.affectedVersions : null;
       const entry: GenericFixEntry = {
         id,
         introduced: p.versionStart ?? null,
         exclusiveEnd,
         inclusiveEnd: exclusiveEnd ? null : (p.lastAffected ?? null),
-        exact: p.affectedVersions && p.affectedVersions.length > 0 ? p.affectedVersions : null,
+        exact,
+        unfixedNoRange: p.patchAvailable === false && !p.versionStart && !exclusiveEnd && !p.lastAffected && !exact,
       };
-      const list = index.get(p.product);
+      // importAdvisoryData() trims product names ("Prisma Browser " in PAN's feed).
+      const product = p.product.trim();
+      const list = index.get(product);
       if (list) list.push(entry);
-      else index.set(p.product, [entry]);
+      else index.set(product, [entry]);
     }
   }
   return index;
 }
 
-/** CVEs whose indexed range (or exact list) for `product` covers `version`, via normalizeVersion(). */
-export function expectedIdsGeneric(product: string, version: string, index: Map<string, GenericFixEntry[]>): Set<string> {
+/**
+ * CVEs whose indexed range (or exact list) for `product` covers `version`.
+ * `encode` must be the encoding the search endpoint compares that source's
+ * rows with -- normalizeVersion() for most, panVersionToInt() for PAN (see
+ * src/utils/advisory-version.ts).
+ */
+export function expectedIdsGeneric(
+  product: string,
+  version: string,
+  index: Map<string, GenericFixEntry[]>,
+  encode: (v: string) => bigint | null = normalizeVersion,
+): Set<string> {
   const result = new Set<string>();
-  const versionInt = normalizeVersion(version);
+  const versionInt = encode(version);
 
   for (const e of index.get(product) ?? []) {
     if (e.exact && e.exact.includes(version)) {
@@ -302,18 +320,21 @@ export function expectedIdsGeneric(product: string, version: string, index: Map<
     // introduced/exclusiveEnd/inclusiveEnd all absent falls through every
     // check below (none of them have anything to compare) straight to the
     // unconditional add, i.e. every OTHER version incorrectly "matches" too.
-    if (!e.introduced && !e.exclusiveEnd && !e.inclusiveEnd) continue;
+    if (!e.introduced && !e.exclusiveEnd && !e.inclusiveEnd) {
+      if (e.unfixedNoRange) result.add(e.id.toUpperCase());
+      continue;
+    }
     if (versionInt === null) continue;
 
     if (e.introduced) {
-      const iv = normalizeVersion(e.introduced);
+      const iv = encode(e.introduced);
       if (iv !== null && versionInt < iv) continue;
     }
     if (e.exclusiveEnd) {
-      const ev = normalizeVersion(e.exclusiveEnd);
+      const ev = encode(e.exclusiveEnd);
       if (ev !== null && versionInt >= ev) continue;
     } else if (e.inclusiveEnd) {
-      const lv = normalizeVersion(e.inclusiveEnd);
+      const lv = encode(e.inclusiveEnd);
       if (lv !== null && versionInt > lv) continue;
     }
     result.add(e.id.toUpperCase());
@@ -321,8 +342,19 @@ export function expectedIdsGeneric(product: string, version: string, index: Map<
   return result;
 }
 
-/** Derive boundary points (range edges ±1 patch, or each exact-list entry) from a generic advisory index. */
-export function collectGenericBoundaryPoints(index: Map<string, GenericFixEntry[]>): Map<string, BoundaryPoint> {
+/**
+ * Derive boundary points (range edges ±1 patch, or each exact-list entry) from
+ * a generic advisory index. `below` lists the versions just under an exclusive
+ * bound to probe (expected affected): one patch lower by default, PAN's
+ * hotfix-aware neighbours for PAN (panVersionsBelow()).
+ */
+export function collectGenericBoundaryPoints(
+  index: Map<string, GenericFixEntry[]>,
+  below: (exclusiveEnd: string) => string[] = v => {
+    const b = bumpPatch(v, -1);
+    return b ? [b] : [];
+  },
+): Map<string, BoundaryPoint> {
   const points = new Map<string, BoundaryPoint>();
   const add = (product: string, version: string, reason: string) => {
     const key = `${product} ${version}`;
@@ -343,8 +375,7 @@ export function collectGenericBoundaryPoints(index: Map<string, GenericFixEntry[
       if (e.introduced) add(product, e.introduced, `${e.id}: introduced (expect affected)`);
       if (e.exclusiveEnd) {
         add(product, e.exclusiveEnd, `${e.id}: fixed exact (expect NOT affected)`);
-        const before = bumpPatch(e.exclusiveEnd, -1);
-        if (before) add(product, before, `${e.id}: fixed-1 (expect affected)`);
+        for (const before of below(e.exclusiveEnd)) add(product, before, `${e.id}: fixed-1 (expect affected)`);
       } else if (e.inclusiveEnd) {
         add(product, e.inclusiveEnd, `${e.id}: lastAffected exact (expect affected)`);
         const after = bumpPatch(e.inclusiveEnd, 1);

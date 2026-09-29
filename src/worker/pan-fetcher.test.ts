@@ -61,6 +61,34 @@ function prismaAccessAgentCsaf(): CsafDocument {
   };
 }
 
+/** A one-product CSAF document: `tree` entries are [branch name, product_id, category?]. */
+function csafOf(
+  product: string,
+  { tree, status }: { tree: Array<[string, string, string?]>; status: NonNullable<CsafDocument['vulnerabilities'][number]['product_status']> },
+): CsafDocument {
+  return {
+    document: { title: 't', tracking: { id: 'X', initial_release_date: '2026-01-01T00:00:00Z' } },
+    product_tree: {
+      branches: [{
+        name: product,
+        category: 'product_name',
+        branches: tree.map(([name, id, category]) => ({
+          category: category ?? 'product_version_range',
+          name,
+          product: { name: `Palo Alto Networks ${product}`, product_id: id },
+        })),
+      }],
+    },
+    vulnerabilities: [{ cve: 'CVE-X', product_status: status }],
+  };
+}
+
+/** Affected products as "[start, end)" strings, for compact assertions. */
+function ranges(advisory: ReturnType<typeof parseCsaf>): string[] {
+  return (advisory?.affectedProducts ?? []).map(r =>
+    `[${r.versionStart ?? '-inf'}, ${r.versionEnd ?? '+inf'})${r.patchAvailable ? '' : ' unfixed'}`);
+}
+
 describe('parseCsaf', () => {
   it('parses an advisory whose product_tree mixes a discrete placeholder branch with a range branch', () => {
     const advisory = parseCsaf(prismaAccessAgentCsaf(), 'CVE-2026-0291');
@@ -134,6 +162,87 @@ describe('parseCsaf', () => {
     expect(advisory!.affectedProducts).toEqual([
       { vendor: 'paloalto', product: 'PAN-OS', versionStart: '10.1.0', versionEnd: undefined, lastAffected: undefined, versionFixed: undefined, patchAvailable: false },
       { vendor: 'paloalto', product: 'PAN-OS', versionStart: '9.0.0', versionEnd: undefined, lastAffected: undefined, versionFixed: undefined, patchAvailable: false },
+    ]);
+  });
+
+  it('splits hotfix fix points into one range per maintenance release (CVE-2024-3400 shape)', () => {
+    // PAN reuses one product_id for both sides of a fix point ("<10.2.0-h3" and
+    // ">=10.2.0-h3"), lists it under known_affected and fixed alike, and fixes
+    // every maintenance release with its own hotfix. The bounds used to be
+    // dropped (hotfix suffix) and the id's last branch name read as a lower
+    // bound, leaving no range at all -- so the CVE matched every version.
+    const csaf = csafOf('PAN-OS', {
+      tree: [
+        ['PAN-OS 9.1 All', 'nA-91', 'product_version'],
+        ['vers:generic/PAN-OS<10.2.0-h3', 'p1'], ['vers:generic/PAN-OS>=10.2.0-h3', 'p1'],
+        ['vers:generic/PAN-OS>=10.2.1-h2', 'p2'],
+        ['vers:generic/PAN-OS>=10.2.9-h1', 'p3'],
+        ['vers:generic/PAN-OS<11.1.0-h3', 'p4'], ['vers:generic/PAN-OS>=11.1.0-h3', 'p4'],
+        ['vers:generic/PAN-OS>=11.1.2-h3', 'p5'],
+      ],
+      status: { known_affected: ['p1', 'p4'], fixed: ['p1', 'p2', 'p3', 'p4', 'p5'], known_not_affected: ['nA-91'] },
+    });
+
+    expect(ranges(parseCsaf(csaf, 'CVE-2024-3400'))).toEqual([
+      '[10.2.0, 10.2.0-h3)',
+      '[10.2.1, 10.2.1-h2)',
+      '[10.2.2, 10.2.9-h1)',
+      '[11.1.0, 11.1.0-h3)',
+      '[11.1.1, 11.1.2-h3)',
+    ]);
+  });
+
+  it('reads "<X" under known_affected and ">=X" under fixed as the same kind of fix point (CVE-2025-0126 shape)', () => {
+    const csaf = csafOf('PAN-OS', {
+      tree: [
+        ['vers:generic/PAN-OS<10.1.14-h11', 'a1'],
+        ['vers:generic/PAN-OS<10.2.10-h6', 'a2'], ['vers:generic/PAN-OS>=10.2.10-h6', 'a2'],
+        ['vers:generic/PAN-OS>=10.2.4-h25', 'f1'],
+        ['vers:generic/PAN-OS>=10.2.9-h13', 'f2'],
+        ['vers:generic/PAN-OS>=10.2.11', 'f3'],
+      ],
+      status: { known_affected: ['a1', 'a2'], fixed: ['a2', 'f1', 'f2', 'f3'] },
+    });
+
+    // Nothing says branches are listed individually here, so the lowest one
+    // keeps no lower bound (as before); the rest start at their branch.
+    expect(ranges(parseCsaf(csaf, 'CVE-2025-0126'))).toEqual([
+      '[-inf, 10.1.14-h11)',
+      '[10.2.0, 10.2.4-h25)',
+      '[10.2.5, 10.2.9-h13)',
+      '[10.2.10, 10.2.10-h6)',
+    ]);
+  });
+
+  it('treats PAN\'s "<product> None" known_affected entries as not affected (CVE-2024-6387 shape)', () => {
+    const csaf = csafOf('PAN-OS', {
+      tree: [['PAN-OS None', 'n1', 'product_version'], ['PAN-OS All', 'n2', 'product_version']],
+      status: { known_affected: ['n1'], known_not_affected: ['n2'] },
+    });
+    // Previously one row with no range and patchAvailable false -- matched by
+    // every PAN-OS version queried.
+    expect(parseCsaf(csaf, 'CVE-2024-6387')).toBeNull();
+  });
+
+  it('keeps a whole-branch "PAN-OS 10.1 All" entry inside that branch', () => {
+    const csaf = csafOf('PAN-OS', {
+      tree: [['PAN-OS 10.1 All', 'b1', 'product_version'], ['vers:generic/PAN-OS<10.2.5', 'a1']],
+      status: { known_affected: ['b1', 'a1'] },
+    });
+    expect(ranges(parseCsaf(csaf, 'CVE-X'))).toEqual(['[10.2.0, 10.2.5)', '[10.1.0, 10.2.0) unfixed']);
+  });
+
+  it('caps an unfixed branch at the next branch when other branches have fixes (CVE-2025-4232 shape)', () => {
+    const csaf = csafOf('GlobalProtect App', {
+      tree: [
+        ['vers:generic/GlobalProtect App>=6.1.0', 's1'],
+        ['vers:generic/GlobalProtect App<6.2.8-h2 [6.2.8-c243]', 'a1'], ['vers:generic/GlobalProtect App>=6.2.8-h2 [6.2.8-c243]', 'a1'],
+      ],
+      status: { known_affected: ['s1', 'a1'], fixed: ['a1'] },
+    });
+    expect(ranges(parseCsaf(csaf, 'CVE-2025-4232'))).toEqual([
+      '[6.2.0, 6.2.8-h2 [6.2.8-c243])',
+      '[6.1.0, 6.2.0) unfixed',
     ]);
   });
 
