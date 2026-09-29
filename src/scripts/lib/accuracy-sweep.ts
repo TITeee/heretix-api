@@ -241,9 +241,8 @@ export interface GenericFixEntry {
   exclusiveEnd: string | null; // versionEnd, falling back to versionFixed
   inclusiveEnd: string | null; // lastAffected — only meaningful when exclusiveEnd is absent
   exact: string[] | null;      // affectedVersions, when the advisory uses an exact list instead of a range
-  // patchAvailable false with no range or list at all ("Cloud NGFW All"): the
-  // search endpoint matches these for every version (UNFIXED_NO_RANGE_WHERE).
-  unfixedNoRange: boolean;
+  lastAffected: string | null; // raw lastAffected -- the search endpoint consults it whenever the exclusive end does not encode
+  patchAvailable: boolean | null;
 }
 
 /**
@@ -283,7 +282,8 @@ export function indexGenericByProduct(
         exclusiveEnd,
         inclusiveEnd: exclusiveEnd ? null : (p.lastAffected ?? null),
         exact,
-        unfixedNoRange: p.patchAvailable === false && !p.versionStart && !exclusiveEnd && !p.lastAffected && !exact,
+        lastAffected: p.lastAffected ?? null,
+        patchAvailable: p.patchAvailable ?? null,
       };
       // importAdvisoryData() trims product names ("Prisma Browser " in PAN's feed).
       const product = p.product.trim();
@@ -296,47 +296,55 @@ export function indexGenericByProduct(
 }
 
 /**
- * CVEs whose indexed range (or exact list) for `product` covers `version`.
- * `encode` must be the encoding the search endpoint compares that source's
- * rows with -- normalizeVersion() for most, panVersionToInt() for PAN (see
- * src/utils/advisory-version.ts).
+ * CVEs whose indexed range (or exact list) for `product` covers `version`,
+ * decided by the same rules as searchAdvisory()'s SQL filter
+ * (routes/vulnerabilities.ts), applied to the *encoded* bounds:
+ *   - an exact-list hit always matches;
+ *   - a range only applies when at least one of its bounds encodes -- a bound
+ *     that does not encode (an ESXi build id, a date) is null in the Int
+ *     columns, and a row whose bounds are all null is never range-matched;
+ *   - a missing or unencodable lower bound is open, and so is the upper one
+ *     unless lastAffected encodes;
+ *   - patchAvailable false with no encodable bound and no exact list matches
+ *     every version (UNFIXED_NO_RANGE_WHERE).
+ * Reasoning on the raw strings instead (an unencodable bound treated as
+ * "absent" rather than "null") made the sweep expect matches the endpoint
+ * correctly does not return (Broadcom's ESXi build-id rows).
+ *
+ * `encode` must be the encoding the endpoint compares that source's rows with
+ * -- normalizeVersion() for most, panVersionToInt() for PAN (see
+ * src/utils/advisory-version.ts). `aliasesOf` must be the product-name
+ * expansion the endpoint applies (expandProductAliases()), or rows filed
+ * under another spelling of the same product ("vCenter Server" for a
+ * "VMware vCenter" query) look like false positives.
  */
 export function expectedIdsGeneric(
   product: string,
   version: string,
   index: Map<string, GenericFixEntry[]>,
   encode: (v: string) => bigint | null = normalizeVersion,
+  aliasesOf: (product: string) => string[] = p => [p],
 ): Set<string> {
   const result = new Set<string>();
   const versionInt = encode(version);
+  const entries = [...new Set(aliasesOf(product))].flatMap(name => index.get(name) ?? []);
 
-  for (const e of index.get(product) ?? []) {
+  for (const e of entries) {
     if (e.exact && e.exact.includes(version)) {
       result.add(e.id.toUpperCase());
       continue;
     }
-    // Guard: an exact-list-only entry (no range fields at all) that didn't
-    // match above must not match anything else — without this, an entry with
-    // introduced/exclusiveEnd/inclusiveEnd all absent falls through every
-    // check below (none of them have anything to compare) straight to the
-    // unconditional add, i.e. every OTHER version incorrectly "matches" too.
-    if (!e.introduced && !e.exclusiveEnd && !e.inclusiveEnd) {
-      if (e.unfixedNoRange) result.add(e.id.toUpperCase());
+    const iv = e.introduced ? encode(e.introduced) : null;
+    const ev = e.exclusiveEnd ? encode(e.exclusiveEnd) : null;
+    const lv = e.lastAffected ? encode(e.lastAffected) : null;
+
+    if (iv === null && ev === null && lv === null) {
+      if (e.patchAvailable === false && !e.exact) result.add(e.id.toUpperCase());
       continue;
     }
     if (versionInt === null) continue;
-
-    if (e.introduced) {
-      const iv = encode(e.introduced);
-      if (iv !== null && versionInt < iv) continue;
-    }
-    if (e.exclusiveEnd) {
-      const ev = encode(e.exclusiveEnd);
-      if (ev !== null && versionInt >= ev) continue;
-    } else if (e.inclusiveEnd) {
-      const lv = encode(e.inclusiveEnd);
-      if (lv !== null && versionInt > lv) continue;
-    }
+    if (iv !== null && versionInt < iv) continue;
+    if (ev !== null ? versionInt >= ev : (lv !== null && versionInt > lv)) continue;
     result.add(e.id.toUpperCase());
   }
   return result;

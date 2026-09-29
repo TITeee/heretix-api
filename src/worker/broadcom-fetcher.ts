@@ -49,10 +49,19 @@ interface BroadcomApiResponse {
 // non-numeric release token ("25H2") has no meaningful range and is kept as-is.
 type AffectedRange = { versionStart: string; versionEnd: string } | { exact: string };
 
-interface ProductVersion {
+/**
+ * One product on one Response Matrix row. Rows are kept separate rather than
+ * merged per product: a row's Version, Fixed Version and CVE Identifier cells
+ * only mean something together ("vCenter 7.0 is fixed in 7.0 U2d for
+ * CVE-2021-22011"), and merging them per product crossed every branch with
+ * every other branch's fix and every CVE with every other CVE's rows.
+ */
+export interface ProductVersion {
   product: string;
   fixed: string[];
   affected?: AffectedRange[];
+  /** The row's CVE Identifier cell; empty/absent when the table has no such column. */
+  cves?: string[];
 }
 
 // ─── Utilities ─────────────────────────────────────────────────
@@ -108,6 +117,11 @@ function parseProductNames(raw: string): string[] {
  */
 function isVersionLike(v: string): boolean {
   if (!v || /n\/a|see\s+note/i.test(v)) return false;
+  // "KB85718 (4.3)": apply KB85718 on Cloud Foundation 4.3 -- a KB article
+  // with the release it applies to, not a fixed version. It used to pass the
+  // dotted-decimal check below and encode as 85718.4.3, above every real
+  // version, so the row matched everything.
+  if (/\bKB\d+/i.test(v)) return false;
   return /\d+\.\d+/.test(v) || /^ESXi[\w.-]*-\d+$/i.test(v) || /^\d{2}H\d(u\d+)?$/i.test(v);
 }
 
@@ -139,6 +153,10 @@ export function parseResponseMatrixRow(
 ): { products: string[]; fixedVersions: string[] } | null {
   const products = rawProduct.split(/[,+]/).map(s => s.trim()).filter(Boolean);
   if (products.length === 0 || !rawFixedVer.trim()) return null;
+  // "Unaffected" in the Fixed Version column: the row states this product
+  // version is *not* affected by the row's CVEs. Kept, it became a
+  // fix-less affected range for exactly the versions the row clears.
+  if (/^(unaffected|not\s+affected)$/i.test(rawFixedVer.trim())) return null;
 
   const fixedVersions = rawFixedVer
     .split(/\s+or\s+/i)
@@ -244,43 +262,87 @@ export function buildBroadcomAdvisories(
   const severity = normalizeSeverity(item.severity);
   const publishedAt = parsePublishedDate(item.published);
 
-  let affectedProducts: NormalizedAdvisory['affectedProducts'];
-
-  if (productVersions.length > 0) {
-    affectedProducts = productVersions.flatMap((pv): NormalizedAdvisory['affectedProducts'] => {
-      // A product can have several disjoint affected ranges (comma-separated
+  // The affected products for one CVE: only the Response Matrix rows that
+  // list that CVE (or every row, for a table without a CVE Identifier column).
+  const affectedProductsFor = (cveId: string | undefined): NormalizedAdvisory['affectedProducts'] => {
+    if (productVersions.length === 0) {
+      // Fallback: use product names from list API (may be truncated)
+      const products = parseProductNames(item.supportProducts ?? '');
+      return products.length > 0
+        ? products.map(product => ({ vendor: 'broadcom', product, patchAvailable: true }))
+        : [{ vendor: 'broadcom', product: 'VMware', patchAvailable: true }];
+    }
+    const rows = productVersions.filter(pv => !cveId || !pv.cves?.length || pv.cves.includes(cveId));
+    const seen = new Set<string>();
+    return rows.flatMap((pv): NormalizedAdvisory['affectedProducts'] => {
+      // A row can list several disjoint affected ranges (comma-separated
       // Version cell) and/or several fixed versions ("or"-separated Fixed
-      // Version cell); every combination becomes its own row, since a single
-      // AdvisoryAffectedProduct row can only hold one range and one fix.
+      // Version cell); every combination *within the row* becomes its own
+      // entry, since a single AdvisoryAffectedProduct row can only hold one
+      // range and one fix.
       const ranges: (AffectedRange | undefined)[] = pv.affected && pv.affected.length > 0 ? pv.affected : [undefined];
       const fixedVers: (string | undefined)[] = pv.fixed.length > 0 ? pv.fixed : [undefined];
-      return ranges.flatMap(range =>
-        fixedVers.map(fixedVer => buildAffectedProductEntry(pv.product, range, fixedVer))
-      );
+      return ranges.flatMap(range => fixedVers.map(fixedVer => buildAffectedProductEntry(pv.product, range, fixedVer)));
+    }).filter(entry => {
+      const key = JSON.stringify(entry);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
-  } else {
-    // Fallback: use product names from list API (may be truncated)
-    const products = parseProductNames(item.supportProducts ?? '');
-    affectedProducts = products.length > 0
-      ? products.map(product => ({ vendor: 'broadcom', product, patchAvailable: true }))
-      : [{ vendor: 'broadcom', product: 'VMware', patchAvailable: true }];
-  }
+  };
 
   const base = {
     summary: item.title,
     severity,
     url: item.notificationUrl,
     publishedAt,
-    affectedProducts,
     rawData: item,
   };
 
   if (cveIds.length === 0) {
-    return [{ externalId: vmsaId, ...base }];
+    return [{ externalId: vmsaId, ...base, affectedProducts: affectedProductsFor(undefined) }];
   }
-  return cveIds.map(cveId => ({ externalId: `${vmsaId}/${cveId}`, cveId, ...base }));
+  return cveIds.map(cveId => ({
+    externalId: `${vmsaId}/${cveId}`,
+    cveId,
+    ...base,
+    affectedProducts: affectedProductsFor(cveId),
+  }));
 }
 
+
+/** Raw cell text of one Response Matrix row, as scraped in the browser. */
+export interface MatrixRawRow {
+  product: string;
+  fixedVer: string;
+  affectedVer: string;
+  cveCell: string;
+}
+
+/**
+ * Clean scraped Response Matrix rows into one ProductVersion per (row,
+ * product), keeping each row's Version, Fixed Version and CVE Identifier
+ * together -- see ProductVersion's doc comment for why rows are not merged.
+ *
+ * A product is kept even when the row contributes no parseable fixed version
+ * or affected range -- e.g. a KB-article-only Fixed Version cell -- so it isn't
+ * silently dropped; buildBroadcomAdvisories() turns an empty fixed/affected
+ * into a "no known version" entry. Rows parseResponseMatrixRow() rejects
+ * (no product, blank or "Unaffected" Fixed Version) contribute nothing.
+ */
+export function productVersionsFromRows(rawRows: MatrixRawRow[]): ProductVersion[] {
+  const results: ProductVersion[] = [];
+  for (const raw of rawRows) {
+    const parsed = parseResponseMatrixRow(raw.product, raw.fixedVer);
+    if (!parsed) continue;
+    const affected = parseAffectedVersionCell(raw.affectedVer);
+    const cves = extractCveIds(raw.cveCell);
+    for (const product of parsed.products) {
+      results.push({ product, fixed: parsed.fixedVersions, affected, cves });
+    }
+  }
+  return results;
+}
 
 // ─── Data Fetching ─────────────────────────────────────────────
 
@@ -349,7 +411,7 @@ async function fetchDetailVersions(notificationUrl: string): Promise<{ versions:
     const rawRows = await withPage(notificationUrl, async (page) => {
       await page.waitForSelector('table', { timeout: 20000 });
       return page.evaluate(() => {
-        const rows: Array<{ product: string; fixedVer: string; affectedVer: string }> = [];
+        const rows: MatrixRawRow[] = [];
 
         document.querySelectorAll('table').forEach((table) => {
           // Header may use <th> or <td> — check the first row for "Fixed Version" text
@@ -361,6 +423,7 @@ async function fetchDetailVersions(notificationUrl: string): Promise<{ versions:
           // Exact match, not a substring test — "Fixed Version" also contains
           // the word "Version" and would otherwise match here too.
           const versionIdx = headerCells.findIndex(c => (c.textContent ?? '').trim().toLowerCase() === 'version');
+          const cveIdx = headerCells.findIndex(c => /cve/i.test(c.textContent ?? ''));
 
           // Process all rows except the header
           const tableRows = Array.from(table.querySelectorAll('tr')).slice(1);
@@ -375,7 +438,10 @@ async function fetchDetailVersions(notificationUrl: string): Promise<{ versions:
             const affectedVer = versionIdx !== -1 && cells.length > versionIdx
               ? (cells[versionIdx]?.textContent?.trim() ?? '')
               : '';
-            rows.push({ product, fixedVer, affectedVer });
+            const cveCell = cveIdx !== -1 && cells.length > cveIdx
+              ? (cells[cveIdx]?.textContent?.trim() ?? '')
+              : '';
+            rows.push({ product, fixedVer, affectedVer, cveCell });
           }
         });
 
@@ -383,41 +449,7 @@ async function fetchDetailVersions(notificationUrl: string): Promise<{ versions:
       });
     }, { timeout: 30000 });
 
-    const results: ProductVersion[] = [];
-    const seenFixed = new Set<string>();
-    const seenAffected = new Set<string>();
-    for (const raw of rawRows) {
-      const parsed = parseResponseMatrixRow(raw.product, raw.fixedVer);
-      if (!parsed) continue;
-      const affectedRanges = parseAffectedVersionCell(raw.affectedVer);
-
-      for (const product of parsed.products) {
-        // Register the product even if this row contributes no parseable
-        // fixed version or affected range — e.g. a KB-article-only Fixed
-        // Version cell — so it isn't silently dropped. buildBroadcomAdvisories()
-        // turns an empty fixed/affected into a "no known version" entry.
-        let existing = results.find(r => r.product === product);
-        if (!existing) {
-          existing = { product, fixed: [], affected: [] };
-          results.push(existing);
-        }
-
-        for (const fixedVersion of parsed.fixedVersions) {
-          const key = `${product}|${fixedVersion}`;
-          if (seenFixed.has(key)) continue;
-          seenFixed.add(key);
-          existing.fixed.push(fixedVersion);
-        }
-
-        for (const range of affectedRanges) {
-          const key = `${product}|${JSON.stringify(range)}`;
-          if (seenAffected.has(key)) continue;
-          seenAffected.add(key);
-          existing.affected!.push(range);
-        }
-      }
-    }
-    return { versions: results, failed: false };
+    return { versions: productVersionsFromRows(rawRows), failed: false };
   } catch (err) {
     logger.warn({ notificationUrl, err }, 'Playwright failed for Broadcom advisory detail');
     return { versions: [], failed: true };

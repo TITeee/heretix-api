@@ -29,6 +29,7 @@
 import 'dotenv/config';
 import axios from 'axios';
 import { BroadcomFetcher } from '../worker/broadcom-fetcher.js';
+import { expandProductAliases } from '../config/product-aliases.js';
 import {
   aggregateSweep, printSweepReport, filterBySource, diffSets,
   mapWithConcurrency, indexGenericByProduct, expectedIdsGeneric, collectGenericBoundaryPoints,
@@ -70,7 +71,7 @@ async function runSweep(baseUrl: string, index: ReturnType<typeof indexGenericBy
 
   let done = 0;
   const entries: SweepEntry[] = await mapWithConcurrency(points, CONCURRENCY, async ({ product, version, reasons }) => {
-    const expected = expectedIdsGeneric(product, version, index);
+    const expected = expectedIdsGeneric(product, version, index, undefined, expandProductAliases);
     const allResults = await queryLocalAPI(baseUrl, product, version);
     const actual = filterBySource(allResults, TARGET_SOURCE);
     const { tp, fp, fn } = diffSets(expected, actual);
@@ -125,7 +126,7 @@ async function main() {
   }
 
   const { product, version } = args;
-  const expected = expectedIdsGeneric(product, version, index);
+  const expected = expectedIdsGeneric(product, version, index, undefined, expandProductAliases);
   console.log(`Ground truth for ${product} ${version}: ${expected.size} CVEs should match`);
 
   const allResults = await queryLocalAPI(baseUrl, product, version);
