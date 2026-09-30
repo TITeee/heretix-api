@@ -1082,7 +1082,7 @@ WHERE ecosystem = 'npm'
 
 | フィールド | 優先ソース |
 |---|---|
-| cvssScore / cvssVector / severity | NVD（権威ソース、常に上書き） |
+| cvssScore / cvssVector / severity | NVD に値があれば NVD、無ければ OSV（GHSA の重要度、OSV のベクトルから計算した CVSS）。NVD が未分析（値なし）の更新は既存の値を消さない |
 | summary / publishedAt | NVD 優先、null の場合のみ OSV/Advisory で補完 |
 | isKev / kev* | CISA KEV（独立更新） |
 | epssScore / epssPercentile | FIRST.org EPSS（独立更新） |

@@ -3,13 +3,15 @@ import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
 import { createManyChunked } from '../db/bulk-insert.js';
 import { normalizeVersion } from '../utils/version.js';
+import { cvssFromOsvSeverity } from '../utils/cvss.js';
+import { normalizeSeverity, severityFromCvssScore } from '../utils/severity.js';
 import AdmZip from 'adm-zip';
 import type { Prisma } from '@prisma/client';
 
 /**
  * OSV Schema Types
  */
-interface OSVVulnerability {
+export interface OSVVulnerability {
   id: string;
   modified: string;
   published?: string;
@@ -161,22 +163,25 @@ export async function queryOSVByPackage(
 }
 
 /**
- * OSV severity[].score contains only a CVSS vector string, not a numeric base score.
- * A regex on the vector would match the version prefix (e.g. "3.1" from "CVSS:3.1/..."),
- * not the actual score. Numeric scores must come from NVD or database_specific fields.
+ * Severity, CVSS score and vector for an OSV record.
+ *
+ * severity[].score holds only a CVSS vector, so the score is computed from it
+ * (cvssFromOsvSeverity()). The severity is the database_specific one (GHSA's
+ * rating) normalized to the API's scale -- GHSA's MODERATE is MEDIUM -- and,
+ * when the record has none, the CVSS rating of the computed score.
  */
-function extractCVSSScore(_severity?: Array<{ type: string; score: string }>): number | null {
-  return null;
-}
-
-/**
- * Extract human-readable severity level (CRITICAL/HIGH/MEDIUM/LOW) from OSV data.
- * Prefers database_specific.severity, then derives from CVSS vector type as last resort.
- */
-function extractOSVSeverity(osvData: OSVVulnerability): string | null {
-  const dbSeverity = (osvData.database_specific as Record<string, unknown> | undefined)?.severity;
-  if (typeof dbSeverity === 'string' && dbSeverity) return dbSeverity;
-  return null;
+export function extractOSVSeverityFields(osvData: OSVVulnerability): {
+  severity: string | null;
+  cvssScore: number | null;
+  cvssVector: string | null;
+} {
+  const cvss = cvssFromOsvSeverity(osvData.severity);
+  const dbSeverity = normalizeSeverity((osvData.database_specific as Record<string, unknown> | undefined)?.severity);
+  return {
+    severity: dbSeverity ?? (cvss ? severityFromCvssScore(cvss.score) : null),
+    cvssScore: cvss?.score ?? null,
+    cvssVector: cvss?.vector ?? null,
+  };
 }
 
 /**
@@ -449,8 +454,7 @@ async function upsertMasterFromOSV(
   osvRecord: { id: string; cveId: string | null; osvId: string },
   osvData: OSVVulnerability,
 ): Promise<void> {
-  const cvssScore = extractCVSSScore(osvData.severity);
-  const severity = extractOSVSeverity(osvData);
+  const { severity, cvssScore, cvssVector } = extractOSVSeverityFields(osvData);
   const publishedAt = osvData.published ? new Date(osvData.published) : null;
   const modifiedAt = osvData.modified ? new Date(osvData.modified) : null;
 
@@ -464,9 +468,13 @@ async function upsertMasterFromOSV(
       await tx.vulnerability.update({
         where: { cveId: osvRecord.cveId },
         data: {
-          // Use OSV value only when NVD value is absent
-          severity: existing.severity ?? severity,
-          cvssScore: existing.cvssScore ?? cvssScore,
+          // Use OSV value only when NVD value is absent. An existing severity
+          // that is not a rating at all ("CVSS_V3", from an earlier version
+          // of this importer) counts as absent; GHSA's MODERATE becomes MEDIUM.
+          severity: normalizeSeverity(existing.severity) ?? severity,
+          // Score and vector travel together, so a score never sits next to
+          // a vector it was not computed from.
+          ...(existing.cvssScore === null && cvssScore !== null ? { cvssScore, cvssVector } : {}),
           summary: existing.summary ?? osvData.summary ?? null,
           publishedAt: existing.publishedAt ?? publishedAt,
           modifiedAt: modifiedAt && (!existing.modifiedAt || modifiedAt > existing.modifiedAt)
@@ -480,6 +488,7 @@ async function upsertMasterFromOSV(
           cveId: osvRecord.cveId,
           severity,
           cvssScore,
+          cvssVector,
           summary: osvData.summary ?? null,
           publishedAt,
           modifiedAt,
@@ -495,6 +504,7 @@ async function upsertMasterFromOSV(
         osvId: osvRecord.osvId,
         severity,
         cvssScore,
+        cvssVector,
         summary: osvData.summary ?? null,
         publishedAt,
         modifiedAt,
@@ -502,6 +512,7 @@ async function upsertMasterFromOSV(
       update: {
         severity,
         cvssScore,
+        cvssVector,
         summary: osvData.summary ?? null,
         modifiedAt,
       },
@@ -550,6 +561,8 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
     (osvData.upstream ?? []).find((u: string) => u.startsWith('CVE-')) ??
     null;
 
+  const { severity, cvssScore } = extractOSVSeverityFields(osvData);
+
   try {
     // Save in a transaction
     const result = await prisma.$transaction(async (tx) => {
@@ -569,8 +582,8 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
           ecosystem: osvData.affected?.[0]?.package?.ecosystem,
           rawData: osvData as unknown as Prisma.InputJsonValue,
           packageName: osvData.affected?.[0]?.package?.name,
-          severity: extractOSVSeverity(osvData),
-          cvssScore: extractCVSSScore(osvData.severity),
+          severity,
+          cvssScore,
           summary: osvData.summary,
           publishedAt: osvData.published ? new Date(osvData.published) : null,
           modifiedAt: osvData.modified ? new Date(osvData.modified) : null,
@@ -580,8 +593,8 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
           aliases: osvData.aliases ?? [],
           rawData: osvData as unknown as Prisma.InputJsonValue,
           packageName: osvData.affected?.[0]?.package?.name,
-          severity: extractOSVSeverity(osvData),
-          cvssScore: extractCVSSScore(osvData.severity),
+          severity,
+          cvssScore,
           summary: osvData.summary,
           modifiedAt: osvData.modified ? new Date(osvData.modified) : null,
         },

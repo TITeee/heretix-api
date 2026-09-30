@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vites
 import axios from 'axios';
 import { prisma } from '../db/client.js';
 import { resetDb } from '../test-utils/db.js';
-import { fullDownloadNVD } from './nvd-fetcher.js';
+import { fullDownloadNVD, importNVDData, type NVDCveItem } from './nvd-fetcher.js';
 
 // A non-axios error is not classed as transient, so it surfaces on the first
 // attempt instead of going through the multi-second retry backoff.
@@ -93,5 +93,50 @@ describe('fullDownloadNVD — failure handling', () => {
 
     await expect(fullDownloadNVD('does-not-exist')).rejects.toThrow(/job not found/);
     expect(get).not.toHaveBeenCalled();
+  });
+});
+
+describe('importNVDData — severity/CVSS priority merge', () => {
+  const CVE = 'CVE-2026-5151';
+  const item = (metrics?: NVDCveItem['metrics']): NVDCveItem => ({
+    id: CVE,
+    published: '2026-01-01T00:00:00.000',
+    lastModified: '2026-01-02T00:00:00.000',
+    descriptions: [{ lang: 'en', value: 'Test CVE' }],
+    metrics,
+    configurations: [],
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+    // What the OSV importer leaves for a CVE NVD has not analyzed yet.
+    await prisma.vulnerability.create({
+      data: { cveId: CVE, severity: 'MEDIUM', cvssScore: 5.4, cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N' },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('keeps the lower-priority rating when NVD has none yet', async () => {
+    await importNVDData(item());
+
+    const master = await prisma.vulnerability.findUnique({ where: { cveId: CVE } });
+    expect(master).toMatchObject({ severity: 'MEDIUM', cvssScore: 5.4 });
+  });
+
+  it('replaces it with NVD\'s rating once NVD has one', async () => {
+    const vector = 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H';
+    await importNVDData(item({
+      cvssMetricV31: [{
+        source: 'nvd@nist.gov',
+        type: 'Primary',
+        cvssData: { version: '3.1', vectorString: vector, baseScore: 9.8, baseSeverity: 'CRITICAL' },
+      }],
+    } as NVDCveItem['metrics']));
+
+    const master = await prisma.vulnerability.findUnique({ where: { cveId: CVE } });
+    expect(master).toMatchObject({ severity: 'CRITICAL', cvssScore: 9.8, cvssVector: vector });
   });
 });
