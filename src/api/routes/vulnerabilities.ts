@@ -207,7 +207,7 @@ async function searchOSV(
   return filteredRows.map(r => {
     const v = r.vulnerability;
     if (v.masterVuln) {
-      return { ...masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null, v.osvId), distroPriority: v.distroPriority };
+      return { ...masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null, v.osvId), distroPriority: r.distroPriority ?? v.distroPriority };
     }
     // Fallback before backfill
     return {
@@ -225,7 +225,7 @@ async function searchOSV(
       epssScore: null,
       epssPercentile: null,
       fixedVersion: r.fixedVersion ?? null,
-      distroPriority: v.distroPriority,
+      distroPriority: r.distroPriority ?? v.distroPriority,
       aliases: buildAliases({ cveId: v.cveId }, v.osvId),
     };
   });
@@ -532,6 +532,7 @@ type RpmAdvisoryRow = {
     cvssVector: string | null;
     summary: string | null;
     publishedAt: Date | null;
+    distroPriority: string | null;
     masterVuln: Parameters<typeof masterToResult>[0] | null;
   };
 };
@@ -540,7 +541,7 @@ function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityR
   const adv = r.advisory;
   const fixedVersion = r.versionEnd ?? r.versionFixed ?? null;
   if (adv.masterVuln) {
-    return masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId);
+    return { ...masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority };
   }
   return {
     id: adv.id,
@@ -557,7 +558,7 @@ function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityR
     epssScore: null,
     epssPercentile: null,
     fixedVersion,
-    distroPriority: null,
+    distroPriority: adv.distroPriority,
     aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
   };
 }
@@ -609,6 +610,7 @@ async function buildRpmProductIndex(key: string, product: string, vendor: string
           cvssVector: true,
           summary: true,
           publishedAt: true,
+          distroPriority: true,
           masterVuln: { select: masterSelect },
         },
       },

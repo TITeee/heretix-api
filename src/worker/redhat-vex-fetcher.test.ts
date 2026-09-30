@@ -206,6 +206,15 @@ describe('parseVexVulnerability', () => {
     });
   });
 
+  it('reads Red Hat\'s own impact rating from the impact threat, separately from the CVSS severity', () => {
+    const vuln = {
+      cve: 'CVE-2026-42250',
+      scores: [{ cvss_v3: { baseScore: 7.5, baseSeverity: 'HIGH', vectorString: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H' } }],
+      threats: [{ category: 'exploit_status', details: 'none' }, { category: 'impact', details: 'Moderate' }],
+    };
+    expect(parseVexVulnerability(vuln)).toMatchObject({ severity: 'HIGH', impact: 'moderate' });
+  });
+
   it('returns null for a non-CVE or missing cve field', () => {
     expect(parseVexVulnerability({ cve: 'not-a-cve' })).toBeNull();
     expect(parseVexVulnerability({})).toBeNull();

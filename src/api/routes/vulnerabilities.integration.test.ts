@@ -268,6 +268,38 @@ describe('GET /api/v1/vulnerabilities/search — distroPriority', () => {
     expect(npm.body.results).toHaveLength(1);
     expect(npm.body.results[0]).toMatchObject({ severity: 'HIGH', distroPriority: null });
   });
+
+  it('returns Debian\'s urgency for the queried release, which can differ between releases', async () => {
+    await importOSVData({
+      id: 'DEBIAN-CVE-2026-6262',
+      modified: '2026-01-01T00:00:00Z',
+      upstream: ['CVE-2026-6262'],
+      affected: [
+        { package: { ecosystem: 'Debian:12', name: 'demo-src' }, versions: ['1.0-1'], ecosystem_specific: { urgency: 'unimportant' } },
+        { package: { ecosystem: 'Debian:13', name: 'demo-src' }, versions: ['1.0-1'], ecosystem_specific: { urgency: 'low' } },
+      ],
+    });
+
+    const bookworm = await search(app, 'package=demo-src&version=1.0-1&ecosystem=Debian:12');
+    expect(bookworm.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6262', distroPriority: 'unimportant' });
+    const trixie = await search(app, 'package=demo-src&version=1.0-1&ecosystem=Debian:13');
+    expect(trixie.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6262', distroPriority: 'low' });
+  });
+
+  it('returns Red Hat\'s per-CVE impact for an RHEL match', async () => {
+    await importAdvisoryData({
+      externalId: 'RHSA-2026:0001/CVE-2026-6363',
+      cveId: 'CVE-2026-6363',
+      severity: 'HIGH', // the whole RHSA's rating
+      distroPriority: 'low', // this CVE's own impact
+      rawData: {},
+      affectedProducts: [{ vendor: 'red-hat-9', product: 'demo-rpm', versionEnd: '0:1.0-2.el9' }],
+    }, 'red-hat');
+
+    const rhel = await search(app, 'package=demo-rpm&version=0:1.0-1.el9&ecosystem=Red%20Hat:9');
+    expect(rhel.body.results).toHaveLength(1);
+    expect(rhel.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6363', distroPriority: 'low' });
+  });
 });
 
 describe('GET /api/v1/vulnerabilities/:id/cpe', () => {

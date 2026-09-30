@@ -111,6 +111,14 @@ calls this automatically on every container start, right after `prisma migrate
 deploy`, so a newly added backfill reaches production on the next deploy without a
 manual step to remember. Run it locally too after pulling changes that add one.
 
+Because it runs before the server starts, the API does not answer until every
+pending backfill has finished. Most take seconds, but a few read the stored OSV
+JSON of every record and take minutes on a full database — measured on ~430k OSV
+records: `migrate-backfill-distro-priority` ~8.5 min, `migrate-normalize-osv-severity`
+~4 min. Expect the first start after deploying such a script to take that much
+longer (only the first: once applied, a script is recorded and skipped), and allow
+for it in any orchestrator start-up timeout or health check.
+
 Individual scripts remain runnable on their own (`pnpm migrate:job-config-defaults`,
 etc.) for testing a specific one or re-running after investigating a partial
 failure.
@@ -274,7 +282,15 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 
 > `fixedVersion` — the version that resolves this finding, when the matching source states one; otherwise `null`.
 
-> `distroPriority` — the distribution's own rating of this CVE for the matched package, verbatim, when the match came from a record that carries one: today Ubuntu's priority (`negligible` / `low` / `medium` / `high` / `critical`); otherwise `null`. Unlike `severity`, which is the same CVE-wide rating (NVD first) for every ecosystem, this can differ per distro — e.g. NVD `HIGH` but Ubuntu `negligible` — which is what triaging that distro's packages needs.
+> `distroPriority` — the distribution's own rating of this CVE for the matched package, verbatim, when the match came from a source that carries one; otherwise `null`. Unlike `severity`, which is the same CVE-wide rating (NVD first) for every ecosystem, this can differ per distro — e.g. NVD `HIGH` but Ubuntu `negligible` — which is what triaging that distro's packages needs.
+>
+> | Distro | Values | Source |
+> |---|---|---|
+> | Ubuntu | `negligible` / `low` / `medium` / `high` / `critical` | Ubuntu priority (OSV) |
+> | Debian | `unimportant` / `low` / `medium` / `high` / `end-of-life` / `not yet assigned` — per release | Debian security tracker urgency (OSV) |
+> | RHEL | `low` / `moderate` / `important` / `critical` | Red Hat's per-CVE impact (OVAL; VEX for unfixed CVEs) |
+>
+> Alpine, AlmaLinux, Rocky Linux and Oracle Linux results carry `null`: the sources imported for them either have no distro rating, or only one per advisory rather than per CVE (Oracle Linux ELSA).
 
 > `aliases` — every identifier this finding is reachable by, including `externalId` itself. A vendor advisory or OSV record assigned a CVE after first publication keeps its own original id here even though `externalId` switches to the CVE.
 

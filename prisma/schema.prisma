@@ -83,10 +83,11 @@ model OSVVulnerability {
   packageName   String?
   severity      String?
   cvssScore     Float?
-  // The distro's own rating of this CVE, verbatim (today Ubuntu's priority,
-  // from severity[] type "Ubuntu": negligible/low/medium/high/critical).
-  // Returned per search result as distroPriority, never merged into the
-  // CVE-wide Vulnerability.severity -- see VulnerabilityResult.distroPriority.
+  // The distro's own rating of this CVE when it is one value for the whole
+  // record -- Ubuntu's priority (extractRecordDistroPriority()). Kept here
+  // rather than copied onto each OSVAffectedPackage row: an Ubuntu record has
+  // ~45 of them (2.4M rows in total). Per-release ratings (Debian) are on
+  // OSVAffectedPackage.distroPriority.
   distroPriority String?
   summary       String?
 
@@ -137,6 +138,14 @@ model OSVAffectedPackage {
 
   // OSV rawData の versions フィールド（distro ecosystem 向け exact match 検索用）
   affectedVersions String[]
+
+  // The distro's own rating of this CVE for this (release, package), verbatim,
+  // when the distro rates per release -- Debian's urgency
+  // (extractDistroPriority()). A record-wide rating (Ubuntu) lives on
+  // OSVVulnerability.distroPriority instead; search returns this one first.
+  // Never merged into the CVE-wide Vulnerability.severity -- see
+  // VulnerabilityResult.distroPriority.
+  distroPriority String?
 
   createdAt       DateTime @default(now())
 
@@ -266,6 +275,12 @@ model AdvisoryVulnerability {
   cvssVector  String?
   summary     String?
   description String?
+
+  // The distro's own rating of this CVE, verbatim -- Red Hat's per-CVE impact
+  // ("critical" / "important" / "moderate" / "low"), unlike `severity`, which
+  // for an RHSA is the whole advisory's rating. Returned per search result as
+  // distroPriority -- see VulnerabilityResult.distroPriority.
+  distroPriority String?
 
   // アドバイザリ固有フィールド
   url         String?                   // 元のアドバイザリURL

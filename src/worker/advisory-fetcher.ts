@@ -18,6 +18,9 @@ export interface NormalizedAdvisory {
   workaround?: string;             // Mitigation
   solution?: string;               // Fix details
   publishedAt?: Date;
+  // The distro's own rating of this CVE, verbatim (Red Hat's per-CVE impact).
+  // See VulnerabilityResult.distroPriority.
+  distroPriority?: string;
   affectedProducts: Array<{
     vendor: string;                // "fortinet", "f5", "cisco", etc.
     product: string;               // "FortiOS", "BIG-IP", etc.
@@ -155,6 +158,7 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
         severity: adv.severity ?? null,
         cvssScore: adv.cvssScore ?? null,
         cvssVector: adv.cvssVector ?? null,
+        distroPriority: adv.distroPriority ?? null,
         summary: adv.summary ?? null,
         description: adv.description ?? null,
         url: adv.url ?? null,
@@ -169,6 +173,7 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
         severity: adv.severity ?? null,
         cvssScore: adv.cvssScore ?? null,
         cvssVector: adv.cvssVector ?? null,
+        distroPriority: adv.distroPriority ?? null,
         summary: adv.summary ?? null,
         description: adv.description ?? null,
         url: adv.url ?? null,
