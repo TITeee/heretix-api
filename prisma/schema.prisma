@@ -83,6 +83,11 @@ model OSVVulnerability {
   packageName   String?
   severity      String?
   cvssScore     Float?
+  // The distro's own rating of this CVE, verbatim (today Ubuntu's priority,
+  // from severity[] type "Ubuntu": negligible/low/medium/high/critical).
+  // Returned per search result as distroPriority, never merged into the
+  // CVE-wide Vulnerability.severity -- see VulnerabilityResult.distroPriority.
+  distroPriority String?
   summary       String?
 
   // タイムスタンプ

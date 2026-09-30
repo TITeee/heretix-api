@@ -255,6 +255,7 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
       "epssScore": 0.97,
       "epssPercentile": 0.998,
       "fixedVersion": "4.17.21",
+      "distroPriority": null,
       "aliases": ["CVE-2019-10744"]
     }
   ]
@@ -272,6 +273,8 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 > `epssScore` — probability of exploitation within 30 days (0–1); `epssPercentile` — rank among all CVEs.
 
 > `fixedVersion` — the version that resolves this finding, when the matching source states one; otherwise `null`.
+
+> `distroPriority` — the distribution's own rating of this CVE for the matched package, verbatim, when the match came from a record that carries one: today Ubuntu's priority (`negligible` / `low` / `medium` / `high` / `critical`); otherwise `null`. Unlike `severity`, which is the same CVE-wide rating (NVD first) for every ecosystem, this can differ per distro — e.g. NVD `HIGH` but Ubuntu `negligible` — which is what triaging that distro's packages needs.
 
 > `aliases` — every identifier this finding is reachable by, including `externalId` itself. A vendor advisory or OSV record assigned a CVE after first publication keeps its own original id here even though `externalId` switches to the CVE.
 

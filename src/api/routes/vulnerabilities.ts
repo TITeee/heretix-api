@@ -105,6 +105,7 @@ function masterToResult(
     epssScore: master.epssScore,
     epssPercentile: master.epssPercentile,
     fixedVersion,
+    distroPriority: null,
     aliases: buildAliases(master, sourceOwnId),
   };
 }
@@ -189,6 +190,7 @@ async function searchOSV(
           cveId: true,
           severity: true,
           cvssScore: true,
+          distroPriority: true,
           summary: true,
           publishedAt: true,
         },
@@ -205,7 +207,7 @@ async function searchOSV(
   return filteredRows.map(r => {
     const v = r.vulnerability;
     if (v.masterVuln) {
-      return masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null, v.osvId);
+      return { ...masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null, v.osvId), distroPriority: v.distroPriority };
     }
     // Fallback before backfill
     return {
@@ -223,6 +225,7 @@ async function searchOSV(
       epssScore: null,
       epssPercentile: null,
       fixedVersion: r.fixedVersion ?? null,
+      distroPriority: v.distroPriority,
       aliases: buildAliases({ cveId: v.cveId }, v.osvId),
     };
   });
@@ -289,6 +292,7 @@ async function searchNVD(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      distroPriority: null,
       aliases: buildAliases({ cveId: v.cveId }),
     };
   });
@@ -405,6 +409,7 @@ async function searchAdvisory(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      distroPriority: null,
       aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
     };
   });
@@ -552,6 +557,7 @@ function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityR
     epssScore: null,
     epssPercentile: null,
     fixedVersion,
+    distroPriority: null,
     aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
   };
 }
@@ -708,6 +714,7 @@ async function searchByCPE(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      distroPriority: null,
       aliases: buildAliases({ cveId: v.cveId }),
     };
   });

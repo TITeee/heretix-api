@@ -4,6 +4,7 @@ import { prisma } from '../../db/client.js';
 import { resetDb } from '../../test-utils/db.js';
 import { createServer } from '../server.js';
 import { importAdvisoryData } from '../../worker/advisory-fetcher.js';
+import { importOSVData } from '../../worker/osv-fetcher.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
 
@@ -219,6 +220,53 @@ describe('GET /api/v1/vulnerabilities/search', () => {
 
     expect(await hits('package=example-product&version=2.0.0-beta')).toEqual(['CVE-2026-7002']);
     expect(await hits('package=example-product&version=2.0.0')).toEqual([]);
+  });
+});
+
+describe('GET /api/v1/vulnerabilities/search — distroPriority', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  it('returns Ubuntu\'s own priority next to the CVE-wide severity, only for the Ubuntu match', async () => {
+    // NVD rates the CVE HIGH; Ubuntu rates it negligible for its package.
+    await prisma.vulnerability.create({ data: { cveId: 'CVE-2026-6161', severity: 'HIGH', cvssScore: 7.5 } });
+    await importOSVData({
+      id: 'UBUNTU-CVE-2026-6161',
+      modified: '2026-01-01T00:00:00Z',
+      aliases: [],
+      upstream: ['CVE-2026-6161'],
+      severity: [
+        { type: 'CVSS_V3', score: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H' },
+        { type: 'Ubuntu', score: 'negligible' },
+      ],
+      affected: [{ package: { ecosystem: 'Ubuntu:24.04:LTS', name: 'demo-pkg' }, versions: ['1.0-1'] }],
+    });
+    await importOSVData({
+      id: 'GHSA-demo-0001',
+      modified: '2026-01-01T00:00:00Z',
+      aliases: ['CVE-2026-6161'],
+      affected: [{ package: { ecosystem: 'npm', name: 'demo-pkg' }, versions: ['1.0.0'] }],
+    });
+
+    const ubuntu = await search(app, 'package=demo-pkg&version=1.0-1&ecosystem=Ubuntu:24.04:LTS');
+    expect(ubuntu.body.results).toHaveLength(1);
+    expect(ubuntu.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6161', severity: 'HIGH', distroPriority: 'negligible' });
+
+    const npm = await search(app, 'package=demo-pkg&version=1.0.0&ecosystem=npm');
+    expect(npm.body.results).toHaveLength(1);
+    expect(npm.body.results[0]).toMatchObject({ severity: 'HIGH', distroPriority: null });
   });
 });
 

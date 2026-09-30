@@ -162,6 +162,22 @@ export async function queryOSVByPackage(
   }
 }
 
+// Ubuntu's priority scale, as OSV's Ubuntu records carry it in a severity[]
+// entry of type "Ubuntu".
+const UBUNTU_PRIORITIES = new Set(['negligible', 'low', 'medium', 'high', 'critical']);
+
+/**
+ * The distro's own rating carried by an OSV record, or null -- today Ubuntu's
+ * priority. Kept verbatim (not mapped onto CRITICAL..LOW): "negligible" has no
+ * CVSS counterpart, and it is stored per source record, never merged into the
+ * CVE-wide Vulnerability.severity -- see VulnerabilityResult.distroPriority.
+ */
+export function extractDistroPriority(osvData: OSVVulnerability): string | null {
+  const entry = osvData.severity?.find(s => s.type === 'Ubuntu');
+  const priority = typeof entry?.score === 'string' ? entry.score.trim().toLowerCase() : '';
+  return UBUNTU_PRIORITIES.has(priority) ? priority : null;
+}
+
 /**
  * Severity, CVSS score and vector for an OSV record.
  *
@@ -562,6 +578,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
     null;
 
   const { severity, cvssScore } = extractOSVSeverityFields(osvData);
+  const distroPriority = extractDistroPriority(osvData);
 
   try {
     // Save in a transaction
@@ -584,6 +601,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
           packageName: osvData.affected?.[0]?.package?.name,
           severity,
           cvssScore,
+          distroPriority,
           summary: osvData.summary,
           publishedAt: osvData.published ? new Date(osvData.published) : null,
           modifiedAt: osvData.modified ? new Date(osvData.modified) : null,
@@ -595,6 +613,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
           packageName: osvData.affected?.[0]?.package?.name,
           severity,
           cvssScore,
+          distroPriority,
           summary: osvData.summary,
           modifiedAt: osvData.modified ? new Date(osvData.modified) : null,
         },
