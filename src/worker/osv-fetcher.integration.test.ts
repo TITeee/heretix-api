@@ -121,3 +121,49 @@ describe('importOSVData — withdrawn records', () => {
     expect(after).toHaveLength(0);
   });
 });
+
+describe('importOSVData — severity and CVSS', () => {
+  const V3 = 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N'; // 5.4
+  const V4 = 'CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N'; // 9.3
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('stores GHSA\'s MODERATE as MEDIUM and computes the CVSS score from the vector', async () => {
+    // GHSA-6ccv-8fgf-cjpw (drupal/core) shape: a GHSA rating plus a vector, no CVE.
+    await importOSVData(makeOsv({
+      database_specific: { severity: 'MODERATE' },
+      severity: [{ type: 'CVSS_V3', score: V3 }],
+    }));
+
+    const master = await prisma.vulnerability.findUnique({ where: { osvId: 'GHSA-test-0001' } });
+    expect(master).toMatchObject({ severity: 'MEDIUM', cvssScore: 5.4, cvssVector: V3 });
+    const source = await prisma.oSVVulnerability.findUnique({ where: { osvId: 'GHSA-test-0001' } });
+    expect(source).toMatchObject({ severity: 'MEDIUM', cvssScore: 5.4 });
+  });
+
+  it('derives the severity from a CVSS 4.0 score when the record has no rating of its own', async () => {
+    await importOSVData(makeOsv({ severity: [{ type: 'CVSS_V4', score: V4 }] }));
+
+    const master = await prisma.vulnerability.findUnique({ where: { osvId: 'GHSA-test-0001' } });
+    expect(master).toMatchObject({ severity: 'CRITICAL', cvssScore: 9.3, cvssVector: V4 });
+  });
+
+  it('replaces a non-rating severity left by an earlier importer, but keeps an existing score', async () => {
+    await prisma.vulnerability.create({ data: { cveId: 'CVE-2026-4444', severity: 'CVSS_V3', cvssScore: 7.5 } });
+
+    await importOSVData(makeOsv({
+      aliases: ['CVE-2026-4444'],
+      database_specific: { severity: 'HIGH' },
+      severity: [{ type: 'CVSS_V3', score: V3 }],
+    }));
+
+    const master = await prisma.vulnerability.findUnique({ where: { cveId: 'CVE-2026-4444' } });
+    expect(master).toMatchObject({ severity: 'HIGH', cvssScore: 7.5 });
+  });
+});

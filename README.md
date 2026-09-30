@@ -195,7 +195,7 @@ GET /api/v1/vulnerabilities/search
 | `package` | ✅ | Package or product name (e.g. `lodash`, `FortiOS`) |
 | `version` | | Version string (e.g. `4.17.20`, `7.4.3`). Omit to match the package/ecosystem alone — every vulnerability comes back with `approximateMatch: true` |
 | `ecosystem` | | Ecosystem or vendor (e.g. `npm`, `PyPI`, `Go`, `composer`, `fortinet`) |
-| `severity` | | Filter to one or more severities (e.g. `severity=CRITICAL` or `severity=CRITICAL&severity=HIGH`). Case-sensitive exact match against the `severity` value a result carries — round-tripping a value from a prior response always works. A result with no severity data never matches |
+| `severity` | | Filter to one or more severities (e.g. `severity=CRITICAL` or `severity=CRITICAL&severity=HIGH`). Case-sensitive exact match against the `severity` value a result carries — round-tripping a value from a prior response always works. Values are `CRITICAL` / `HIGH` / `MEDIUM` / `LOW`, plus `NONE` (CVSS 0.0) and `INFORMATIONAL` (Splunk); GHSA's `MODERATE` is stored as `MEDIUM`. A result with no severity data never matches |
 | `limit` | | Max results (default: 500, max: 500) |
 | `offset` | | Pagination offset (default: 0) |
 
@@ -1030,7 +1030,7 @@ A row with no range data at all (no `versionStart`/`versionEnd`/`versionFixed`/`
 
 | Field | Authoritative source |
 |---|---|
-| `cvssScore` / `cvssVector` / `severity` | NVD (always overwrites) |
+| `cvssScore` / `cvssVector` / `severity` | NVD whenever NVD has a rating; otherwise OSV (GHSA rating, CVSS computed from the OSV vector). An NVD update with no rating yet leaves the existing value in place |
 | `summary` / `publishedAt` | NVD preferred; OSV/Advisory used only when NVD is null |
 | `isKev` / `kev*` | CISA KEV (updated independently) |
 | `epssScore` / `epssPercentile` | FIRST.org EPSS (updated independently) |

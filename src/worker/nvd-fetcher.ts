@@ -516,7 +516,8 @@ export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; 
 
 /**
  * Upsert into master table and update NVDVulnerability.masterVulnId
- * NVD is the authoritative CVSS source, so always overwrite
+ * NVD's severity/CVSS take precedence over every other source's whenever NVD
+ * has one; with none (not yet analyzed) the existing value is kept
  */
 async function upsertMasterFromNVD(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
@@ -539,10 +540,13 @@ async function upsertMasterFromNVD(
       modifiedAt: cveItem.lastModified ? new Date(cveItem.lastModified) : null,
     },
     update: {
-      // Always overwrite since NVD is the authoritative source
-      severity,
-      cvssScore,
-      cvssVector,
+      // Severity/CVSS are a priority merge (NVD > lower-priority sources such
+      // as OSV/GHSA), not "NVD always wins": NVD's rating replaces whatever is
+      // there, but a CVE NVD has not analyzed yet keeps the value another
+      // source filled in. Overwriting with null made the stored rating depend
+      // on which importer happened to run last -- the 2-hourly NVD delta
+      // erased OSV's rating, the next OSV run restored it.
+      ...(severity !== null || cvssScore !== null ? { severity, cvssScore, cvssVector } : {}),
       summary,
       modifiedAt: cveItem.lastModified ? new Date(cveItem.lastModified) : null,
     },

@@ -70,7 +70,7 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
 /**
  * Keep only results whose severity is in `severities`. Exact, case-sensitive
  * match against the value the API itself returns (CRITICAL/HIGH/MEDIUM/LOW,
- * plus source-specific scales like GHSA's MODERATE) -- round-tripping a
+ * plus NONE and INFORMATIONAL -- see utils/severity.ts) -- round-tripping a
  * value straight from a prior response is always guaranteed to work, the
  * same contract `ecosystem` already has (README: "case-sensitive"). A result
  * with no severity at all never matches, since there's nothing to compare.
