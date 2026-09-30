@@ -3,6 +3,7 @@ import axios from 'axios';
 import tarStream from 'tar-stream';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
+import { parseRedHatImpact } from './redhat-fetcher.js';
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -129,6 +130,8 @@ export interface VexCveInfo {
   severity?: string;
   cvssScore?: number;
   cvssVector?: string;
+  /** Red Hat's own impact rating for the CVE, from threats[category=impact]. */
+  impact?: string;
 }
 
 export function parseVexVulnerability(vuln: unknown): VexCveInfo | null {
@@ -138,6 +141,7 @@ export function parseVexVulnerability(vuln: unknown): VexCveInfo | null {
   if (typeof cve !== 'string' || !cve.startsWith('CVE-')) return null;
 
   const scores = Array.isArray(v['scores']) ? (v['scores'] as Record<string, unknown>[]) : [];
+  const threats = Array.isArray(v['threats']) ? (v['threats'] as Record<string, unknown>[]) : [];
   const cvss3 = scores.map(s => s['cvss_v3']).find((c): c is Record<string, unknown> => !!c && typeof c === 'object');
 
   return {
@@ -146,6 +150,13 @@ export function parseVexVulnerability(vuln: unknown): VexCveInfo | null {
     severity: mapSeverity(cvss3?.['baseSeverity']),
     cvssScore: typeof cvss3?.['baseScore'] === 'number' ? (cvss3['baseScore'] as number) : undefined,
     cvssVector: typeof cvss3?.['vectorString'] === 'string' ? (cvss3['vectorString'] as string) : undefined,
+    // `severity` above is the CVSS rating; Red Hat's own judgement of the CVE
+    // (which can differ -- a CVSS 7.5 Red Hat rates "moderate") is the
+    // impact threat. Kept verbatim as the distro priority.
+    impact: threats
+      .filter(t => t['category'] === 'impact')
+      .map(t => parseRedHatImpact(t['details']))
+      .find((i): i is string => i !== undefined),
   };
 }
 
@@ -202,6 +213,7 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
     severity: info.severity,
     cvssScore: info.cvssScore,
     cvssVector: info.cvssVector,
+    distroPriority: info.impact,
     affectedProducts: components.map(c => ({
       vendor: `red-hat-${c.major}`,
       product: c.pkg,

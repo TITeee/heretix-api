@@ -51,6 +51,17 @@ describe('parseCveElement', () => {
     });
   });
 
+  it('reads Red Hat\'s per-CVE impact rating, lowercased', () => {
+    // Real RHBA-2024:1137 element: the CVE is "moderate" whatever the RHSA's own severity says.
+    expect(parseCveElement({
+      '#text': 'CVE-2023-45803',
+      '@_cvss3': '4.2/CVSS:3.1/AV:A/AC:H/PR:H/UI:N/S:U/C:H/I:N/A:N',
+      '@_impact': 'moderate',
+    })?.impact).toBe('moderate');
+    expect(parseCveElement({ '#text': 'CVE-2026-1234', '@_impact': 'Important' })?.impact).toBe('important');
+    expect(parseCveElement({ '#text': 'CVE-2026-1234', '@_impact': 'unknown' })?.impact).toBeUndefined();
+  });
+
   it('parses an object without CVSS3', () => {
     expect(parseCveElement({ '#text': 'CVE-2026-1234' })).toEqual({
       cveId: 'CVE-2026-1234',

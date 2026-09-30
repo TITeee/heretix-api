@@ -37,12 +37,22 @@ function makeResult(overrides: Partial<VulnerabilityResult>): VulnerabilityResul
     epssScore: null,
     epssPercentile: null,
     fixedVersion: null,
+    distroPriority: null,
     aliases: ['CVE-2026-1234'],
     ...overrides,
   };
 }
 
 describe('dedup', () => {
+  it('keeps the distro priority from whichever source carries one', () => {
+    const merged = dedup([
+      makeResult({ id: 'v1', sources: ['nvd'] }),
+      makeResult({ id: 'v1', sources: ['osv'], distroPriority: 'negligible' }),
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].distroPriority).toBe('negligible');
+  });
+
   it('merges sources for items sharing the same master id', () => {
     const items = [
       makeResult({ id: 'v1', sources: ['nvd'] }),

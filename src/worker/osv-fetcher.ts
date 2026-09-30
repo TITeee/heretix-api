@@ -40,6 +40,8 @@ export interface OSVVulnerability {
       }>;
     }>;
     versions?: string[];
+    // Debian: { urgency: "unimportant" | "low" | ... } per (release, package).
+    ecosystem_specific?: Record<string, unknown>;
   }>;
   references?: Array<{
     type: string;
@@ -160,6 +162,44 @@ export async function queryOSVByPackage(
     logger.error({ error, ecosystem, packageName }, 'Failed to query OSV');
     throw error;
   }
+}
+
+// Ubuntu's priority scale, as OSV's Ubuntu records carry it in a severity[]
+// entry of type "Ubuntu" -- one value for the whole record.
+const UBUNTU_PRIORITIES = new Set(['negligible', 'low', 'medium', 'high', 'critical']);
+
+// Debian security tracker's urgency, as OSV's Debian records carry it in each
+// affected entry's ecosystem_specific -- one value per (release, package):
+// 3,202 of 62,202 Debian records rate the same CVE differently per release.
+// "not yet assigned" (not triaged yet) and "end-of-life" (the package is no
+// longer supported in that release) are kept too: both are the tracker's own
+// statement, and a consumer can decide what to do with them.
+const DEBIAN_URGENCIES = new Set(['unimportant', 'low', 'medium', 'high', 'end-of-life', 'not yet assigned']);
+
+/**
+ * The distro's own rating of this CVE when it is one value for the whole
+ * record -- Ubuntu's priority -- verbatim, or null. Stored on OSVVulnerability.
+ *
+ * Distro ratings are kept verbatim (not mapped onto CRITICAL..LOW) --
+ * "negligible" / "unimportant" have no CVSS counterpart -- and never merged
+ * into the CVE-wide Vulnerability.severity. See VulnerabilityResult.distroPriority.
+ */
+export function extractRecordDistroPriority(osvData: OSVVulnerability): string | null {
+  const entry = osvData.severity?.find(s => s.type === 'Ubuntu');
+  const priority = typeof entry?.score === 'string' ? entry.score.trim().toLowerCase() : '';
+  return UBUNTU_PRIORITIES.has(priority) ? priority : null;
+}
+
+/**
+ * The distro's own rating of this CVE for one affected entry, when the distro
+ * rates per (release, package) -- Debian's urgency -- verbatim, or null.
+ * Stored on each OSVAffectedPackage row that entry produces.
+ */
+export function extractDistroPriority(affected: NonNullable<OSVVulnerability['affected']>[number]): string | null {
+  if (!(affected.package?.ecosystem ?? '').startsWith('Debian')) return null;
+  const urgency = affected.ecosystem_specific?.urgency;
+  const value = typeof urgency === 'string' ? urgency.trim().toLowerCase() : '';
+  return DEBIAN_URGENCIES.has(value) ? value : null;
 }
 
 /**
@@ -562,6 +602,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
     null;
 
   const { severity, cvssScore } = extractOSVSeverityFields(osvData);
+  const recordDistroPriority = extractRecordDistroPriority(osvData);
 
   try {
     // Save in a transaction
@@ -584,6 +625,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
           packageName: osvData.affected?.[0]?.package?.name,
           severity,
           cvssScore,
+          distroPriority: recordDistroPriority,
           summary: osvData.summary,
           publishedAt: osvData.published ? new Date(osvData.published) : null,
           modifiedAt: osvData.modified ? new Date(osvData.modified) : null,
@@ -595,6 +637,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
           packageName: osvData.affected?.[0]?.package?.name,
           severity,
           cvssScore,
+          distroPriority: recordDistroPriority,
           summary: osvData.summary,
           modifiedAt: osvData.modified ? new Date(osvData.modified) : null,
         },
@@ -638,6 +681,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
 
           // affected.versions: used for exact-match lookups in distro ecosystems
           const affectedVersions: string[] = affected.versions ?? [];
+          const distroPriority = extractDistroPriority(affected);
 
           // Extract version ranges
           if (affected.ranges) {
@@ -700,6 +744,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
                   fixedInt,
                   lastAffectedInt,
                   affectedVersions,
+                  distroPriority,
                 });
               };
 
@@ -733,6 +778,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
               packageName,
               versionType: 'versions',
               affectedVersions,
+              distroPriority,
             });
           }
         }

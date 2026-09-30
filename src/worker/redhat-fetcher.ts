@@ -50,6 +50,22 @@ export interface CveInfo {
   cveId: string;
   cvssScore?: number;
   cvssVector?: string;
+  /** Red Hat's own rating of this CVE ("critical" | "important" | "moderate" | "low"). */
+  impact?: string;
+}
+
+const RED_HAT_IMPACTS = new Set(['critical', 'important', 'moderate', 'low']);
+
+/**
+ * Red Hat's per-CVE impact rating from a `<cve impact="important">` element,
+ * lowercased, or undefined. Distinct from the definition's own
+ * `<severity>`, which is the whole RHSA's rating -- the highest of every CVE
+ * it bundles -- so a "low" CVE shipped in an "important" RHSA reads as
+ * important there and low here.
+ */
+export function parseRedHatImpact(raw: unknown): string | undefined {
+  const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return RED_HAT_IMPACTS.has(value) ? value : undefined;
 }
 
 export function parseCveElement(cve: unknown): CveInfo | null {
@@ -77,7 +93,7 @@ export function parseCveElement(cve: unknown): CveInfo | null {
       }
     }
 
-    return { cveId, cvssScore, cvssVector };
+    return { cveId, cvssScore, cvssVector, impact: parseRedHatImpact(obj['@_impact']) };
   }
   return null;
 }
@@ -317,6 +333,7 @@ export class RedHatFetcher implements AdvisoryFetcher {
             cveId: cve.cveId,
             cvssScore: cve.cvssScore,
             cvssVector: cve.cvssVector,
+            distroPriority: cve.impact,
             ...baseFields,
           });
         }

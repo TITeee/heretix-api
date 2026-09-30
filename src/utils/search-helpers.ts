@@ -21,6 +21,18 @@ export type VulnerabilityResult = {
   epssPercentile: number | null;
   fixedVersion: string | null;
   /**
+   * The distribution's own rating of this CVE for the matched package, when
+   * the match came from a distro record that carries one -- today Ubuntu's
+   * priority ("negligible" / "low" / "medium" / "high" / "critical"), verbatim.
+   *
+   * Deliberately separate from `severity`: severity is the CVE-wide rating
+   * (NVD first), the same for every ecosystem, while a distro can judge the
+   * same CVE differently for its own build -- NVD HIGH, Ubuntu "negligible"
+   * -- which is exactly the signal a triage of that distro's packages needs.
+   * null for every other match.
+   */
+  distroPriority: string | null;
+  /**
    * Every identifier this finding is reachable by, including externalId itself.
    *
    * externalId is not stable: it is the master's *preferred* id, recomputed on
@@ -59,6 +71,9 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
       }
       if (!existing.fixedVersion && item.fixedVersion) {
         existing.fixedVersion = item.fixedVersion;
+      }
+      if (!existing.distroPriority && item.distroPriority) {
+        existing.distroPriority = item.distroPriority;
       }
     } else {
       seen.set(item.id, { ...item, sources: [...item.sources], aliases: [...item.aliases] });

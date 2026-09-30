@@ -4,6 +4,7 @@ import { prisma } from '../../db/client.js';
 import { resetDb } from '../../test-utils/db.js';
 import { createServer } from '../server.js';
 import { importAdvisoryData } from '../../worker/advisory-fetcher.js';
+import { importOSVData } from '../../worker/osv-fetcher.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
 
@@ -219,6 +220,85 @@ describe('GET /api/v1/vulnerabilities/search', () => {
 
     expect(await hits('package=example-product&version=2.0.0-beta')).toEqual(['CVE-2026-7002']);
     expect(await hits('package=example-product&version=2.0.0')).toEqual([]);
+  });
+});
+
+describe('GET /api/v1/vulnerabilities/search — distroPriority', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  it('returns Ubuntu\'s own priority next to the CVE-wide severity, only for the Ubuntu match', async () => {
+    // NVD rates the CVE HIGH; Ubuntu rates it negligible for its package.
+    await prisma.vulnerability.create({ data: { cveId: 'CVE-2026-6161', severity: 'HIGH', cvssScore: 7.5 } });
+    await importOSVData({
+      id: 'UBUNTU-CVE-2026-6161',
+      modified: '2026-01-01T00:00:00Z',
+      aliases: [],
+      upstream: ['CVE-2026-6161'],
+      severity: [
+        { type: 'CVSS_V3', score: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H' },
+        { type: 'Ubuntu', score: 'negligible' },
+      ],
+      affected: [{ package: { ecosystem: 'Ubuntu:24.04:LTS', name: 'demo-pkg' }, versions: ['1.0-1'] }],
+    });
+    await importOSVData({
+      id: 'GHSA-demo-0001',
+      modified: '2026-01-01T00:00:00Z',
+      aliases: ['CVE-2026-6161'],
+      affected: [{ package: { ecosystem: 'npm', name: 'demo-pkg' }, versions: ['1.0.0'] }],
+    });
+
+    const ubuntu = await search(app, 'package=demo-pkg&version=1.0-1&ecosystem=Ubuntu:24.04:LTS');
+    expect(ubuntu.body.results).toHaveLength(1);
+    expect(ubuntu.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6161', severity: 'HIGH', distroPriority: 'negligible' });
+
+    const npm = await search(app, 'package=demo-pkg&version=1.0.0&ecosystem=npm');
+    expect(npm.body.results).toHaveLength(1);
+    expect(npm.body.results[0]).toMatchObject({ severity: 'HIGH', distroPriority: null });
+  });
+
+  it('returns Debian\'s urgency for the queried release, which can differ between releases', async () => {
+    await importOSVData({
+      id: 'DEBIAN-CVE-2026-6262',
+      modified: '2026-01-01T00:00:00Z',
+      upstream: ['CVE-2026-6262'],
+      affected: [
+        { package: { ecosystem: 'Debian:12', name: 'demo-src' }, versions: ['1.0-1'], ecosystem_specific: { urgency: 'unimportant' } },
+        { package: { ecosystem: 'Debian:13', name: 'demo-src' }, versions: ['1.0-1'], ecosystem_specific: { urgency: 'low' } },
+      ],
+    });
+
+    const bookworm = await search(app, 'package=demo-src&version=1.0-1&ecosystem=Debian:12');
+    expect(bookworm.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6262', distroPriority: 'unimportant' });
+    const trixie = await search(app, 'package=demo-src&version=1.0-1&ecosystem=Debian:13');
+    expect(trixie.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6262', distroPriority: 'low' });
+  });
+
+  it('returns Red Hat\'s per-CVE impact for an RHEL match', async () => {
+    await importAdvisoryData({
+      externalId: 'RHSA-2026:0001/CVE-2026-6363',
+      cveId: 'CVE-2026-6363',
+      severity: 'HIGH', // the whole RHSA's rating
+      distroPriority: 'low', // this CVE's own impact
+      rawData: {},
+      affectedProducts: [{ vendor: 'red-hat-9', product: 'demo-rpm', versionEnd: '0:1.0-2.el9' }],
+    }, 'red-hat');
+
+    const rhel = await search(app, 'package=demo-rpm&version=0:1.0-1.el9&ecosystem=Red%20Hat:9');
+    expect(rhel.body.results).toHaveLength(1);
+    expect(rhel.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6363', distroPriority: 'low' });
   });
 });
 

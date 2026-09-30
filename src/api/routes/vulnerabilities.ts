@@ -105,6 +105,7 @@ function masterToResult(
     epssScore: master.epssScore,
     epssPercentile: master.epssPercentile,
     fixedVersion,
+    distroPriority: null,
     aliases: buildAliases(master, sourceOwnId),
   };
 }
@@ -189,6 +190,7 @@ async function searchOSV(
           cveId: true,
           severity: true,
           cvssScore: true,
+          distroPriority: true,
           summary: true,
           publishedAt: true,
         },
@@ -205,7 +207,7 @@ async function searchOSV(
   return filteredRows.map(r => {
     const v = r.vulnerability;
     if (v.masterVuln) {
-      return masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null, v.osvId);
+      return { ...masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null, v.osvId), distroPriority: r.distroPriority ?? v.distroPriority };
     }
     // Fallback before backfill
     return {
@@ -223,6 +225,7 @@ async function searchOSV(
       epssScore: null,
       epssPercentile: null,
       fixedVersion: r.fixedVersion ?? null,
+      distroPriority: r.distroPriority ?? v.distroPriority,
       aliases: buildAliases({ cveId: v.cveId }, v.osvId),
     };
   });
@@ -289,6 +292,7 @@ async function searchNVD(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      distroPriority: null,
       aliases: buildAliases({ cveId: v.cveId }),
     };
   });
@@ -405,6 +409,7 @@ async function searchAdvisory(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      distroPriority: null,
       aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
     };
   });
@@ -527,6 +532,7 @@ type RpmAdvisoryRow = {
     cvssVector: string | null;
     summary: string | null;
     publishedAt: Date | null;
+    distroPriority: string | null;
     masterVuln: Parameters<typeof masterToResult>[0] | null;
   };
 };
@@ -535,7 +541,7 @@ function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityR
   const adv = r.advisory;
   const fixedVersion = r.versionEnd ?? r.versionFixed ?? null;
   if (adv.masterVuln) {
-    return masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId);
+    return { ...masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority };
   }
   return {
     id: adv.id,
@@ -552,6 +558,7 @@ function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityR
     epssScore: null,
     epssPercentile: null,
     fixedVersion,
+    distroPriority: adv.distroPriority,
     aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
   };
 }
@@ -603,6 +610,7 @@ async function buildRpmProductIndex(key: string, product: string, vendor: string
           cvssVector: true,
           summary: true,
           publishedAt: true,
+          distroPriority: true,
           masterVuln: { select: masterSelect },
         },
       },
@@ -708,6 +716,7 @@ async function searchByCPE(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
+      distroPriority: null,
       aliases: buildAliases({ cveId: v.cveId }),
     };
   });
