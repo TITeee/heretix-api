@@ -291,6 +291,34 @@ describe('normalizeVexDoc', () => {
     });
   });
 
+  it('bounds the major-level unfixed row by the newest fix the document records for that major (real CVE-2022-42895 shape)', () => {
+    // Red Hat states "unfixed" per major but "fixed" per release stream: the
+    // same document calls RHEL 9 bzip2-libs affected and fixed in 9.2 EUS and 9.3 GA.
+    const doc = buildDoc({
+      fixed: [
+        'AppStream-9.2.0.Z.EUS:bzip2-libs-0:1.0.8-8.el9_2.1.x86_64',
+        'BaseOS-9.3.0.GA:bzip2-libs-0:1.0.8-10.el9_3.x86_64',
+        'BaseOS-8.9.0.GA:bzip2-libs-0:1.0.6-27.el8_9.x86_64', // another major: ignored
+      ],
+    }) as { product_tree: { relationships: unknown[] } };
+    for (const [stream, nevra] of [
+      ['AppStream-9.2.0.Z.EUS', 'bzip2-libs-0:1.0.8-8.el9_2.1.x86_64'],
+      ['BaseOS-9.3.0.GA', 'bzip2-libs-0:1.0.8-10.el9_3.x86_64'],
+      ['BaseOS-8.9.0.GA', 'bzip2-libs-0:1.0.6-27.el8_9.x86_64'],
+    ]) {
+      doc.product_tree.relationships.push({
+        category: 'default_component_of',
+        full_product_name: { product_id: `${stream}:${nevra}` },
+        product_reference: nevra,
+        relates_to_product_reference: stream,
+      });
+    }
+
+    expect(normalizeVexDoc(doc)?.affectedProducts).toEqual([
+      { vendor: 'red-hat-9', product: 'bzip2-libs', versionEnd: '0:1.0.8-10.el9_3', patchAvailable: false, fixStatus: 'affected', fixStatusDetail: null },
+    ]);
+  });
+
   it('carries the remediation reason onto the affected product', () => {
     const doc = buildDoc() as { vulnerabilities: Array<Record<string, unknown>> };
     doc.vulnerabilities[0].remediations = [

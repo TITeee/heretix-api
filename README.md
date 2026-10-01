@@ -306,7 +306,9 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 >
 > Today only RHEL's unfixed CVEs (Red Hat CSAF VEX) carry it; other distros return `null`. **The set of values may grow** as more sources are mapped — treat a value you do not recognize like `affected`.
 >
-> A RHEL result can carry both a `fixedVersion` and a `fixStatus`. Red Hat's OVAL feed (fixed versions) and its VEX feed (unfixed status) sometimes disagree about the same CVE and package — mostly kernel packages, often for CVEs assigned retroactively to fixes that shipped years earlier. heretix-api returns both as Red Hat publishes them rather than picking one.
+> A RHEL result can carry both a `fixedVersion` and a `fixStatus`, for two reasons:
+> - Red Hat's VEX states "unfixed" per major version (all of RHEL 9) but "fixed" per release stream (9.3 GA, 9.2 EUS, ...), often both in the same document. heretix-api bounds such an unfixed entry by the newest fix the document records for that major, so builds at or past every fix are not reported; the newest fix is returned as `fixedVersion`. Builds between an older stream's fix (e.g. an EUS one) and that bound are still reported — a remaining false positive, preferred over guessing an installed build's stream and missing something.
+> - Red Hat's OVAL feed (fixed versions) and its VEX feed sometimes disagree outright: VEX records no fix for the major at all while OVAL does — mostly kernel packages, often CVEs assigned retroactively to fixes that shipped years earlier. Those VEX entries stay unbounded, and both are returned as Red Hat publishes them.
 
 > `aliases` — every identifier this finding is reachable by, including `externalId` itself. A vendor advisory or OSV record assigned a CVE after first publication keeps its own original id here even though `externalId` switches to the CVE.
 
