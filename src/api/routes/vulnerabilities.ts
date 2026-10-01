@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { PAN_VENDOR, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
+import type { FixStatus } from '../../utils/fix-status.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
 import {
@@ -106,6 +107,8 @@ function masterToResult(
     epssPercentile: master.epssPercentile,
     fixedVersion,
     distroPriority: null,
+    fixStatus: null,
+    fixStatusDetail: null,
     aliases: buildAliases(master, sourceOwnId),
   };
 }
@@ -226,6 +229,8 @@ async function searchOSV(
       epssPercentile: null,
       fixedVersion: r.fixedVersion ?? null,
       distroPriority: r.distroPriority ?? v.distroPriority,
+      fixStatus: null,
+      fixStatusDetail: null,
       aliases: buildAliases({ cveId: v.cveId }, v.osvId),
     };
   });
@@ -293,6 +298,8 @@ async function searchNVD(
       epssPercentile: null,
       fixedVersion,
       distroPriority: null,
+      fixStatus: null,
+      fixStatusDetail: null,
       aliases: buildAliases({ cveId: v.cveId }),
     };
   });
@@ -410,6 +417,8 @@ async function searchAdvisory(
       epssPercentile: null,
       fixedVersion,
       distroPriority: null,
+      fixStatus: null,
+      fixStatusDetail: null,
       aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
     };
   });
@@ -522,6 +531,8 @@ type RpmAdvisoryRow = {
   versionEnd: string | null;
   versionFixed: string | null;
   patchAvailable: boolean | null;
+  fixStatus: string | null;
+  fixStatusDetail: string | null;
   advisory: {
     id: string;
     source: string;
@@ -537,11 +548,16 @@ type RpmAdvisoryRow = {
   };
 };
 
+/** The row's stored fix status, as the API types it (see utils/fix-status.ts). */
+function rowFixStatus(r: { fixStatus: string | null; fixStatusDetail: string | null }): Pick<VulnerabilityResult, 'fixStatus' | 'fixStatusDetail'> {
+  return { fixStatus: r.fixStatus as FixStatus | null, fixStatusDetail: r.fixStatusDetail };
+}
+
 function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityResult {
   const adv = r.advisory;
   const fixedVersion = r.versionEnd ?? r.versionFixed ?? null;
   if (adv.masterVuln) {
-    return { ...masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority };
+    return { ...masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority, ...rowFixStatus(r) };
   }
   return {
     id: adv.id,
@@ -559,6 +575,7 @@ function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityR
     epssPercentile: null,
     fixedVersion,
     distroPriority: adv.distroPriority,
+    ...rowFixStatus(r),
     aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
   };
 }
@@ -599,6 +616,8 @@ async function buildRpmProductIndex(key: string, product: string, vendor: string
       versionEnd: true,
       versionFixed: true,
       patchAvailable: true,
+      fixStatus: true,
+      fixStatusDetail: true,
       advisory: {
         select: {
           id: true,
@@ -717,6 +736,8 @@ async function searchByCPE(
       epssPercentile: null,
       fixedVersion,
       distroPriority: null,
+      fixStatus: null,
+      fixStatusDetail: null,
       aliases: buildAliases({ cveId: v.cveId }),
     };
   });

@@ -1,6 +1,7 @@
 import { prisma } from '../db/client.js';
 import { createManyChunked } from '../db/bulk-insert.js';
 import { encodeAdvisoryVersion } from '../utils/advisory-version.js';
+import type { FixStatus } from '../utils/fix-status.js';
 import { logger } from '../utils/logger.js';
 import type { Prisma } from '@prisma/client';
 
@@ -30,6 +31,9 @@ export interface NormalizedAdvisory {
     versionFixed?: string;         // Fixed version (first non-affected)
     affectedVersions?: string[];   // Non-semver: list of individual versions
     patchAvailable?: boolean;
+    // Why there is no fix (utils/fix-status.ts) -- set only by sources that say.
+    fixStatus?: FixStatus;
+    fixStatusDetail?: string | null;
   }>;
   rawData: unknown;
 }
@@ -209,6 +213,8 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
         lastAffectedInt: encode(prod.lastAffected),
         affectedVersions: prod.affectedVersions ?? [],
         patchAvailable: prod.patchAvailable ?? null,
+        fixStatus: prod.fixStatus ?? null,
+        fixStatusDetail: prod.fixStatusDetail ?? null,
       };
     });
 

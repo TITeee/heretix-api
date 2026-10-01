@@ -338,6 +338,12 @@ model AdvisoryAffectedProduct {
 
   patchAvailable Boolean?
 
+  // Why there is no fix, when the source says (utils/fix-status.ts):
+  // affected / deferred / will_not_fix / out_of_support / under_investigation,
+  // plus the source's own wording ("Will not fix"). Red Hat VEX only, today.
+  fixStatus       String?
+  fixStatusDetail String?
+
   createdAt  DateTime @default(now())
 
   @@index([vendor, product])

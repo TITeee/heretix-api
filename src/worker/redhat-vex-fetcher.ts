@@ -4,6 +4,7 @@ import tarStream from 'tar-stream';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
 import { parseRedHatImpact } from './redhat-fetcher.js';
+import { type FixStatusInfo, redHatRemediationStatus } from '../utils/fix-status.js';
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -28,6 +29,9 @@ export interface RhelComponent {
   major: string;
   pkg: string;
 }
+
+/** An unfixed component, with Red Hat's stated reason for the missing fix. */
+export interface UnfixedRhelComponent extends RhelComponent, FixStatusInfo {}
 
 const RHEL_PRODUCT_RE = /^red_hat_enterprise_linux_(\d+)$/;
 
@@ -98,20 +102,45 @@ export function buildRhelComponentMap(relationships: unknown): Map<string, RhelC
  * Either way this is unlike the OVAL patch feed (redhat-fetcher.ts), which
  * only ever publishes definitions for CVEs that *have* a fix and has no
  * representation for an unresolved case at all.
+ *
+ * Each component carries Red Hat's reason for the missing fix, from the
+ * vulnerability's `remediations` (redHatRemediationStatus()): "Will not fix",
+ * "Out of support scope", "Fix deferred" or "Affected" -- the distinction
+ * between "accept it, no fix is coming" and "wait for the fix". A
+ * known_affected component with no such remediation is plain `affected`;
+ * an under_investigation one is `under_investigation` unless a remediation
+ * says more.
  */
 export function extractUnfixedComponents(
   productStatus: unknown,
   componentMap: Map<string, RhelComponent>,
-): RhelComponent[] {
+  remediations: unknown = [],
+): UnfixedRhelComponent[] {
   if (!productStatus || typeof productStatus !== 'object') return [];
   const ps = productStatus as Record<string, unknown>;
 
   const toArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
-  const candidates = [...toArray(ps['known_affected']), ...toArray(ps['under_investigation'])];
   const fixed = new Set(toArray(ps['fixed']));
+  const knownAffected = toArray(ps['known_affected']);
+  // A product in both buckets is known_affected: the confirmed statement wins.
+  const investigating = new Set(toArray(ps['under_investigation']).filter(id => !knownAffected.includes(id)));
+  const candidates = [...knownAffected, ...investigating];
+
+  // product_id -> reason. A product listed under more than one no-fix
+  // remediation keeps the first, which is how Red Hat orders them.
+  const reasons = new Map<string, FixStatusInfo>();
+  for (const rem of toArray(remediations)) {
+    if (!rem || typeof rem !== 'object') continue;
+    const r = rem as Record<string, unknown>;
+    const status = redHatRemediationStatus(r['category'], r['details']);
+    if (!status) continue;
+    for (const id of toArray(r['product_ids'])) {
+      if (typeof id === 'string' && !reasons.has(id)) reasons.set(id, status);
+    }
+  }
 
   const seen = new Set<string>();
-  const results: RhelComponent[] = [];
+  const results: UnfixedRhelComponent[] = [];
   for (const productId of candidates) {
     if (typeof productId !== 'string' || fixed.has(productId)) continue;
     const component = componentMap.get(productId);
@@ -119,7 +148,9 @@ export function extractUnfixedComponents(
     const key = `${component.major}:${component.pkg}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    results.push(component);
+    const reason = reasons.get(productId)
+      ?? { fixStatus: investigating.has(productId) ? 'under_investigation' : 'affected', fixStatusDetail: null };
+    results.push({ ...component, ...reason });
   }
   return results;
 }
@@ -189,7 +220,7 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
   // components together under the first one that parses as a real CVE
   // (defensive; not observed in practice).
   let info: VexCveInfo | null = null;
-  const components: RhelComponent[] = [];
+  const components: UnfixedRhelComponent[] = [];
   const seen = new Set<string>();
   for (const vuln of vulnerabilities) {
     const parsed = parseVexVulnerability(vuln);
@@ -197,7 +228,7 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
     info ??= parsed;
 
     const v = vuln as Record<string, unknown>;
-    for (const c of extractUnfixedComponents(v['product_status'], componentMap)) {
+    for (const c of extractUnfixedComponents(v['product_status'], componentMap, v['remediations'])) {
       const key = `${c.major}:${c.pkg}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -218,6 +249,8 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
       vendor: `red-hat-${c.major}`,
       product: c.pkg,
       patchAvailable: false,
+      fixStatus: c.fixStatus,
+      fixStatusDetail: c.fixStatusDetail,
     })),
     // Not the full parsed document: a VEX doc's product_tree can carry
     // hundreds of container-image/product-family relationships entirely

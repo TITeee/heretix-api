@@ -38,6 +38,8 @@ function makeResult(overrides: Partial<VulnerabilityResult>): VulnerabilityResul
     epssPercentile: null,
     fixedVersion: null,
     distroPriority: null,
+    fixStatus: null,
+    fixStatusDetail: null,
     aliases: ['CVE-2026-1234'],
     ...overrides,
   };

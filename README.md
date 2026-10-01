@@ -264,6 +264,8 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
       "epssPercentile": 0.998,
       "fixedVersion": "4.17.21",
       "distroPriority": null,
+      "fixStatus": null,
+      "fixStatusDetail": null,
       "aliases": ["CVE-2019-10744"]
     }
   ]
@@ -291,6 +293,18 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 > | RHEL | `low` / `moderate` / `important` / `critical` | Red Hat's per-CVE impact (OVAL; VEX for unfixed CVEs) |
 >
 > Alpine, AlmaLinux, Rocky Linux and Oracle Linux results carry `null`: the sources imported for them either have no distro rating, or only one per advisory rather than per CVE (Oracle Linux ELSA).
+
+> `fixStatus` — why the matched package has no fix, when the source says; `null` when there is a fix (`fixedVersion`) or no reason is given. A different axis from `distroPriority` ("how much does this matter" vs "will a fix come"): Red Hat can rate a CVE `moderate` and still not fix it. `fixStatusDetail` carries the source's own wording verbatim (e.g. `Will not fix`).
+>
+> | `fixStatus` | Meaning | Red Hat wording |
+> |---|---|---|
+> | `affected` | Not fixed yet; a fix may still come | `Affected` |
+> | `deferred` | The vendor has postponed the fix | `Fix deferred` |
+> | `will_not_fix` | The vendor has decided not to fix it | `Will not fix` |
+> | `out_of_support` | Outside the vendor's support scope; no fix will come | `Out of support scope` |
+> | `under_investigation` | Not yet confirmed whether it applies | (product status) |
+>
+> Today only RHEL's unfixed CVEs (Red Hat CSAF VEX) carry it; other distros return `null`. **The set of values may grow** as more sources are mapped — treat a value you do not recognize like `affected`.
 
 > `aliases` — every identifier this finding is reachable by, including `externalId` itself. A vendor advisory or OSV record assigned a CVE after first publication keeps its own original id here even though `externalId` switches to the CVE.
 

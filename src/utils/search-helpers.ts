@@ -4,6 +4,7 @@
  */
 import { compareDpkgVersions } from './dpkg-version.js';
 import { compareRpmVersions } from './rpm-version.js';
+import type { FixStatus } from './fix-status.js';
 
 export type VulnerabilityResult = {
   id: string;               // Vulnerability master ID
@@ -32,6 +33,20 @@ export type VulnerabilityResult = {
    * null for every other match.
    */
   distroPriority: string | null;
+  /**
+   * Why the matched package has no fix, normalized across sources
+   * (utils/fix-status.ts): affected / deferred / will_not_fix /
+   * out_of_support / under_investigation. null when there is a fix
+   * (`fixedVersion`) or the source gives no reason. The set may grow; treat
+   * an unknown value like `affected`.
+   *
+   * A different axis from distroPriority: "how much does this matter to the
+   * distro" vs "will a fix come" -- Red Hat can rate a CVE moderate and still
+   * not fix it, or defer it.
+   */
+  fixStatus: FixStatus | null;
+  /** The source's own wording behind fixStatus, verbatim (e.g. "Will not fix"). */
+  fixStatusDetail: string | null;
   /**
    * Every identifier this finding is reachable by, including externalId itself.
    *
@@ -74,6 +89,10 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
       }
       if (!existing.distroPriority && item.distroPriority) {
         existing.distroPriority = item.distroPriority;
+      }
+      if (!existing.fixStatus && item.fixStatus) {
+        existing.fixStatus = item.fixStatus;
+        existing.fixStatusDetail = item.fixStatusDetail;
       }
     } else {
       seen.set(item.id, { ...item, sources: [...item.sources], aliases: [...item.aliases] });
