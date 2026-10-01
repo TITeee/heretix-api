@@ -127,7 +127,7 @@ describe('extractUnfixedComponents', () => {
       fixed: ['Red Hat Hardened Images:bzip2-main@x86_64'],
       known_affected: ['red_hat_enterprise_linux_9:bzip2-libs'],
     };
-    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs' }]);
+    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs', fixStatus: 'affected', fixStatusDetail: null }]);
   });
 
   it('excludes a component that appears in both known_affected and fixed', () => {
@@ -151,7 +151,7 @@ describe('extractUnfixedComponents', () => {
       fixed: [],
       known_affected: ['red_hat_enterprise_linux_9:bzip2-libs', 'red_hat_enterprise_linux_9:bzip2-libs'],
     };
-    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs' }]);
+    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs', fixStatus: 'affected', fixStatusDetail: null }]);
   });
 
   it('returns a component listed under under_investigation, not just known_affected (real CVE-2026-56403/expat shape)', () => {
@@ -164,7 +164,7 @@ describe('extractUnfixedComponents', () => {
       known_affected: [],
       under_investigation: ['red_hat_enterprise_linux_9:bzip2-libs'],
     };
-    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs' }]);
+    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs', fixStatus: 'under_investigation', fixStatusDetail: null }]);
   });
 
   it('excludes an under_investigation id that also appears in fixed', () => {
@@ -181,7 +181,21 @@ describe('extractUnfixedComponents', () => {
       known_affected: ['red_hat_enterprise_linux_9:bzip2-libs'],
       under_investigation: ['red_hat_enterprise_linux_9:bzip2-libs'],
     };
-    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs' }]);
+    expect(extractUnfixedComponents(productStatus, componentMap)).toEqual([{ major: '9', pkg: 'bzip2-libs', fixStatus: 'affected', fixStatusDetail: null }]);
+  });
+
+  it('carries Red Hat\x27s stated reason from remediations (real VEX category/details pairs)', () => {
+    const productStatus = { known_affected: ['red_hat_enterprise_linux_9:bzip2-libs', 'red_hat_enterprise_linux_9:bzip2'] };
+    const remediations = [
+      { category: 'no_fix_planned', details: 'Will not fix', product_ids: ['red_hat_enterprise_linux_9:bzip2-libs'] },
+      { category: 'none_available', details: 'Fix deferred', product_ids: ['red_hat_enterprise_linux_9:bzip2'] },
+      // A workaround says nothing about whether a fix will come.
+      { category: 'workaround', details: 'Do not process untrusted files.', product_ids: ['red_hat_enterprise_linux_9:bzip2'] },
+    ];
+    expect(extractUnfixedComponents(productStatus, componentMap, remediations)).toEqual([
+      { major: '9', pkg: 'bzip2-libs', fixStatus: 'will_not_fix', fixStatusDetail: 'Will not fix' },
+      { major: '9', pkg: 'bzip2', fixStatus: 'deferred', fixStatusDetail: 'Fix deferred' },
+    ]);
   });
 
   it('returns an empty array when product_status is missing or malformed', () => {
@@ -272,9 +286,47 @@ describe('normalizeVexDoc', () => {
       severity: 'MEDIUM',
       cvssScore: 5,
       cvssVector: 'CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:N/I:N/A:H',
-      affectedProducts: [{ vendor: 'red-hat-9', product: 'bzip2-libs', patchAvailable: false }],
+      affectedProducts: [{ vendor: 'red-hat-9', product: 'bzip2-libs', patchAvailable: false, fixStatus: 'affected', fixStatusDetail: null }],
       rawData: { source: 'redhat-vex', cve: 'CVE-2026-42250' },
     });
+  });
+
+  it('bounds the major-level unfixed row by the newest fix the document records for that major (real CVE-2022-42895 shape)', () => {
+    // Red Hat states "unfixed" per major but "fixed" per release stream: the
+    // same document calls RHEL 9 bzip2-libs affected and fixed in 9.2 EUS and 9.3 GA.
+    const doc = buildDoc({
+      fixed: [
+        'AppStream-9.2.0.Z.EUS:bzip2-libs-0:1.0.8-8.el9_2.1.x86_64',
+        'BaseOS-9.3.0.GA:bzip2-libs-0:1.0.8-10.el9_3.x86_64',
+        'BaseOS-8.9.0.GA:bzip2-libs-0:1.0.6-27.el8_9.x86_64', // another major: ignored
+      ],
+    }) as { product_tree: { relationships: unknown[] } };
+    for (const [stream, nevra] of [
+      ['AppStream-9.2.0.Z.EUS', 'bzip2-libs-0:1.0.8-8.el9_2.1.x86_64'],
+      ['BaseOS-9.3.0.GA', 'bzip2-libs-0:1.0.8-10.el9_3.x86_64'],
+      ['BaseOS-8.9.0.GA', 'bzip2-libs-0:1.0.6-27.el8_9.x86_64'],
+    ]) {
+      doc.product_tree.relationships.push({
+        category: 'default_component_of',
+        full_product_name: { product_id: `${stream}:${nevra}` },
+        product_reference: nevra,
+        relates_to_product_reference: stream,
+      });
+    }
+
+    expect(normalizeVexDoc(doc)?.affectedProducts).toEqual([
+      { vendor: 'red-hat-9', product: 'bzip2-libs', versionEnd: '0:1.0.8-10.el9_3', patchAvailable: false, fixStatus: 'affected', fixStatusDetail: null },
+    ]);
+  });
+
+  it('carries the remediation reason onto the affected product', () => {
+    const doc = buildDoc() as { vulnerabilities: Array<Record<string, unknown>> };
+    doc.vulnerabilities[0].remediations = [
+      { category: 'no_fix_planned', details: 'Out of support scope', product_ids: ['red_hat_enterprise_linux_9:bzip2-libs'] },
+    ];
+    expect(normalizeVexDoc(doc)?.affectedProducts).toEqual([
+      { vendor: 'red-hat-9', product: 'bzip2-libs', patchAvailable: false, fixStatus: 'out_of_support', fixStatusDetail: 'Out of support scope' },
+    ]);
   });
 
   it('returns null when the only known_affected component is already fixed', () => {

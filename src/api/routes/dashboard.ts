@@ -55,8 +55,7 @@ const ADVISORY_SOURCE_MAP: Record<string, string> = {
   'advisory-sophos':     'advisory-sophos',
   'advisory-sonicwall':  'advisory-sonicwall',
   'advisory-oracle-cpu': 'advisory-oracle-cpu',
-  'advisory-redhat-rhel9': 'red-hat',
-  'advisory-redhat-rhel8': 'red-hat',
+  'advisory-redhat-vex': 'red-hat-vex',
   'advisory-splunk':     'advisory-splunk',
   'advisory-apache':     'advisory-apache',
   'advisory-zabbix':     'advisory-zabbix',
@@ -120,13 +119,18 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       errorMessage: malJob?.errorMessage ?? null,
     });
 
-    const [nvdCount, osvCount, kevCount, advisoryCount, epssCount, advisorySourceCounts] = await Promise.all([
+    const [nvdCount, osvCount, kevCount, advisoryCount, epssCount, advisorySourceCounts, rhel9Count, rhel8Count] = await Promise.all([
       prisma.nVDVulnerability.count(),
       prisma.oSVVulnerability.count(),
       prisma.vulnerability.count({ where: { isKev: true } }),
       prisma.advisoryVulnerability.count(),
       prisma.vulnerability.count({ where: { epssScore: { not: null } } }),
       prisma.advisoryVulnerability.groupBy({ by: ['source'], _count: { _all: true } }),
+      // The RHEL 8 and RHEL 9 jobs both write source "red-hat" -- a per-source
+      // count showed the combined total on both rows. Each job's own records are
+      // the advisories with an affected product for its major version.
+      prisma.advisoryVulnerability.count({ where: { source: 'red-hat', affectedProducts: { some: { vendor: 'red-hat-9' } } } }),
+      prisma.advisoryVulnerability.count({ where: { source: 'red-hat', affectedProducts: { some: { vendor: 'red-hat-8' } } } }),
     ]);
     const advisoryCountBySource = new Map(advisorySourceCounts.map((r) => [r.source, r._count._all]));
 
@@ -134,6 +138,8 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       if (source === 'nvd') return nvdCount;
       if (source === 'kev') return kevCount;
       if (source === 'epss') return epssCount;
+      if (source === 'advisory-redhat-rhel9') return rhel9Count;
+      if (source === 'advisory-redhat-rhel8') return rhel8Count;
       if (source.startsWith('advisory-oracle-linux')) return advisoryCountBySource.get('oracle-linux') ?? 0;
       const mapped = ADVISORY_SOURCE_MAP[source];
       if (mapped) return advisoryCountBySource.get(mapped) ?? 0;

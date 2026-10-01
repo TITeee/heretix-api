@@ -4,6 +4,8 @@ import tarStream from 'tar-stream';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
 import { parseRedHatImpact } from './redhat-fetcher.js';
+import { type FixStatusInfo, redHatRemediationStatus } from '../utils/fix-status.js';
+import { compareRpmVersions } from '../utils/rpm-version.js';
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -28,6 +30,9 @@ export interface RhelComponent {
   major: string;
   pkg: string;
 }
+
+/** An unfixed component, with Red Hat's stated reason for the missing fix. */
+export interface UnfixedRhelComponent extends RhelComponent, FixStatusInfo {}
 
 const RHEL_PRODUCT_RE = /^red_hat_enterprise_linux_(\d+)$/;
 
@@ -98,20 +103,45 @@ export function buildRhelComponentMap(relationships: unknown): Map<string, RhelC
  * Either way this is unlike the OVAL patch feed (redhat-fetcher.ts), which
  * only ever publishes definitions for CVEs that *have* a fix and has no
  * representation for an unresolved case at all.
+ *
+ * Each component carries Red Hat's reason for the missing fix, from the
+ * vulnerability's `remediations` (redHatRemediationStatus()): "Will not fix",
+ * "Out of support scope", "Fix deferred" or "Affected" -- the distinction
+ * between "accept it, no fix is coming" and "wait for the fix". A
+ * known_affected component with no such remediation is plain `affected`;
+ * an under_investigation one is `under_investigation` unless a remediation
+ * says more.
  */
 export function extractUnfixedComponents(
   productStatus: unknown,
   componentMap: Map<string, RhelComponent>,
-): RhelComponent[] {
+  remediations: unknown = [],
+): UnfixedRhelComponent[] {
   if (!productStatus || typeof productStatus !== 'object') return [];
   const ps = productStatus as Record<string, unknown>;
 
   const toArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
-  const candidates = [...toArray(ps['known_affected']), ...toArray(ps['under_investigation'])];
   const fixed = new Set(toArray(ps['fixed']));
+  const knownAffected = toArray(ps['known_affected']);
+  // A product in both buckets is known_affected: the confirmed statement wins.
+  const investigating = new Set(toArray(ps['under_investigation']).filter(id => !knownAffected.includes(id)));
+  const candidates = [...knownAffected, ...investigating];
+
+  // product_id -> reason. A product listed under more than one no-fix
+  // remediation keeps the first, which is how Red Hat orders them.
+  const reasons = new Map<string, FixStatusInfo>();
+  for (const rem of toArray(remediations)) {
+    if (!rem || typeof rem !== 'object') continue;
+    const r = rem as Record<string, unknown>;
+    const status = redHatRemediationStatus(r['category'], r['details']);
+    if (!status) continue;
+    for (const id of toArray(r['product_ids'])) {
+      if (typeof id === 'string' && !reasons.has(id)) reasons.set(id, status);
+    }
+  }
 
   const seen = new Set<string>();
-  const results: RhelComponent[] = [];
+  const results: UnfixedRhelComponent[] = [];
   for (const productId of candidates) {
     if (typeof productId !== 'string' || fixed.has(productId)) continue;
     const component = componentMap.get(productId);
@@ -119,9 +149,65 @@ export function extractUnfixedComponents(
     const key = `${component.major}:${component.pkg}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    results.push(component);
+    const reason = reasons.get(productId)
+      ?? { fixStatus: investigating.has(productId) ? 'under_investigation' : 'affected', fixStatusDetail: null };
+    results.push({ ...component, ...reason });
   }
   return results;
+}
+
+// A release stream a fixed build ships in: "BaseOS-9.3.0.GA",
+// "AppStream-9.2.0.Z.EUS", "RT-9.3.GA", ... -- "<repo>-<major>.<minor>...".
+const RHEL_STREAM_RE = /^[A-Za-z0-9_]+-(\d+)\.\d+(?:\.|$)/;
+// A binary or source RPM NEVRA: "bpftool-0:7.2.0-362.8.1.el9_3.x86_64".
+const NEVRA_RE = /^(.+)-(\d+):([^-]+)-([^-]+)\.([A-Za-z0-9_]+)$/;
+
+/**
+ * The newest fixed build, per (RHEL major, package), that this document's
+ * `fixed` product status records in any release stream of that major.
+ *
+ * Red Hat's VEX states "unfixed" per major only
+ * ("red_hat_enterprise_linux_9:kernel" known_affected) but "fixed" per
+ * release stream and exact build ("BaseOS-9.3.0.GA:kernel-0:5.14.0-362.8.1.el9_3.x86_64",
+ * "...-9.2.0.Z.EUS:..."). Measured on 2,609 OVAL/VEX overlapping pairs, 54%
+ * had such a fix for the very major they called affected -- read on its own,
+ * the major-level statement matched every version, including builds at or
+ * past those fixes.
+ *
+ * The newest fix across all streams is used as the row's exclusive upper
+ * bound: anything at or above it is newer than every recorded fix, so it can
+ * be called fixed without risking a miss. Builds between an older stream's
+ * fix (an EUS one, say) and that bound still match -- a remaining false
+ * positive, deliberately preferred over introducing misses by guessing which
+ * stream an installed build belongs to.
+ */
+export function newestFixedVersions(relationships: unknown, productStatus: unknown): Map<string, string> {
+  const result = new Map<string, string>();
+  if (!Array.isArray(relationships) || !productStatus || typeof productStatus !== 'object') return result;
+  const fixedIds = (productStatus as Record<string, unknown>)['fixed'];
+  const fixed = new Set(Array.isArray(fixedIds) ? fixedIds : []);
+  if (fixed.size === 0) return result;
+
+  for (const rel of relationships) {
+    if (!rel || typeof rel !== 'object') continue;
+    const r = rel as Record<string, unknown>;
+    if (r['category'] !== 'default_component_of') continue;
+    const productId = (r['full_product_name'] as Record<string, unknown> | undefined)?.['product_id'];
+    if (typeof productId !== 'string' || !fixed.has(productId)) continue;
+
+    const stream = r['relates_to_product_reference'];
+    const majorMatch = typeof stream === 'string' ? stream.match(RHEL_STREAM_RE) : null;
+    if (!majorMatch || !SUPPORTED_MAJORS.has(majorMatch[1])) continue;
+    const nevra = typeof r['product_reference'] === 'string' ? r['product_reference'].match(NEVRA_RE) : null;
+    if (!nevra) continue;
+
+    const [, name, epoch, version, release] = nevra;
+    const evr = `${epoch}:${version}-${release}`;
+    const key = `${majorMatch[1]}:${name}`;
+    const current = result.get(key);
+    if (!current || compareRpmVersions(evr, current) > 0) result.set(key, evr);
+  }
+  return result;
 }
 
 export interface VexCveInfo {
@@ -167,11 +253,13 @@ export function parseVexVulnerability(vuln: unknown): VexCveInfo | null {
  * archive are for other Red Hat products entirely, or are fully fixed on
  * every RHEL major they touch (already covered by RedHatFetcher's OVAL feed).
  *
- * affectedProducts carry no versionStart/versionEnd: there is no upper bound
- * to record, only the fact of being unfixed. patchAvailable: false is the
- * explicit signal matchesRpmVersionRange() and searchAdvisory() key off of to
- * match unconditionally rather than the version-range default of never
- * matching a row with no bound (see search-helpers.ts).
+ * affectedProducts carry no versionStart, and a versionEnd only when the same
+ * document records a fixed build for that major in some release stream
+ * (newestFixedVersions()). Without one there is no upper bound to record, only
+ * the fact of being unfixed: patchAvailable: false is the explicit signal
+ * matchesRpmVersionRange() and searchAdvisory() key off of to match
+ * unconditionally rather than the version-range default of never matching a
+ * row with no bound (see search-helpers.ts).
  */
 export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
   if (!doc || typeof doc !== 'object') return null;
@@ -189,7 +277,8 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
   // components together under the first one that parses as a real CVE
   // (defensive; not observed in practice).
   let info: VexCveInfo | null = null;
-  const components: RhelComponent[] = [];
+  const components: UnfixedRhelComponent[] = [];
+  const newestFix = new Map<string, string>();
   const seen = new Set<string>();
   for (const vuln of vulnerabilities) {
     const parsed = parseVexVulnerability(vuln);
@@ -197,11 +286,15 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
     info ??= parsed;
 
     const v = vuln as Record<string, unknown>;
-    for (const c of extractUnfixedComponents(v['product_status'], componentMap)) {
+    for (const c of extractUnfixedComponents(v['product_status'], componentMap, v['remediations'])) {
       const key = `${c.major}:${c.pkg}`;
       if (seen.has(key)) continue;
       seen.add(key);
       components.push(c);
+    }
+    for (const [key, evr] of newestFixedVersions(productTree['relationships'], v['product_status'])) {
+      const current = newestFix.get(key);
+      if (!current || compareRpmVersions(evr, current) > 0) newestFix.set(key, evr);
     }
   }
   if (!info || components.length === 0) return null;
@@ -214,11 +307,19 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
     cvssScore: info.cvssScore,
     cvssVector: info.cvssVector,
     distroPriority: info.impact,
-    affectedProducts: components.map(c => ({
-      vendor: `red-hat-${c.major}`,
-      product: c.pkg,
-      patchAvailable: false,
-    })),
+    affectedProducts: components.map(c => {
+      // Bounded by the newest fix the same document records for this major
+      // (newestFixedVersions()); unbounded -- every version -- when it records none.
+      const versionEnd = newestFix.get(`${c.major}:${c.pkg}`);
+      return {
+        vendor: `red-hat-${c.major}`,
+        product: c.pkg,
+        ...(versionEnd ? { versionEnd } : {}),
+        patchAvailable: false,
+        fixStatus: c.fixStatus,
+        fixStatusDetail: c.fixStatusDetail,
+      };
+    }),
     // Not the full parsed document: a VEX doc's product_tree can carry
     // hundreds of container-image/product-family relationships entirely
     // unrelated to the handful of RHEL components extracted above, and

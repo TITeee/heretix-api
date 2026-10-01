@@ -286,6 +286,30 @@ describe('GET /api/v1/vulnerabilities/search — distroPriority', () => {
     expect(trixie.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6262', distroPriority: 'low' });
   });
 
+  it('returns Red Hat\'s reason for a missing fix as fixStatus, next to its impact', async () => {
+    // Shape RedHatVexFetcher writes for an unfixed CVE Red Hat will not fix.
+    await importAdvisoryData({
+      externalId: 'CVE-2026-6464',
+      cveId: 'CVE-2026-6464',
+      distroPriority: 'moderate',
+      rawData: {},
+      affectedProducts: [{
+        vendor: 'red-hat-9', product: 'demo-unfixed', patchAvailable: false,
+        fixStatus: 'will_not_fix', fixStatusDetail: 'Will not fix',
+      }],
+    }, 'red-hat-vex');
+
+    const rhel = await search(app, 'package=demo-unfixed&version=0:2.0-1.el9&ecosystem=Red%20Hat:9');
+    expect(rhel.body.results).toHaveLength(1);
+    expect(rhel.body.results[0]).toMatchObject({
+      externalId: 'CVE-2026-6464',
+      fixedVersion: null,
+      distroPriority: 'moderate',
+      fixStatus: 'will_not_fix',
+      fixStatusDetail: 'Will not fix',
+    });
+  });
+
   it('returns Red Hat\'s per-CVE impact for an RHEL match', async () => {
     await importAdvisoryData({
       externalId: 'RHSA-2026:0001/CVE-2026-6363',
