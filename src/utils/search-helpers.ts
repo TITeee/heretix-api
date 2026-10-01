@@ -36,9 +36,13 @@ export type VulnerabilityResult = {
   /**
    * Why the matched package has no fix, normalized across sources
    * (utils/fix-status.ts): affected / deferred / will_not_fix /
-   * out_of_support / under_investigation. null when there is a fix
-   * (`fixedVersion`) or the source gives no reason. The set may grow; treat
-   * an unknown value like `affected`.
+   * out_of_support / under_investigation. `affected` (with a null
+   * fixStatusDetail) when the source tracks the package as unfixed but gives
+   * no reason; null when the matching source does not track fix status at
+   * all. The set may grow; treat an unknown value like `affected`.
+   *
+   * Can sit next to a fixedVersion: Red Hat's OVAL and VEX feeds sometimes
+   * disagree about the same CVE and package, and dedup() keeps both.
    *
    * A different axis from distroPriority: "how much does this matter to the
    * distro" vs "will a fix come" -- Red Hat can rate a CVE moderate and still

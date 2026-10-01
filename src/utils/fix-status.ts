@@ -1,8 +1,9 @@
 /**
  * Why a vulnerable package has no fixed version, normalized across sources.
  * Returned per search result as `fixStatus` (with the source's own wording in
- * `fixStatusDetail`); null when the result has a fixed version, or when the
- * source says nothing beyond "no fix" (see README).
+ * `fixStatusDetail`). A source that tracks a package as unfixed but gives no
+ * reason yields `affected` with a null detail; results from sources that do
+ * not track fix status at all carry null (see README).
  *
  * The set may grow as more sources are mapped. Consumers must treat a value
  * they do not know like `affected`, so adding one never silently turns a

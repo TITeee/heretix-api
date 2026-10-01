@@ -294,7 +294,7 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 >
 > Alpine, AlmaLinux, Rocky Linux and Oracle Linux results carry `null`: the sources imported for them either have no distro rating, or only one per advisory rather than per CVE (Oracle Linux ELSA).
 
-> `fixStatus` — why the matched package has no fix, when the source says; `null` when there is a fix (`fixedVersion`) or no reason is given. A different axis from `distroPriority` ("how much does this matter" vs "will a fix come"): Red Hat can rate a CVE `moderate` and still not fix it. `fixStatusDetail` carries the source's own wording verbatim (e.g. `Will not fix`).
+> `fixStatus` — the fix status of the matched package, from a source that tracks unfixed packages: why there is no fix (e.g. `will_not_fix`), or `affected` when it is unfixed but the source gives no reason (`fixStatusDetail` is then `null`). `null` when the match came from a source that does not track fix status — which includes every match with only a `fixedVersion`. A different axis from `distroPriority` ("how much does this matter" vs "will a fix come"): Red Hat can rate a CVE `moderate` and still not fix it. `fixStatusDetail` carries the source's own wording verbatim (e.g. `Will not fix`).
 >
 > | `fixStatus` | Meaning | Red Hat wording |
 > |---|---|---|
@@ -305,6 +305,8 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 > | `under_investigation` | Not yet confirmed whether it applies | (product status) |
 >
 > Today only RHEL's unfixed CVEs (Red Hat CSAF VEX) carry it; other distros return `null`. **The set of values may grow** as more sources are mapped — treat a value you do not recognize like `affected`.
+>
+> A RHEL result can carry both a `fixedVersion` and a `fixStatus`. Red Hat's OVAL feed (fixed versions) and its VEX feed (unfixed status) sometimes disagree about the same CVE and package — mostly kernel packages, often for CVEs assigned retroactively to fixes that shipped years earlier. heretix-api returns both as Red Hat publishes them rather than picking one.
 
 > `aliases` — every identifier this finding is reachable by, including `externalId` itself. A vendor advisory or OSV record assigned a CVE after first publication keeps its own original id here even though `externalId` switches to the CVE.
 
