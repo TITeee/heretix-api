@@ -23,6 +23,42 @@ export interface FixStatusInfo {
 }
 
 /**
+ * A Debian security tracker entry for one (package, CVE, release), normalized,
+ * or null when it is resolved (the fix is the OSV row's own fixedVersion).
+ *
+ * The tracker's own wording is kept in fixStatusDetail, prefixed with the tag
+ * it came from ("no-dsa: Minor issue", "ignored: ...", "postponed: ...").
+ *   end-of-life urgency                   -> out_of_support (checked first:
+ *                                            the package is unsupported in
+ *                                            that release, whatever else it says)
+ *   no-dsa, reason "ignored"              -> will_not_fix
+ *   no-dsa, reason "postponed"            -> deferred
+ *   no-dsa, no reason                     -> deferred -- no security update
+ *                                            will be issued; a regular point
+ *                                            release may or may not fix it
+ *   undetermined                          -> under_investigation
+ *   open, none of the above               -> affected
+ */
+export function debianTrackerStatus(entry: {
+  status: string;
+  urgency?: string | null;
+  nodsa?: string | null;
+  nodsaReason?: string | null;
+}): FixStatusInfo | null {
+  if (entry.status === 'resolved') return null;
+  if (entry.status === 'undetermined') return { fixStatus: 'under_investigation', fixStatusDetail: 'undetermined' };
+  const text = entry.nodsa?.trim() ?? '';
+  const withText = (tag: string) => (text ? `${tag}: ${text}` : tag);
+  if (entry.urgency === 'end-of-life') return { fixStatus: 'out_of_support', fixStatusDetail: 'end-of-life' };
+  if (entry.nodsa !== null && entry.nodsa !== undefined) {
+    if (entry.nodsaReason === 'ignored') return { fixStatus: 'will_not_fix', fixStatusDetail: withText('ignored') };
+    if (entry.nodsaReason === 'postponed') return { fixStatus: 'deferred', fixStatusDetail: withText('postponed') };
+    return { fixStatus: 'deferred', fixStatusDetail: withText('no-dsa') };
+  }
+  return { fixStatus: 'affected', fixStatusDetail: null };
+}
+
+/**
  * A Red Hat CSAF VEX remediation for an unfixed product, normalized.
  *
  * Red Hat publishes the reason as (category, details); observed on the live

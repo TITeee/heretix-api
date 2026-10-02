@@ -182,6 +182,25 @@ model DebianSourcePackage {
   @@index([ecosystem, binaryName])
 }
 
+// Unresolved entries of the Debian security tracker (debian-tracker-fetcher.ts),
+// fully replaced on each run. Used only to attach fixStatus to Debian OSV
+// matches -- the tracker carries no-dsa / ignored / postponed, which OSV's
+// DEBIAN-CVE records drop. Matching itself stays on OSVAffectedPackage.
+model DebianTrackerStatus {
+  id            String   @id @default(cuid())
+
+  ecosystem     String   // "Debian:12"
+  sourcePackage String
+  vulnId        String   // CVE id, or the tracker's TEMP-... id
+  status        String   // "open" | "undetermined"
+  urgency       String?
+  nodsa         String?  // the no-dsa note, e.g. "Minor issue"
+  nodsaReason   String?  // "" | "ignored" | "postponed"
+
+  @@unique([ecosystem, sourcePackage, vulnId])
+  @@index([vulnId])
+}
+
 // ─── NVD ─────────────────────────────────────────────────────
 
 model NVDVulnerability {

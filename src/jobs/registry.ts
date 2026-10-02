@@ -34,6 +34,7 @@ import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { importCnaDelta } from '../worker/cna-importer.js';
 import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
 import { importDebianSourceMappings } from '../worker/debian-sources-fetcher.js';
+import { importDebianTrackerStatus } from '../worker/debian-tracker-fetcher.js';
 import { SHARED_BUCKET_ECOSYSTEMS, osvBucketName } from './osv-bucket.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -116,6 +117,17 @@ export const STATIC_JOBS: JobDefinition[] = [
     run: async () => {
       const result = await importDebianSourceMappings();
       return { updated: result.updated };
+    },
+  },
+  {
+    // Unresolved entries only, fully replaced each run -- feeds fixStatus on
+    // Debian OSV matches (no-dsa / ignored / postponed), not matching itself.
+    source: 'debian-tracker',
+    label: 'Debian Security Tracker',
+    cron: '15 7 * * *',
+    run: async () => {
+      const result = await importDebianTrackerStatus();
+      return { fetched: result.fetched, inserted: result.inserted };
     },
   },
   {

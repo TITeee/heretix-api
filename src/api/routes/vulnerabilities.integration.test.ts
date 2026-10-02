@@ -286,6 +286,29 @@ describe('GET /api/v1/vulnerabilities/search — distroPriority', () => {
     expect(trixie.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6262', distroPriority: 'low' });
   });
 
+  it('returns the Debian security tracker\'s no-dsa status as fixStatus for an unfixed Debian match', async () => {
+    await importOSVData({
+      id: 'DEBIAN-CVE-2026-6565',
+      modified: '2026-01-01T00:00:00Z',
+      upstream: ['CVE-2026-6565'],
+      affected: [
+        { package: { ecosystem: 'Debian:12', name: 'demo-deb' }, versions: ['1.0-1'], ecosystem_specific: { urgency: 'not yet assigned' } },
+      ],
+    });
+    await prisma.debianTrackerStatus.create({
+      data: { ecosystem: 'Debian:12', sourcePackage: 'demo-deb', vulnId: 'CVE-2026-6565', status: 'open', urgency: 'not yet assigned', nodsa: 'Minor issue', nodsaReason: 'ignored' },
+    });
+
+    const res = await search(app, 'package=demo-deb&version=1.0-1&ecosystem=Debian:12');
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0]).toMatchObject({
+      externalId: 'CVE-2026-6565',
+      distroPriority: 'not yet assigned',
+      fixStatus: 'will_not_fix',
+      fixStatusDetail: 'ignored: Minor issue',
+    });
+  });
+
   it('returns Red Hat\'s reason for a missing fix as fixStatus, next to its impact', async () => {
     // Shape RedHatVexFetcher writes for an unfixed CVE Red Hat will not fix.
     await importAdvisoryData({
