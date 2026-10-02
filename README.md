@@ -296,15 +296,15 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 
 > `fixStatus` — the fix status of the matched package, from a source that tracks unfixed packages: why there is no fix (e.g. `will_not_fix`), or `affected` when it is unfixed but the source gives no reason (`fixStatusDetail` is then `null`). `null` when the match came from a source that does not track fix status — which includes every match with only a `fixedVersion`. A different axis from `distroPriority` ("how much does this matter" vs "will a fix come"): Red Hat can rate a CVE `moderate` and still not fix it. `fixStatusDetail` carries the source's own wording verbatim (e.g. `Will not fix`).
 >
-> | `fixStatus` | Meaning | Red Hat wording |
-> |---|---|---|
-> | `affected` | Not fixed yet; a fix may still come | `Affected` |
-> | `deferred` | The vendor has postponed the fix | `Fix deferred` |
-> | `will_not_fix` | The vendor has decided not to fix it | `Will not fix` |
-> | `out_of_support` | Outside the vendor's support scope; no fix will come | `Out of support scope` |
-> | `under_investigation` | Not yet confirmed whether it applies | (product status) |
+> | `fixStatus` | Meaning | Red Hat wording | Debian security tracker |
+> |---|---|---|---|
+> | `affected` | Not fixed yet; a fix may still come | `Affected` | open, no tag |
+> | `deferred` | The fix has been postponed, or will not come as a security update | `Fix deferred` | `postponed`; plain `no-dsa` (no security update; a point release may or may not fix it) |
+> | `will_not_fix` | The vendor has decided not to fix it | `Will not fix` | `ignored` |
+> | `out_of_support` | Outside the vendor's support scope; no fix will come | `Out of support scope` | `end-of-life` |
+> | `under_investigation` | Not yet confirmed whether it applies | (product status) | `undetermined` |
 >
-> Today only RHEL's unfixed CVEs (Red Hat CSAF VEX) carry it; other distros return `null`. **The set of values may grow** as more sources are mapped — treat a value you do not recognize like `affected`.
+> Sources today: RHEL's unfixed CVEs (Red Hat CSAF VEX), and Debian 12+ (the Debian security tracker, refreshed daily by the `debian-tracker` job, attached to unfixed Debian OSV matches). For Debian, `fixStatusDetail` is the tracker's tag and note, e.g. `ignored: Only affects Windows NTFS ...`. Debian 11 (bullseye) is not in the tracker's export, and other distros return `null`. **The set of values may grow** as more sources are mapped — treat a value you do not recognize like `affected`.
 >
 > A RHEL result can carry both a `fixedVersion` and a `fixStatus`, for two reasons:
 > - Red Hat's VEX states "unfixed" per major version (all of RHEL 9) but "fixed" per release stream (9.3 GA, 9.2 EUS, ...), often both in the same document. heretix-api bounds such an unfixed entry by the newest fix the document records for that major, so builds at or past every fix are not reported; the newest fix is returned as `fixedVersion`. Builds between an older stream's fix (e.g. an EUS one) and that bound are still reported — a remaining false positive, preferred over guessing an installed build's stream and missing something.
