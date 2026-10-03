@@ -110,7 +110,7 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
  * match against the value the API itself returns (CRITICAL/HIGH/MEDIUM/LOW,
  * plus NONE and INFORMATIONAL -- see utils/severity.ts) -- round-tripping a
  * value straight from a prior response is always guaranteed to work, the
- * same contract `ecosystem` already has (README: "case-sensitive"). A result
+ * same contract `ecosystem` already has (docs/api.md: "case-sensitive"). A result
  * with no severity at all never matches, since there's nothing to compare.
  *
  * Was accepted by the query schema and documented since the first release

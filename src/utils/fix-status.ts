@@ -3,7 +3,7 @@
  * Returned per search result as `fixStatus` (with the source's own wording in
  * `fixStatusDetail`). A source that tracks a package as unfixed but gives no
  * reason yields `affected` with a null detail; results from sources that do
- * not track fix status at all carry null (see README).
+ * not track fix status at all carry null (see docs/api.md).
  *
  * The set may grow as more sources are mapped. Consumers must treat a value
  * they do not know like `affected`, so adding one never silently turns a

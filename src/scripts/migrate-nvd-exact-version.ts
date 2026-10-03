@@ -5,7 +5,7 @@
  * These are rows whose introducedInt/fixedInt/lastAffectedInt are all null
  * for the wrong reason: not a genuine CPE wildcard ("*"/"-", which
  * versionRangeWhere() is meant to match unconditionally by design -- see
- * README.md), but a real, specific version (Huawei's "v200r007c00spcb00"
+ * docs/architecture.md), but a real, specific version (Huawei's "v200r007c00spcb00"
  * V/R/C/SPC scheme, Jenkins plugin build ids like "1365.v4778ca_84b_de5")
  * that normalizeVersion() can't range-encode. Found via
  * validate-version-encoding.ts: 14,609 rows / 1,459 CVEs where this silently
