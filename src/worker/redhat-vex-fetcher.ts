@@ -41,7 +41,15 @@ const RHEL_PRODUCT_RE = /^red_hat_enterprise_linux_(\d+)$/;
 // history is long-EOL and irrelevant here; accepting all of it multiplied the
 // qualifying-CVE set several times over for no benefit and was a direct
 // contributor to an OOM crash processing the full archive (see git history).
-const SUPPORTED_MAJORS = new Set(['8', '9']);
+const SUPPORTED_MAJORS = new Set(['8', '9', '10']);
+
+// Majors Red Hat publishes no OVAL patch feed for: OVAL stops at RHEL 9, and
+// RHEL 10 security data is CSAF/VEX only. RedHatFetcher therefore has nothing
+// to import for these, so the fixed builds recorded here are the only source
+// of their fixed rows, not just of their unfixed ones.
+const VEX_ONLY_MAJORS = new Set(['10']);
+
+const DEBUG_PACKAGE_RE = /-debug(?:info|source)$/;
 
 /**
  * Maps a VEX document's compound product IDs ("red_hat_enterprise_linux_9:bzip2-libs")
@@ -210,6 +218,12 @@ export function newestFixedVersions(relationships: unknown, productStatus: unkno
   return result;
 }
 
+/** Splits a "<major>:<package>" key built by newestFixedVersions(). */
+function splitComponentKey(key: string): [string, string] {
+  const sep = key.indexOf(':');
+  return [key.slice(0, sep), key.slice(sep + 1)];
+}
+
 export interface VexCveInfo {
   cve: string;
   title?: string;
@@ -249,9 +263,11 @@ export function parseVexVulnerability(vuln: unknown): VexCveInfo | null {
 /**
  * Builds one NormalizedAdvisory for a single decoded VEX document's CVE, with
  * one affectedProduct entry per (RHEL major, package) pair that CVE affects
- * with no recorded fix. Returns null for the common case -- most CVEs in the
- * archive are for other Red Hat products entirely, or are fully fixed on
- * every RHEL major they touch (already covered by RedHatFetcher's OVAL feed).
+ * with no recorded fix, plus -- for majors with no OVAL feed (VEX_ONLY_MAJORS,
+ * i.e. RHEL 10) -- one patchAvailable: true row per fixed package, bounded by
+ * its newest recorded fix. Returns null for the common case -- most CVEs in
+ * the archive are for other Red Hat products entirely, or are fully fixed on
+ * every OVAL-covered major they touch (already covered by RedHatFetcher).
  *
  * affectedProducts carry no versionStart, and a versionEnd only when the same
  * document records a fixed build for that major in some release stream
@@ -269,8 +285,10 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
   const vulnerabilities = Array.isArray(d['vulnerabilities']) ? (d['vulnerabilities'] as unknown[]) : [];
   if (!productTree || vulnerabilities.length === 0) return null;
 
+  // No early return on an empty map: a CVE fully fixed on a VEX-only major
+  // records its builds per release stream ("AppStream-10.0.Z:...") and has no
+  // major-level relationship at all.
   const componentMap = buildRhelComponentMap(productTree['relationships']);
-  if (componentMap.size === 0) return null;
 
   // Red Hat's archive is one CVE per file, but the CSAF schema allows several
   // `vulnerabilities` entries per document -- fold every entry's unfixed
@@ -297,7 +315,31 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
       if (!current || compareRpmVersions(evr, current) > 0) newestFix.set(key, evr);
     }
   }
-  if (!info || components.length === 0) return null;
+  // Fixed rows for VEX-only majors, bounded by the newest fix the same way
+  // the unfixed rows above are. A component that is also unfixed on that
+  // major already has its row. Debug packages are skipped, as the OVAL feed
+  // never lists them either.
+  const fixedRows: NormalizedAdvisory['affectedProducts'] = [];
+  for (const [key, evr] of newestFix) {
+    const [major, pkg] = splitComponentKey(key);
+    if (!VEX_ONLY_MAJORS.has(major) || seen.has(key) || DEBUG_PACKAGE_RE.test(pkg)) continue;
+    fixedRows.push({ vendor: `red-hat-${major}`, product: pkg, versionEnd: evr, patchAvailable: true });
+  }
+  if (!info || (components.length === 0 && fixedRows.length === 0)) return null;
+
+  const unfixedRows: NormalizedAdvisory['affectedProducts'] = components.map(c => {
+    // Bounded by the newest fix the same document records for this major
+    // (newestFixedVersions()); unbounded -- every version -- when it records none.
+    const versionEnd = newestFix.get(`${c.major}:${c.pkg}`);
+    return {
+      vendor: `red-hat-${c.major}`,
+      product: c.pkg,
+      ...(versionEnd ? { versionEnd } : {}),
+      patchAvailable: false,
+      fixStatus: c.fixStatus,
+      fixStatusDetail: c.fixStatusDetail,
+    };
+  });
 
   return {
     externalId: info.cve,
@@ -307,19 +349,7 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
     cvssScore: info.cvssScore,
     cvssVector: info.cvssVector,
     distroPriority: info.impact,
-    affectedProducts: components.map(c => {
-      // Bounded by the newest fix the same document records for this major
-      // (newestFixedVersions()); unbounded -- every version -- when it records none.
-      const versionEnd = newestFix.get(`${c.major}:${c.pkg}`);
-      return {
-        vendor: `red-hat-${c.major}`,
-        product: c.pkg,
-        ...(versionEnd ? { versionEnd } : {}),
-        patchAvailable: false,
-        fixStatus: c.fixStatus,
-        fixStatusDetail: c.fixStatusDetail,
-      };
-    }),
+    affectedProducts: [...unfixedRows, ...fixedRows],
     // Not the full parsed document: a VEX doc's product_tree can carry
     // hundreds of container-image/product-family relationships entirely
     // unrelated to the handful of RHEL components extracted above, and
@@ -339,7 +369,8 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
  * every Red Hat product) and extracts the RHEL-specific "affected, no fix
  * available" facts it carries -- data the OVAL patch feed (RedHatFetcher)
  * structurally cannot represent, since that feed only ever publishes
- * definitions for CVEs that already have a released fix.
+ * definitions for CVEs that already have a released fix. For RHEL 10, which
+ * has no OVAL feed, it also supplies the fixed rows.
  *
  * The archive is large (a few hundred MB compressed, an order of magnitude
  * more decompressed) and covers every Red Hat product, not just RHEL, so it

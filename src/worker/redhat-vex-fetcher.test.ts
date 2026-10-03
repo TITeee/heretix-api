@@ -74,12 +74,11 @@ describe('buildRhelComponentMap', () => {
     expect(map.get('red_hat_enterprise_linux_9:sed.src')).toEqual({ major: '9', pkg: 'sed' });
   });
 
-  it('ignores RHEL majors outside the currently supported set (8, 9)', () => {
-    // The archive tracks every RHEL major back to 5; only 8/9 match
-    // RedHatFetcher's own supported variants and are worth the memory to
-    // carry through a full-archive run (see git history: unrestricted
-    // majors was a direct contributor to an OOM crash).
-    const relationships = ['6', '7', '10'].map(major => ({
+  it('ignores RHEL majors outside the currently supported set (8, 9, 10)', () => {
+    // The archive tracks every RHEL major back to 5; only supported majors
+    // are worth the memory to carry through a full-archive run (see git
+    // history: unrestricted majors was a direct contributor to an OOM crash).
+    const relationships = ['5', '6', '7'].map(major => ({
       category: 'default_component_of',
       full_product_name: { product_id: `red_hat_enterprise_linux_${major}:bzip2-libs` },
       product_reference: 'bzip2-libs',
@@ -326,6 +325,59 @@ describe('normalizeVexDoc', () => {
     ];
     expect(normalizeVexDoc(doc)?.affectedProducts).toEqual([
       { vendor: 'red-hat-9', product: 'bzip2-libs', patchAvailable: false, fixStatus: 'out_of_support', fixStatusDetail: 'Out of support scope' },
+    ]);
+  });
+
+  // Real CVE-2025-32462 shape: RHEL 10 fixes are recorded per release stream
+  // only, with no major-level "red_hat_enterprise_linux_10" relationship.
+  function rhel10FixedDoc(fixed: Array<[string, string]>, extra: Record<string, unknown> = {}) {
+    return {
+      product_tree: {
+        relationships: fixed.map(([stream, nevra]) => ({
+          category: 'default_component_of',
+          full_product_name: { product_id: `${stream}:${nevra}` },
+          product_reference: nevra,
+          relates_to_product_reference: stream,
+        })),
+      },
+      vulnerabilities: [{
+        cve: 'CVE-2025-32462',
+        title: 'sudo: LPE via host option',
+        product_status: { fixed: fixed.map(([stream, nevra]) => `${stream}:${nevra}`), ...extra },
+      }],
+    };
+  }
+
+  it('emits fixed rows for RHEL 10, which has no OVAL feed, bounded by the newest fix', () => {
+    const result = normalizeVexDoc(rhel10FixedDoc([
+      ['BaseOS-10.0.Z', 'sudo-0:1.9.15-8.p5.el10_0.2.x86_64'],
+      ['BaseOS-10.0.Z', 'sudo-0:1.9.15-8.p5.el10_0.2.src'],
+      ['BaseOS-10.0.Z', 'sudo-debuginfo-0:1.9.15-8.p5.el10_0.2.x86_64'], // debug package: no row
+      ['BaseOS-10.1.GA', 'sudo-0:1.9.17-1.el10_1.x86_64'],
+      ['BaseOS-9.6.0.Z.MAIN', 'sudo-0:1.9.5p2-10.el9_6.1.x86_64'], // OVAL-covered major: no row
+    ]));
+    expect(result?.affectedProducts).toEqual([
+      { vendor: 'red-hat-10', product: 'sudo', versionEnd: '0:1.9.17-1.el10_1', patchAvailable: true },
+    ]);
+  });
+
+  it('returns null when only OVAL-covered majors are fixed', () => {
+    expect(normalizeVexDoc(rhel10FixedDoc([['BaseOS-9.6.0.Z.MAIN', 'sudo-0:1.9.5p2-10.el9_6.1.x86_64']]))).toBeNull();
+  });
+
+  it('keeps a single unfixed row when a RHEL 10 component is both affected and fixed in some stream', () => {
+    const doc = rhel10FixedDoc(
+      [['AppStream-10.0.Z', 'sudo-0:1.9.15-8.p5.el10_0.2.x86_64']],
+      { known_affected: ['red_hat_enterprise_linux_10:sudo'] },
+    );
+    doc.product_tree.relationships.push({
+      category: 'default_component_of',
+      full_product_name: { product_id: 'red_hat_enterprise_linux_10:sudo' },
+      product_reference: 'sudo',
+      relates_to_product_reference: 'red_hat_enterprise_linux_10',
+    });
+    expect(normalizeVexDoc(doc)?.affectedProducts).toEqual([
+      { vendor: 'red-hat-10', product: 'sudo', versionEnd: '0:1.9.15-8.p5.el10_0.2', patchAvailable: false, fixStatus: 'affected', fixStatusDetail: null },
     ]);
   });
 
