@@ -5,6 +5,7 @@ import { requireApiKey } from '../auth.js';
 import { prisma } from '../../db/client.js';
 import { STATIC_JOBS } from '../../jobs/registry.js';
 import { getEnabledMap, defaultEnabled } from '../../jobs/config.js';
+import { isMaintainedOsvEcosystem } from '../../config/support-policy.js';
 
 function isOsvEcosystemSource(source: string): boolean {
   return source.startsWith('osv-') && source !== 'osv-delta';
@@ -93,6 +94,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         ecosystem: eco,
         source,
         enabled: isSourceEnabled(source),
+        maintained: isMaintainedOsvEcosystem(eco),
         recordCount: Number(r.count),
         status: job?.status ?? null,
         completedAt: job?.completedAt ?? null,
@@ -110,6 +112,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       ecosystem: 'Malware',
       source: 'osv-mal',
       enabled: isSourceEnabled('osv-mal'),
+      maintained: true,
       recordCount: malCount,
       status: malJob?.status ?? null,
       completedAt: malJob?.completedAt ?? null,
@@ -340,6 +343,30 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
           </tbody>
         </table>
       </div>
+      <!-- Releases outside src/config/support-policy.ts: data is kept but not maintained -->
+      <details id="osv-legacy" class="hidden border-t border-[var(--border)]">
+        <summary class="px-4 py-3 text-sm text-[var(--muted-foreground)] cursor-pointer select-none hover:bg-[var(--accent)]/40">
+          Outside support policy (<span id="osv-legacy-count">0</span>) &mdash; data kept, best effort
+        </summary>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
+                <th class="px-4 py-3 font-medium">Ecosystem</th>
+                <th class="px-4 py-3 font-medium">Status</th>
+                <th class="px-4 py-3 font-medium">Last Completed</th>
+                <th class="px-4 py-3 font-medium text-right">Duration</th>
+                <th class="px-4 py-3 font-medium text-right">Records</th>
+                <th class="px-4 py-3 font-medium text-right">Inserted</th>
+                <th class="px-4 py-3 font-medium text-right">Updated</th>
+                <th class="px-4 py-3 font-medium">Error</th>
+                <th class="px-4 py-3 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="osv-legacy-tbody"></tbody>
+          </table>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -573,7 +600,11 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         renderCards(data.recordCounts);
         renderTable('core-tbody', data.coreSources, s => s.label, { sort: true, emptyMessage: 'No import jobs found.' });
         renderTable('advisory-tbody', data.advisorySources, s => s.label, { sort: true, emptyMessage: 'No vendor advisories found.' });
-        renderTable('osv-tbody', data.osvEcosystems, e => e.ecosystem, { emptyMessage: 'No OSV ecosystems imported yet.' });
+        renderTable('osv-tbody', data.osvEcosystems.filter(e => e.maintained), e => e.ecosystem, { emptyMessage: 'No OSV ecosystems imported yet.' });
+        const legacy = data.osvEcosystems.filter(e => !e.maintained);
+        document.getElementById('osv-legacy').classList.toggle('hidden', legacy.length === 0);
+        document.getElementById('osv-legacy-count').textContent = legacy.length;
+        renderTable('osv-legacy-tbody', legacy, e => e.ecosystem, {});
         document.getElementById('last-updated').textContent =
           'Updated ' + new Date().toLocaleTimeString();
       } catch (err) {

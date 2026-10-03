@@ -144,7 +144,7 @@ GET /dashboard
 Displays:
 - **Record counts** — total rows in NVD, OSV, KEV, and Advisory tables
 - **Import status table** — latest `CollectionJob` per source with status badge, last completed time, inserted/updated counts, and any error message
-- **OSV ecosystems** — per-ecosystem import status and record counts
+- **OSV ecosystems** — per-ecosystem import status and record counts. Distro releases outside the [support policy](#supported-os-releases) are folded into a collapsed "Outside support policy" section (`osvEcosystems[].maintained: false` in the JSON)
 
 Auto-refreshes every 60 seconds. Also available as JSON:
 
@@ -225,7 +225,7 @@ The `ecosystem` parameter changes *which sources are queried* and *how versions 
 | `ecosystem` | Sources queried | Version comparison | Why |
 |---|---|---|---|
 | Language ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`) | **OSV only** | semver range | NVD/Advisory carry C-library/OS entries that share names with language packages (e.g. C `bzip2` vs. npm `bzip2`) — querying them here would produce false positives |
-| `Red Hat:*` (e.g. `Red Hat:9`) / `oracle-linux` | **Vendor advisory (OVAL) only** | RPM (`rpmvercmp`), against the advisory's `versionEnd` | OSV has no Red Hat/Oracle Linux ecosystem — the vendor OVAL feed is the only source of RHEL/Oracle Linux vulnerability data |
+| `Red Hat:*` (e.g. `Red Hat:9`) / `oracle-linux` | **Vendor advisory (OVAL/VEX) only** | RPM (`rpmvercmp`), against the advisory's `versionEnd` | OSV has no Red Hat/Oracle Linux ecosystem — the vendor OVAL feed is the only source of RHEL/Oracle Linux vulnerability data |
 | Other distro ecosystems (`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`) | **OSV only** | Exact match against `affectedVersions` (dpkg/rpm version strings) | Distro advisories express "needs a patched build," not an upstream version range (see [Known Issues](#known-issues)); vendor advisory product names also overlap with distro package names |
 | `advisory` | **Vendor advisory only** (Fortinet, PAN, Apache, Tomcat, nginx, etc.) | semver range, against the advisory's own version fields | Not a real NVD/OSV ecosystem name, so both return nothing for it — searchAdvisory() itself doesn't filter by ecosystem at all, so it's unaffected and returns its full result set. Use this to search vendor advisories only, with NVD/OSV noise excluded |
 | Not specified | OSV (distro ecosystems excluded) + NVD + Advisory (RPM module-stream rows excluded — see [Known Issues](#known-issues)) | semver range | Default — best for names not tied to a single ecosystem (e.g. `openssl`, `FortiOS`) |
@@ -290,7 +290,7 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 > |---|---|---|
 > | Ubuntu | `negligible` / `low` / `medium` / `high` / `critical` | Ubuntu priority (OSV) |
 > | Debian | `unimportant` / `low` / `medium` / `high` / `end-of-life` / `not yet assigned` — per release | Debian security tracker urgency (OSV) |
-> | RHEL | `low` / `moderate` / `important` / `critical` | Red Hat's per-CVE impact (OVAL; VEX for unfixed CVEs) |
+> | RHEL | `low` / `moderate` / `important` / `critical` | Red Hat's per-CVE impact (OVAL; VEX for unfixed CVEs and for RHEL 10) |
 >
 > Alpine, AlmaLinux, Rocky Linux and Oracle Linux results carry `null`: the sources imported for them either have no distro rating, or only one per advisory rather than per CVE (Oracle Linux ELSA).
 
@@ -681,7 +681,8 @@ Semantic versions are converted to integers for fast range queries:
 - Per CVE document, joins `product_tree.relationships` (`category: "default_component_of"` onto a bare `red_hat_enterprise_linux_N` product) to resolve each compound product ID down to (RHEL major, package name)
 - Extracts packages in `product_status.known_affected` and `product_status.under_investigation` that are *not* also in `product_status.fixed` — the former is Red Hat's explicit "still affected, no fix" signal, the latter "not yet confirmed either way" (narrower confidence, but not ruled out, so treated the same rather than silently dropped); either way, the OVAL feed above structurally cannot express an unresolved case at all
 - A `.src`-suffixed `product_reference` (a source RPM, with no separate relationship for its own same-named binary output — observed live on CVE-2026-5958/`sed`) has the suffix stripped to recover the installable package name; nothing on a running system is ever installed as `foo.src`, so left as-is it could never match an SBOM
-- Restricted to RHEL 8/9 (`RedHatFetcher`'s own supported variants) — the archive's older, unsupported majors were dropped almost entirely for volume, and were a direct contributor to an early OOM crash processing the full archive
+- Restricted to RHEL 8/9/10 — the archive's older, unsupported majors were dropped almost entirely for volume, and were a direct contributor to an early OOM crash processing the full archive
+- **RHEL 10 fixed CVEs come from here too.** Red Hat publishes no OVAL feed for RHEL 10 (the OVAL v2 tree stops at RHEL 9), so `RedHatFetcher` has nothing to import for it. For RHEL 10 only, each package in `product_status.fixed` also gets a `patchAvailable: true` row bounded by its newest fixed build across the release streams (`BaseOS-10.0.Z`, `AppStream-10.1.GA`, ...). `-debuginfo`/`-debugsource` packages are skipped, as OVAL never lists them. As with the unfixed bound, a build fixed only in an older stream (e.g. 10.0.Z when 10.1 also has a fix) is still reported
 - Stores affected-product rows with no version range at all and `patchAvailable: false` — the explicit signal `matchesRpmVersionRange()`/`searchAdvisory()` (`src/utils/search-helpers.ts`, `src/api/routes/vulnerabilities.ts`) key off of to match a query unconditionally, distinct from an ordinary row with no range and `patchAvailable` left `null`/unset, which still never matches (see "Confirmed-unfixed vulnerabilities" below)
 
 **No Oracle Linux equivalent**: Oracle Linux has the identical structural gap as Red Hat (its OVAL feed only ever publishes definitions for CVEs with a released fix), but no ingestible fix is planned here. Oracle does publish a CSAF VEX tree at `linux.oracle.com/csaf/beta/vex/` in the same schema Red Hat uses, confirmed live, but unlike Red Hat's there is no bulk archive (`archive_latest.txt`/`.tar.zst`) — only a per-CVE JSON file browsable one year-directory at a time, across every year back to 1999 (roughly 2,000–6,600 files/year sampled), which would mean tens of thousands of individual requests with no `changes.csv`-style incremental path, and the product IDs (`P-1309V-10:dovecot`) use a different, undocumented scheme than Red Hat's `red_hat_enterprise_linux_N:<pkg>` (no `relationships` array to resolve them from either). This isn't a corner this project cut alone: [Trivy's own docs](https://trivy.dev/docs/latest/coverage/os/oracle/) list unfixed-vulnerability support as unsupported for Oracle Linux, and Grype's data source ([vunnel](https://github.com/anchore/vunnel/tree/main/src/vunnel/providers/oracle)) is OVAL-only for it too — confirmed by reading its fetcher source, which has no CSAF/VEX client at all, unlike its RHEL provider.
@@ -805,6 +806,20 @@ pnpm validate:osv-coverage Go PyPI      # check only the named ecosystem(s)
 > Ecosystem names are **case-sensitive** — use exactly the values shown above.
 > Linux distribution ecosystems (Alpine, Debian, Ubuntu, AlmaLinux, Rocky Linux, etc.) can be imported without a version suffix (e.g. `pnpm import:osv ecosystem Ubuntu`). When **searching**, the version suffix is optional — `?ecosystem=Ubuntu` matches all Ubuntu versions via prefix match; `?ecosystem=Ubuntu:22.04:LTS` narrows to that specific version. Note that distro ecosystems store distro-format version strings, so upstream semver versions will not match.
 
+#### Supported OS releases
+
+OSV publishes data for distro releases going back to Debian 3.0, Alpine v3.2 and Ubuntu 14.04. Only the releases below are maintained, meaning they are covered by accuracy checks and fixes. The list is defined in [src/config/support-policy.ts](src/config/support-policy.ts) and was last reviewed on 2026-10-03.
+
+| Distro | Maintained releases | Notes |
+|---|---|---|
+| Debian | 11, 12, 13, 14 | 11 is past regular EOL but still under Debian LTS |
+| Ubuntu | 20.04, 22.04, 24.04, 26.04 LTS, including their Pro / FIPS / Realtime variants | 20.04 is kept for its ESM period. Interim releases (e.g. 25.10) are not maintained |
+| Alpine | v3.21 – v3.24 | |
+| AlmaLinux / Rocky Linux | 8, 9, 10 | |
+| Red Hat Enterprise Linux | 8, 9, 10 | Imported from Red Hat, not OSV: OVAL plus VEX for 8/9, VEX only for 10 (Red Hat publishes no RHEL 10 OVAL) |
+
+Data for other releases is **not deleted**. It stays searchable, but on a best-effort basis: it is not part of the accuracy guarantee. Language ecosystems (npm, PyPI, ...) are unaffected.
+
 ### CISA KEV
 
 ```bash
@@ -870,7 +885,7 @@ curl -H "x-api-key: $API_KEY" \
 ```bash
 pnpm import:redhat                    # Full feed, both variants (RHEL 9 + RHEL 8 OVAL)
 pnpm import:redhat rhel9              # RHEL 9 only
-pnpm import:redhat-vex                # CSAF VEX archive (confirmed-unfixed CVEs, RHEL 8/9)
+pnpm import:redhat-vex                # CSAF VEX archive (confirmed-unfixed CVEs, RHEL 8/9/10; fixed CVEs for RHEL 10)
 ```
 
 ```bash
@@ -879,7 +894,7 @@ curl -H "x-api-key: $API_KEY" \
   "http://localhost:5000/api/v1/vulnerabilities/search?package=bzip2-libs&ecosystem=Red%20Hat:9&version=1.0.8-11.el9"
 ```
 
-> **ecosystem value**: `Red Hat:<major>` (e.g. `Red Hat:9`). Range queries use RPM version strings, `epoch:version-release` included.
+> **ecosystem value**: `Red Hat:<major>` (e.g. `Red Hat:9`, `Red Hat:10`). Range queries use RPM version strings, `epoch:version-release` included. RHEL 8/9 come from OVAL plus VEX; RHEL 10 comes from VEX alone (no OVAL feed exists for it), so it needs `import:redhat-vex`, not `import:redhat`.
 > A confirmed-unfixed hit from `import:redhat-vex` always has `fixedVersion: null` and carries `red-hat-vex` in its `sources[]` array — `source` (singular) still prefers `nvd`/the CVE's own primary source when one exists, so `sources[]` is what identifies the VEX origin, not `source`.
 
 ### Sophos
