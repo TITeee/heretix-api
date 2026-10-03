@@ -11,6 +11,14 @@
  * explicit `enabled: true` row for every non-core source that doesn't
  * already have a JobConfig row, so their effective state doesn't change.
  *
+ * A fresh install has no previous behavior to preserve, and must keep the new
+ * defaults. migrate:all runs every pending script on a container's first
+ * start, this one included, so without the check below a fresh install got an
+ * enabled:true row for every vendor scraper and the new default never applied.
+ * A database with no CollectionJob row has never run an import: nothing is
+ * written there, and migrate:all records the script as applied so it does not
+ * run again later.
+ *
  * Usage:
  *   pnpm migrate:job-config-defaults
  */
@@ -20,6 +28,12 @@ import { STATIC_JOBS, listOsvEcosystemJobs } from '../jobs/registry.js';
 import { defaultEnabled } from '../jobs/config.js';
 
 async function main() {
+  if ((await prisma.collectionJob.count()) === 0) {
+    console.log('Fresh install (no import has ever run): keeping the default job states');
+    await closeDb();
+    return;
+  }
+
   const osvJobs = await listOsvEcosystemJobs();
   const nonCoreSources = [...STATIC_JOBS, ...osvJobs]
     .map((j) => j.source)
