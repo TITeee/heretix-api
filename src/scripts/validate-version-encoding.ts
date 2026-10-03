@@ -14,7 +14,7 @@
  *     lowerInt > upperInt (inclusive) means no version can ever satisfy the
  *     range -- a silent false negative. The exact shape of bug already fixed
  *     once for RHEL/Oracle Linux module streams (versionStart > versionEnd,
- *     see README.md's Known Issues) turns out not to be unique to that case.
+ *     see docs/known-issues.md) turns out not to be unique to that case.
  *  2. Encoding contract violations: the release slot's place value is 1000,
  *     but normalizeVersion()'s own upper-bound check only rejects
  *     release > 999999 -- a release in [1000, 999999] silently overflows
@@ -228,7 +228,7 @@ async function main() {
   console.log(`Collapsed/inverted ranges:  OSV=${collapsed.osvTotal}  NVD=${collapsed.nvdTotal}  Advisory=${collapsed.advTotal}`);
   console.log(`Release-slot overflows:     OSV=${overflow.osvOverflowCount} distinct strings  Advisory=${overflow.advOverflowCount} distinct strings (${overflow.reachableAdv} rows reachable via default search)`);
   console.log(`Same-package collisions:    OSV=${collisions.osvCollisionGroups} groups  Advisory=${collisions.advCollisionGroups} groups`);
-  console.log('\nThis is a report only -- no data was modified. See ACCURACY.md / README.md for how to interpret and prioritize these.');
+  console.log('\nThis is a report only -- no data was modified. See ACCURACY.md / docs/known-issues.md for how to interpret and prioritize these.');
 
   await prisma.$disconnect();
 }

@@ -1,1243 +1,217 @@
 # Heretix API
 
-**[heretix](https://titeee.github.io/heretix-web/)** プロジェクトの一部 — サーバ・コンテナ・ネットワーク機器（ファイアウォール・VPN）を横断してCVEを一元管理する、セルフホスト型の脆弱性管理スイートです（Apache-2.0）。
+heretix-api は、**[heretix](https://titeee.github.io/heretix-web/)** の脆弱性データベースです。heretix は、サーバー・コンテナ・ネットワーク機器（ファイアウォール、VPN など）の CVE を 1 つのインベントリで管理する、セルフホスト型のツール群です（Apache-2.0）。
 
-このリポジトリ heretix-api は、脆弱性データ層です。**OSV**・**NIST NVD**・**CISA KEV**・**EPSS**・公開されている**CVE Record**（CISA Vulnrichment の SSVC 評価を含む）・**ベンダーセキュリティアドバイザリ**を収集・正規化して1つの重複排除済みマスターテーブルにまとめ、REST API として [heretix-cli](https://github.com/TITeee/heretix-cli) と [heretix-management](https://github.com/TITeee/heretix-management) に提供します。
+[English README](README.md)
 
-## 特徴
+## 概要
 
-- **マルチソース**: OSV (Open Source Vulnerabilities)・NIST NVD (CVE)・ベンダーアドバイザリ（Fortinet / Palo Alto Networks / Cisco PSIRT / Sophos / SonicWall / Oracle CPU / Oracle Linux / Red Hat / Broadcom/VMware / Splunk / Apache HTTP Server / Apache Tomcat / nginx / Zabbix / Check Point 等）に対応
-- **マルウェア検知**: OSV の `MAL-YYYY-NNNN` エントリ（悪意あるパッケージ）を [ossf/malicious-packages](https://github.com/ossf/malicious-packages) からインポートし、脆弱性検索エンドポイントで検索可能
-- **重複排除**: `Vulnerability` マスターテーブルが CVE ID をキーにソース間の重複を吸収
-- **CPE エイリアス対応**: NVD の CPE product 名変更（ベンダー買収等）に追従する `src/config/product-aliases.ts` で検索精度を維持
-- **リスク評価値**: CISA KEV（悪用実績フラグ）・EPSS（悪用予測スコア）・CISA Vulnrichmentの SSVC評価（悪用状況・自動化容易性・技術的影響度）を脆弱性に紐づけ
-- **CVE Record取り込み**: 全CVE Record（[CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5)）が持つCNA宣言の影響製品を取り込み。専用アドバイザリフェッチャーが無いベンダーもカバー
-- **シンプル**: PostgreSQLのみで動作。Docker Compose によるデプロイにも対応
-- **高速検索**: 正規化されたバージョン番号による整数比較で高速な範囲検索を実現
-- **スケーラブル**: 生データをJSONBで保存し、検索用フィールドを正規化
-- **RESTful API**: Fastifyベースの軽量で高速なAPIサーバー
-- **NVD全件ミラー**: NVD全CVE（約40万件）のローカルミラーに対応（差分更新も可能）
-- **OSV差分更新**: `CollectionJob` で最終実行日時を管理し、変更があったエントリのみを処理する差分更新に対応
+パッケージ名とバージョンを指定すると、そのバージョンに該当する脆弱性を返す API です。脆弱性データは各公開ソースから事前に取り込んでおき、そのデータを検索します。
 
-
-## セットアップ
-
-### 方法A: Docker（推奨）
-
-```bash
-cp .env.example .env   # 値を編集、特に API_KEY
-
-# フォアグラウンドで起動（初回はログを確認しながら起動することを推奨）
-docker compose up --build
-
-# バックグラウンドで起動（デタッチモード）
-docker compose up --build -d
-```
-
-API は `http://localhost:5000` で起動します。停止は `docker compose down`（`-v` を追加するとデータベースボリュームも削除）。Postgres と API を1コマンドでまとめて起動できます。
-
-### 方法B: 手動セットアップ（ネイティブ PostgreSQL）
-
-1. **依存関係のインストール**
-   ```bash
-   pnpm install
-   ```
-
-2. **PostgreSQL の準備** — 既存のインスタンスを使うか、新規にインストール:
-   ```bash
-   psql --version   # PostgreSQL 15以上がインストールされていることを確認
-   createdb vulndb
-   ```
-
-3. **環境変数の設定** — `.env.example` を `.env` にコピーして値を編集。詳細は下記「[環境変数](#環境変数)」参照。
-
-4. **データベースマイグレーション**
-   ```bash
-   pnpm db:migrate
-   ```
-   Dockerイメージはコンテナ起動のたびに、スキーママイグレーションの直後に `pnpm
-   migrate:all` も自動実行します（下記「[一回限りのデータバックフィル](#一回限りのデータバックフィル)」参照）。ローカルでも `pnpm
-   db:migrate` の後に実行しておくと、開発用DBを同じ状態に保てます。
-
-5. **サーバー起動**
-   ```bash
-   pnpm dev              # 開発（自動リロードあり）
-   # または本番向け:
-   pnpm build && pnpm start
-   ```
-   サーバーは http://localhost:5000 で起動します。
-
-> **開発時のインポートスクリプト**: `pnpm import:*` コマンドはコンパイル済みの `dist/` を参照します。`pnpm dev` のみで起動している場合（ビルドなし）は、`pnpm exec tsx` で直接実行してください：
-> ```bash
-> pnpm exec tsx src/scripts/import-osv.ts update npm
-> pnpm exec tsx src/scripts/import-nvd.ts update
-> ```
-
-### 環境変数
-
-```env
-DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public"
-PORT=5000
-NODE_ENV=development                # 本番環境では "production"
-API_KEY=your-api-key-here           # 必須。x-api-key ヘッダーが一致しないリクエストは 401
-ALLOWED_ORIGINS=                    # 任意、カンマ区切り。クロスオリジンのレスポンスをブラウザに読ませてよいオリジン（既定: なし）。サーバー間通信の呼び出し元には影響しない
-DATABASE_POOL_MAX=20                # 任意。PostgreSQL コネクションプールのサイズ（既定 20）
-NVD_API_KEY=                        # 任意。NVD のレート制限を 10→50 req/min に緩和
-CISCO_CLIENT_ID=                    # Cisco PSIRT インポートに必須（openVuln API クライアント ID）
-CISCO_CLIENT_SECRET=                # Cisco PSIRT インポートに必須（openVuln API クライアントシークレット）
-GITHUB_TOKEN=                       # 任意。MAL インポート時の GitHub tree API 呼び出し（1回のみ）を認証する。同一 IP から1時間に60回以上実行する場合のみ必要
-```
-
-## データベース管理
-
-### 一回限りのデータバックフィル
-
-修正の中には、今後の書き込み方法を変えるだけでなく、**修正前に既に書き込まれていた行そのものを直す**必要があるものがあります。[`src/scripts/`](src/scripts/) 配下の `pnpm migrate:*` スクリプトがそれで、修正1件につき1本あります。どれも冪等です — 対象がまだ残っていればそれを直し、無ければ何もしません。何度実行しても安全です。
-
-これらは1回の実行でまとめて流します:
-```bash
-pnpm migrate:all
-```
-このコマンドは `dist/scripts/` を走査して `migrate-*.js` という名前のファイルを全て順番に実行します。新しいスクリプトはこのディレクトリに置くだけでよく、どこかのリストに追加登録する必要はありません。`entrypoint.sh` がコンテナ起動のたびに `prisma migrate deploy` の直後にこれを自動実行するので、新しく追加されたバックフィルも「実行を忘れる」ことなく次のデプロイで本番に反映されます。変更を取り込んだ後はローカルでも実行してください。
-
-サーバーの起動前に実行されるため、未適用のバックフィルがすべて終わるまで API は応答しません。ほとんどは数秒で終わりますが、全レコードの OSV の JSON を読むものは、データが揃った DB では数分かかります(OSV 約43万件での実測: `migrate-backfill-distro-priority` 約8分半、`migrate-normalize-osv-severity` 約4分)。そうしたスクリプトを含むデプロイの後は、最初の起動がその分だけ遅くなります(2回目以降は、適用済みとして記録されたスクリプトは実行されません)。オーケストレーターの起動タイムアウトやヘルスチェックを設定している場合は、その時間を見込んでください。
-
-個別のスクリプトも単独で実行可能です(`pnpm migrate:job-config-defaults` など)。特定の1本だけ試したい場合や、途中で失敗した後に再実行したい場合に使います。
-
-### Prisma Studio
-データベースをGUIで確認・編集できます。
-```bash
-pnpm db:studio
-```
-ブラウザで http://localhost:5555 が開きます。
-
-## インポートステータス ダッシュボード
-
-`/dashboard` にアクセスすると、インポート状況の確認と収集ジョブの操作ができる Web UI が表示されます（ページの表示は認証不要ですが、データの読み込みには API キーが必要です）。
-
-![インポートステータス ダッシュボード](docs/dashboard.png)
-
-```
-GET /dashboard
-```
-
-表示内容:
-- **レコード数** — NVD / OSV / KEV / Advisory テーブルの総件数
-- **インポートステータステーブル** — ソースごとの最新 `CollectionJob`（ステータスバッジ・最終完了日時・追加/更新件数・エラーメッセージ）
-- **OSV エコシステム一覧** — エコシステムごとのインポート状況・件数
-
-60 秒ごとに自動リフレッシュ。JSON での取得も可能:
-
-```
-GET /api/v1/import-status     # x-api-key が必要
-```
-
-ページ自体は認証不要ですが、そこに表示されるデータは認証が必要です。右上の入力欄に API キーを入力すると読み込まれます。キーはブラウザの `localStorage` に保存され、以降のリクエストに付与されます。
-
-エコシステムごとの件数(`osvEcosystems[].recordCount`)は5分間キャッシュされます。裏側の`COUNT(DISTINCT ...)`は`OSVAffectedPackage`テーブル全体を(絞り込み条件なしで)スキャンする処理で、実データは1日1回のOSV差分cronでしか変わらないため、60秒ごとのポーリングのたびに再実行しても負荷が増えるだけでした。レスポンスの他の部分はキャッシュしていません。
-
-### ジョブの操作（ON/OFF・手動実行）
-
-各行の **On/Off トグル** でスケジューラによる自動実行を有効/無効にでき、**Run ボタン** でその場で手動実行できます。OSV はエコシステム単位で個別に制御できます。
-
-これらの操作は状態を変更するため、`x-api-key` による認証が必要です（ダッシュボードがデータを読み込む際に使うものと同じキーです）。
-
-対応するエンドポイント（`/api/v1` 認証スコープ内）:
-
-```
-POST  /api/v1/jobs/:source/run     # 手動実行（fire-and-forget、202。有効/無効に関わらず実行可能）
-PATCH /api/v1/jobs/:source          # 有効/無効の切り替え。body: { "enabled": boolean }
-```
-
-`:source` は `CollectionJob.source`（`nvd`, `kev`, `advisory-fortinet`, `osv-npm` など）。実行中に再度実行すると `409`、未知のソースは `404` を返します。有効/無効の状態は `JobConfig` テーブルに永続化され、行がなければデフォルト有効です。
-
-例: `http://localhost:5000/dashboard`
-
----
-
-## API エンドポイント
-
-### Health Check
-サーバーの状態を確認します。
-```
-GET /health
-```
-
-**レスポンス例:**
-```json
-{
-  "status": "ok",
-  "timestamp": "2025-01-18T12:00:00.000Z"
-}
-```
-
-### 脆弱性検索（単体）
-指定されたパッケージとバージョンに影響する脆弱性を検索します。OSV・NVD・ベンダーアドバイザリテーブルを並行検索し、マスターテーブルで重複排除した結果を返します。
-```
-GET /api/v1/vulnerabilities/search
-```
-
-**クエリパラメータ:**
-- `package` (必須): パッケージ名またはプロダクト名 (例: `lodash`, `FortiOS`)
-- `version` (必須): バージョン (例: `4.17.20`, `7.4.3`)
-- `ecosystem` (オプション): エコシステムまたはベンダー (例: `npm`, `PyPI`, `Go`, `composer`, `fortinet`)
-- `severity` (オプション): 深刻度フィルター (配列)
-- `limit` (オプション): 結果の最大数 (デフォルト: 500, 最大: 500)
-- `offset` (オプション): オフセット (デフォルト: 0)
-
-**リクエスト例:**
-```bash
-# OSV/NVD（パッケージ）
-curl "http://localhost:3001/api/v1/vulnerabilities/search?package=lodash&version=4.17.20&ecosystem=npm"
-
-# ベンダーアドバイザリ（Fortinet プロダクト）—— ecosystem 指定不要
-curl "http://localhost:3001/api/v1/vulnerabilities/search?package=FortiOS&version=7.4.3"
-```
-
-**ecosystem 別の検索挙動:**
-
-`ecosystem` パラメータは単なる表示フィルタではなく、**どのソースが検索されるか・どうバージョン比較されるか**を変えます。ここを理解せずに検索すると「結果が来ない/多すぎる」原因になりがちです。
-
-| `ecosystem` | 検索対象ソース | バージョン比較方式 | 理由 |
-|---|---|---|---|
-| 言語エコシステム（`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`） | **OSV のみ** | semver 範囲比較 | NVD/Advisory には言語パッケージと同名の C ライブラリ/OS パッケージが含まれており（例: C の `bzip2` vs npm の `bzip2`）、検索すると誤検知になるため |
-| `Red Hat:*`（例: `Red Hat:9`）/ `oracle-linux` | **ベンダーアドバイザリ（OVAL）のみ** | RPM 比較（`rpmvercmp`）、アドバイザリの `versionEnd` と直接比較 | OSV に Red Hat/Oracle Linux エコシステムが存在しないため、ベンダー OVAL フィードが唯一のソース。OVALの「`X`より前は脆弱」というデータには下限がないため、RPMモジュールストリーム製品（postgresql, nodejs, mariadb, php, ruby, redis, podman, qemu-kvm, libvirt等、同一プロダクト名の下に複数バージョン系統が並行するもの）では、ある系統の修正バージョンが無関係な別系統のクエリを数値的に巻き込まないよう、ecosystemの明示指定が必要 |
-| その他ディストロ（`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`） | **OSV のみ** | `affectedVersions` との完全一致（dpkg/rpm 形式のバージョン文字列） | ディストロのアドバイザリは「パッチ適用が必要」を表現しているだけでアップストリームのバージョン範囲ではないため（詳細は [既知の問題・制限事項](#既知の問題制限事項) 参照）。ベンダーアドバイザリのプロダクト名もディストロのパッケージ名と衝突しうる |
-| `advisory` | **ベンダーアドバイザリのみ**（Fortinet, PAN, Apache, Tomcat, nginx 等） | semver 範囲比較（アドバイザリ自身のバージョンフィールドと比較） | 実在するNVD/OSVのエコシステム名ではないため両方とも空振りする一方、`searchAdvisory()`自体はecosystemで絞り込みを行わないため影響を受けず、フルの結果を返す。NVD/OSVのノイズを除いてベンダーアドバイザリだけを検索したい場合に使う |
-| 未指定 | OSV（ディストロエコシステムを除く）+ NVD + Advisory（Red Hat/Oracle LinuxのOVALデータは除外— 上の行を参照） | semver 範囲比較 | デフォルト。特定エコシステムに紐づかない名前（`openssl`, `FortiOS` 等）に向く |
-
-```bash
-# 言語エコシステム — OSV のみ
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=lodash&version=4.17.20&ecosystem=npm"
-
-# Red Hat — OVAL アドバイザリに対する RPM バージョン比較
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=rsync&version=3.2.4-1.el9&ecosystem=Red%20Hat:9"
-
-# ディストロエコシステム — バージョン文字列の完全一致
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosystem=Ubuntu:20.04:LTS"
-
-# advisory — ベンダーアドバイザリのみ、NVD/OSVを除外
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=httpd&version=2.4.60&ecosystem=advisory"
-```
-
-**レスポンス例:**
-```json
-{
-  "results": [
-    {
-      "id": "clxxx...",
-      "externalId": "CVE-2019-10744",
-      "source": "nvd",
-      "severity": "CRITICAL",
-      "cvssScore": 9.8,
-      "cvssVector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
-      "summary": "Prototype pollution in lodash",
-      "publishedAt": "2019-07-26T00:00:00.000Z",
-      "approximateMatch": false,
-      "isKev": true,
-      "epssScore": 0.97,
-      "epssPercentile": 0.998
-    }
-  ]
-}
-```
-
-OSV・NVD・ベンダーアドバイザリの3テーブルを並行検索し、**Vulnerability マスターテーブルの ID で重複排除**して返します。同一の CVE が複数ソースに存在する場合も1件のみ返ります（NVD の CVSS データが優先）。
-
-`source` の値:
-- `"nvd"` — NVD (CVE ID あり)
-- `"osv"` — OSV (CVE ID なし)
-- `"advisory"` — ベンダーアドバイザリのみ（CVE ID なし・OSV ID なし）
-
-> `approximateMatch` が `true` の場合、バージョンの正規化に失敗したため、パッケージ名とエコシステムの一致のみで検索された結果です。
-
-> `isKev` が `true` の場合、CISA KEV（Known Exploited Vulnerabilities）カタログに掲載された実際に悪用された脆弱性です。
-
-> `epssScore` は悪用される確率（0〜1）、`epssPercentile` は全CVEの中でのパーセンタイルです。
-
-### 脆弱性検索（バッチ）
-複数パッケージを一括で検索します。1リクエストで最大1000件まで対応。
-```
-POST /api/v1/vulnerabilities/search/batch
-```
-
-**リクエスト例:**
-```bash
-curl -X POST "http://localhost:3001/api/v1/vulnerabilities/search/batch" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "packages": [
-      { "package": "lodash", "version": "4.17.20", "ecosystem": "npm" },
-      { "package": "requests", "version": "2.31.0", "ecosystem": "PyPI" }
-    ]
-  }'
-```
-
-**レスポンス例:**
-```json
-{
-  "results": [
-    {
-      "package": "lodash",
-      "version": "4.17.20",
-      "ecosystem": "npm",
-      "vulnerabilities": [
-        {
-          "id": "clxxx...",
-          "externalId": "CVE-2019-10744",
-          "source": "nvd",
-          "severity": "CRITICAL",
-          "cvssScore": 9.8,
-          "cvssVector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
-          "summary": "Prototype pollution in lodash",
-          "publishedAt": "2019-07-26T00:00:00.000Z",
-          "approximateMatch": false,
-          "isKev": true,
-          "epssScore": 0.97,
-          "epssPercentile": 0.998
-        }
-      ]
-    },
-    {
-      "package": "requests",
-      "version": "2.31.0",
-      "ecosystem": "PyPI",
-      "vulnerabilities": []
-    }
-  ]
-}
-```
-
-### CPE検索（NVD専用）
-CPE (Common Platform Enumeration) 文字列で脆弱性を検索します。NVDテーブルのみ対象です。
-```
-GET /api/v1/vulnerabilities/search/cpe
-```
-
-**クエリパラメータ:**
-- `cpe` (必須): CPE 2.3 文字列 (例: `cpe:2.3:a:vercel:next.js:15.1.0:*:*:*:*:*:*:*`)
-- `limit` (オプション): 結果の最大数 (デフォルト: 500, 最大: 500)
-- `offset` (オプション): オフセット (デフォルト: 0)
-
-**リクエスト例:**
-```bash
-# バージョン指定あり（範囲フィルタが有効）
-curl "http://localhost:3001/api/v1/vulnerabilities/search/cpe?cpe=cpe:2.3:a:vercel:next.js:15.1.0:*:*:*:*:*:*:*"
-
-# バージョン省略（vendor+productに一致する全脆弱性）
-curl "http://localhost:3001/api/v1/vulnerabilities/search/cpe?cpe=cpe:2.3:a:vercel:next.js:*"
-```
-
-CPEの `<version>` 部分が `*` または省略の場合は `approximateMatch: true` で全件返します。
-
-### 脆弱性詳細
-CVE ID・OSV ID・アドバイザリ ID（FG-IR-xx-xxx 等）で詳細情報を取得します。
-```
-GET /api/v1/vulnerabilities/:id
-```
-
-**パラメータ:**
-- `id`: CVE ID (例: `CVE-2021-44228`)、OSV ID (例: `GHSA-67hx-6x53-jw92`)、またはアドバイザリ ID (例: `FG-IR-25-934`)
-
-**リクエスト例:**
-```bash
-curl "http://localhost:3001/api/v1/vulnerabilities/CVE-2021-44228"
-curl "http://localhost:3001/api/v1/vulnerabilities/GHSA-67hx-6x53-jw92"
-curl "http://localhost:3001/api/v1/vulnerabilities/FG-IR-25-934"
-```
-
-利用可能な場合、既存のKEV/EPSSフィールドと合わせて、CISA VulnrichmentのSSVC評価(`ssvcExploitation`、`ssvcAutomatable`、`ssvcTechnicalImpact`、`ssvcTimestamp`)もレスポンスに含まれます――詳細は「CVE Program（CNA）＆ CISA Vulnrichment収集」を参照。通常の製品名+バージョン検索(`GET /vulnerabilities/search`)には含まれず、このID検索のみで返されます。
-
-### 統計情報
-データベース内の脆弱性統計を取得します。
-```
-GET /api/v1/vulnerabilities/stats
-```
-
-**レスポンス例:**
-```json
-{
-  "total": 280283,
-  "bySeverity": [
-    { "severity": "CRITICAL", "_count": 8234 },
-    { "severity": "HIGH", "_count": 71234 }
-  ],
-  "kevCount": 1238,
-  "withEpss": 223107,
-  "bySource": {
-    "osv": 269380,
-    "nvd": 11311,
-    "advisory": 47,
-    "advisoryByVendor": { "fortinet": 47, "paloalto": 21, "cisco": 21 }
-  }
-}
-```
-
-## プロジェクト構造
-
-```
-heretix-api/
-├── src/
-│   ├── api/
-│   │   ├── routes/
-│   │   │   ├── vulnerabilities.ts  # 脆弱性API エンドポイント
-│   │   │   ├── vulnerabilities.integration.test.ts  # 検索ルート結合テスト（fastify.inject, Vitest）
-│   │   │   ├── dashboard.ts        # ダッシュボードUI・import-status API
-│   │   │   ├── dashboard.integration.test.ts  # import-status の認証・ダッシュボード出力エスケープのテスト
-│   │   │   └── jobs.ts             # ジョブ手動実行・有効/無効切り替えAPI
-│   │   ├── server.ts               # Fastifyサーバー設定
-│   │   ├── server.integration.test.ts  # CORS挙動のテスト（Vitest、TEST_DATABASE_URL 必須）
-│   │   └── auth.ts                 # x-api-key 認証フック共通実装（タイミング安全比較）
-│   ├── jobs/
-│   │   ├── types.ts                # JobDefinition / JobResult 型
-│   │   ├── registry.ts             # 全ジョブ定義（STATIC_JOBS）+ 動的リゾルバ
-│   │   ├── executor.ts             # ジョブ共通ライフサイクル + 二重実行防止
-│   │   ├── executor.integration.test.ts  # executeJob / getDeltaCursor 結合テスト（Vitest）
-│   │   └── config.ts               # ジョブ有効/無効（JobConfig）の読み書き
-│   ├── db/
-│   │   ├── client.ts               # Prismaクライアント
-│   │   ├── bulk-insert.ts          # createManyChunked() — PostgreSQLのバインドパラメータ上限に収まるよう createMany を分割
-│   │   └── bulk-insert.test.ts     # 単体テスト（Vitest）
-│   ├── test-utils/
-│   │   └── db.ts                   # resetDb() — 全テーブル truncate、結合テストの beforeEach で使用
-│   ├── scripts/
-│   │   ├── import-osv.ts                    # OSVデータインポートCLI
-│   │   ├── import-nvd.ts                    # NVDデータインポートCLI
-│   │   ├── import-kev.ts                    # CISA KEVインポートCLI
-│   │   ├── import-epss.ts                   # EPSSスコアインポートCLI
-│   │   ├── import-fortinet.ts               # Fortinet PSIRTアドバイザリインポートCLI
-│   │   ├── import-pan.ts                    # Palo Alto Networks PSIRTアドバイザリインポートCLI
-│   │   ├── import-cisco.ts                  # Cisco PSIRTアドバイザリインポートCLI
-│   │   ├── import-oracle-linux.ts           # Oracle Linux ELSAインポートCLI
-│   │   ├── import-broadcom.ts               # Broadcom/VMware VMSAインポートCLI
-│   │   ├── import-sophos.ts                 # Sophosアドバイザリインポートcli
-│   │   ├── import-sonicwall.ts              # SonicWall PSIRTインポートCLI
-│   │   ├── import-redhat.ts                 # Red Hat RHSA/RHBAインポートCLI
-│   │   ├── import-redhat-vex.ts              # Red Hat CSAF VEX（未修正CVE）インポートCLI
-│   │   ├── import-oracle-cpu.ts             # Oracle CPU（四半期パッチ）インポートCLI
-│   │   ├── import-splunk.ts                 # Splunk セキュリティアドバイザリインポートCLI
-│   │   ├── import-apache.ts                 # Apache HTTP Server アドバイザリインポートCLI
-│   │   ├── import-zabbix.ts                 # Zabbix セキュリティアドバイザリインポートCLI
-│   │   ├── import-tomcat.ts                 # Apache Tomcat アドバイザリインポートCLI
-│   │   ├── import-nginx.ts                  # nginx アドバイザリインポートCLI
-│   │   ├── import-checkpoint.ts             # Check Point アドバイザリインポートCLI
-│   │   ├── import-cna.ts                    # CVE Program（CNA影響製品）+ CISA Vulnrichment（SSVC）インポートCLI
-│   │   ├── validate-tomcat.ts               # Tomcat 検索精度検証
-│   │   ├── validate-apache.ts               # Apache HTTPD 検索精度検証
-│   │   ├── validate-nginx.ts                # nginx 検索精度検証
-│   │   ├── validate-openssl.ts              # OpenSSL 検索精度検証
-│   │   ├── validate-postgresql.ts           # PostgreSQL 検索精度検証
-│   │   ├── validate-cna.ts                  # CNA影響製品の検索精度検証
-│   │   └── clear-db.ts                      # DB全テーブル削除（Vulnerability含む全テーブル）
-│   ├── worker/
-│   │   ├── osv-fetcher.ts          # OSV API連携ロジック
-│   │   ├── nvd-fetcher.ts          # NVD REST API v2.0連携ロジック
-│   │   ├── kev-fetcher.ts          # CISA KEVカタログ取得・インポート
-│   │   ├── epss-fetcher.ts         # FIRST.org EPSS日次CSV取得・インポート
-│   │   ├── advisory-fetcher.ts     # ベンダーアドバイザリ共通インターフェース・インポート関数
-│   │   ├── fortinet-fetcher.ts     # Fortinet PSIRT CSAF取得・パース
-│   │   ├── pan-fetcher.ts          # Palo Alto Networks PSIRT CSAF取得・パース
-│   │   ├── cisco-fetcher.ts        # Cisco PSIRT openVuln API取得・パース
-│   │   ├── oracle-linux-fetcher.ts # Oracle Linux OVAL XML取得・bzip2解凍・パース
-│   │   ├── redhat-fetcher.ts      # Red Hat OVAL v2 XML取得・bzip2解凍・パース
-│   │   ├── redhat-vex-fetcher.ts  # Red Hat CSAF VEXアーカイブ取得・展開・パース（未修正CVE）
-│   │   ├── sophos-fetcher.ts       # Sophos サイトマップ+RSS+ヘッドレスブラウザ取得
-│   │   ├── sonicwall-fetcher.ts    # SonicWall PSIRT JSON API取得・パース
-│   │   ├── oracle-cpu-fetcher.ts   # Oracle CPU CSAF 2.0取得・CVE別分割
-│   │   ├── broadcom-fetcher.ts     # Broadcom/VMware VMSA JSON API+Playwright取得
-│   │   ├── splunk-fetcher.ts       # Splunk セキュリティアドバイザリアーカイブHTML取得・パース
-│   │   ├── apache-fetcher.ts       # Apache HTTP Server (httpd) セキュリティページHTML取得・パース
-│   │   ├── zabbix-fetcher.ts       # Zabbix セキュリティアドバイザリ検索API取得・パース
-│   │   ├── tomcat-fetcher.ts       # Apache Tomcat 複数ブランチページ取得・パース
-│   │   ├── nginx-fetcher.ts        # nginx セキュリティアドバイザリページ取得・パース
-│   │   ├── checkpoint-fetcher.ts   # Check Point アドバイザリJSON API+詳細ページ取得・パース
-│   │   ├── cna-fetcher.ts          # cvelistV5バンドルダウンロード + CVE Record/CISA Vulnrichment（SSVC）パース（純粋関数、DBインポート無し）
-│   │   ├── cna-importer.ts         # CNA影響製品+SSVCの永続化、ブートストラップ・差分の制御
-│   │   ├── *.test.ts               # バージョン範囲パーサーの単体テスト（redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint/cna, Vitest）
-│   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData 結合テスト（Vitest、TEST_DATABASE_URL 必須）
-│   │   ├── cna-importer.integration.test.ts      # CNA/SSVC インポート結合テスト（Vitest、TEST_DATABASE_URL 必須）
-│   │   ├── epss-fetcher.integration.test.ts      # importEPSSData 結合テスト（生の一括UPDATEの挙動）
-│   │   └── osv-fetcher.integration.test.ts       # importOSVData 結合テスト（孤立マスター行の回帰テスト）
-│   ├── config/
-│   │   ├── product-aliases.ts      # NVD CPE product 名エイリアスマッピング
-│   │   └── product-aliases.test.ts # 単体テスト（Vitest）
-│   ├── utils/
-│   │   ├── logger.ts               # Pinoロガー設定
-│   │   ├── version.ts              # バージョン正規化ユーティリティ（semver → BigInt）
-│   │   ├── rpm-version.ts          # RPMバージョン比較（rpmvercmp アルゴリズム）
-│   │   ├── cpe.ts                  # CPE 2.3 パースユーティリティ
-│   │   ├── search-helpers.ts       # 検索時の判定ロジック（dedup・エコシステム分類等、vulnerabilities.ts から抽出）
-│   │   ├── browser.ts              # Playwright stealth ブラウザ共有シングルトン
-│   │   └── *.test.ts               # 各ユーティリティの単体テスト（Vitest）
-│   ├── scheduler.ts                # node-cron ベースの自動更新スケジューラ
-│   └── index.ts                    # エントリーポイント
-├── prisma/
-│   ├── schema.prisma               # データベーススキーマ定義
-│   └── migrations/                 # マイグレーションファイル
-├── vitest.config.ts                # 単体テスト設定（Vitest、DB不要）
-├── vitest.integration.config.ts    # 結合テスト設定（Vitest、TEST_DATABASE_URL 必須）
-├── package.json                    # 依存関係とスクリプト
-├── tsconfig.json                   # TypeScript設定
-└── .env                            # 環境変数設定
-```
-
-### 主要コンポーネント
-
-#### データモデル ([prisma/schema.prisma](prisma/schema.prisma))
-
-```
-Vulnerability (マスター)
-  ├── cveId      @unique  — CVE ID（NVD/OSV/Advisory 共通の重複排除キー）
-  ├── osvId      @unique  — OSV ID（GHSA-xxx, PYSEC-xxx 等、CVE なしの場合のみ）
-  ├── advisoryId @unique  — ベンダーアドバイザリ ID（CVE/OSV なしの場合のみ）
-  ├── severity / cvssScore / cvssVector / summary
-  ├── isKev / kevDateAdded / kevDueDate / ...  — CISA KEV
-  ├── epssScore / epssPercentile / epssUpdatedAt — EPSS
-  ├── nvdVulnerability       — NVDVulnerability（1対1）
-  ├── osvVulnerabilities     — OSVVulnerability[]（1対多）
-  └── advisoryVulnerabilities — AdvisoryVulnerability[]（1対多）
-```
-
-- **OSVVulnerability** / **OSVAffectedPackage**: OSV・Security Advisory データ（生データ + 検索用フィールド）
-- **NVDVulnerability** / **NVDAffectedPackage**: NIST NVD (CVE) データ。CPEをパッケージ名にマッピング
-- **AdvisoryVulnerability** / **AdvisoryAffectedProduct**: ベンダーアドバイザリデータ。プロダクト名・バージョン範囲を格納
-- **CollectionJob**: データ収集ジョブの実行履歴・状態管理
-- **JobConfig**: 収集ジョブの有効/無効フラグ（ソースごと、行がなければデフォルト有効）
-
-##### 重複排除キーの優先度
-
-| フィールド | 用途 |
-|---|---|
-| `cveId` | CVE ID が存在する場合（最優先）。NVD・OSV・アドバイザリが同一行を共有 |
-| `osvId` | CVE ID がなく OSV ID がある場合（GHSA-xxx, PYSEC-xxx 等） |
-| `advisoryId` | CVE/OSV ID がないベンダーアドバイザリ固有の ID（FG-IR-xx-xxx 等） |
-
-#### バージョン正規化 ([src/utils/version.ts](src/utils/version.ts))
-セマンティックバージョニングを整数に変換し、高速な範囲検索を実現:
-- `1.2.3` → `1_002_003_000` (major × 1,000,000,000 + minor × 1,000,000 + patch × 1,000 + release)
-- RPMリリース番号も4番目のコンポーネントとして含める: `2.9.13-6.el9` → `2_009_013_006`
-- PostgreSQLのBigInt型で格納し、インデックスによる高速検索が可能
-
-#### OSVデータ取得 ([src/worker/osv-fetcher.ts](src/worker/osv-fetcher.ts))
-- OSV API (`https://api.osv.dev/v1/`) および GCS エコシステムバケットとの連携
-- 単一脆弱性の取得、パッケージ別クエリ、バッチインポート、差分更新に対応
-- **マルウェア検知**: [ossf/malicious-packages](https://github.com/ossf/malicious-packages) から `MAL-YYYY-NNNN` エントリをインポート。悪意あるパッケージは `/api/v1/vulnerabilities/search` でバージョン完全一致により検索可能
-- インポート時に `Vulnerability` マスターテーブルへ自動 upsert
-- 差分更新は `CollectionJob` で最終実行日時を管理し、`modified` が更新されていないエントリをスキップ
-
-#### NVDデータ取得 ([src/worker/nvd-fetcher.ts](src/worker/nvd-fetcher.ts))
-- NVD REST API v2.0 (`https://services.nvd.nist.gov/rest/json/cves/2.0`) との連携
-- 全件ミラー（ページネーション + CollectionJobで再開可能）
-- 差分更新（`lastModStartDate` を使用）
-- インポート時に `Vulnerability` マスターテーブルへ自動 upsert（CVSS 権威ソース）
-
-#### KEVデータ取得 ([src/worker/kev-fetcher.ts](src/worker/kev-fetcher.ts))
-- CISA KEVカタログ（JSON、約1,200件）を取得
-- `Vulnerability.isKev` フラグ・関連フィールドを更新
-- full-replace 方式（CISA による削除にも対応）
-
-#### EPSSデータ取得 ([src/worker/epss-fetcher.ts](src/worker/epss-fetcher.ts))
-- FIRST.org EPSS API (`https://api.first.org/data/v1/epss`) をページネーション（1万件/ページ）で全件取得（約32万件）
-- `Vulnerability.epssScore` / `epssPercentile` を 1000件チャンクで更新
-
-#### CVE Program & CISA Vulnrichment ([src/worker/cna-fetcher.ts](src/worker/cna-fetcher.ts), [src/worker/cna-importer.ts](src/worker/cna-importer.ts))
-- `cna-fetcher.ts`はcvelistV5のGitHub Releaseバンドルのダウンロードとパースを担当（DBインポート無しの純粋関数――ベンダーアドバイザリフェッチャーと同じ分離）、`cna-importer.ts`が永続化とブートストラップ・差分の制御を担当
-- CNAが宣言する影響製品(`containers.cna.affected`)は、ベンダーアドバイザリの検索経路には混ぜず、専用の`CnaVulnerability`/`CnaAffectedProduct`テーブルに保存する――詳細は`prisma/schema.prisma`の`CnaVulnerability`モデルのコメントを参照
-- CISA Vulnrichmentの SSVC評価(`containers.adp`の`CISA-ADP`エントリ)は、CNA影響製品側のパース成否とは無関係に独立して抽出し、`Vulnerability`マスター行に直接書き込む(`ssvcExploitation`/`ssvcAutomatable`/`ssvcTechnicalImpact`/`ssvcTimestamp`)――既存のKEV/EPSSと同じ、CVE単位のフラットな形。最終的な優先度判定は算出しない――詳細は「CVE Program（CNA）＆ CISA Vulnrichment収集」を参照
-
-#### ベンダーアドバイザリ基盤 ([src/worker/advisory-fetcher.ts](src/worker/advisory-fetcher.ts))
-- `AdvisoryFetcher` インターフェースを実装することで新規ベンダーを追加可能
-- `importAdvisoryData()` が `Vulnerability` マスターテーブルへの自動紐付けを担当
-- インポート時の優先度: CVE あり → 既存 NVD レコードにリンク / CVE なし → `advisoryId` でマスター管理
-- **消失アドバイザリの削除**: `runAdvisoryFetcher()`は、収集元から消えた（撤回・訂正された）アドバイザリを永久に残さず削除する。各`AdvisoryFetcher`は`isCompleteSnapshot(): boolean`を実装し、`fetch()`が常に**完全な現在のセット**を返す場合（全ページ再スクレイピング/全アーカイブ取得方式——Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPU, Check Pointの大多数がこれに該当）は`true`を、直近の一部だけを取得する設定の場合（PAN/Ciscoの`mode: 'latest'`、Oracle CPUの`latestOnly`）は`false`を返す——部分ウィンドウに対して削除判定を行うと、たまたまウィンドウ外にあるだけの正しいデータまで消してしまうため。削除対象になるのは完全スナップショット方式の実行時のみで、しかも1回消えただけでは削除せず、**3回連続**で見えなかった場合にのみハード削除する（`AdvisoryVulnerability.missingRunCount`、再度見つかれば0にリセット）——一時的なスクレイピング失敗を大量撤回と誤判定しないための猶予。フェッチ結果が0件の場合は削除判定自体を完全にスキップする（パーサー/フェッチのバグで空配列が返るケースと区別がつかないため、「全件撤回された」とは絶対に解釈しない）。アドバイザリを削除する際、そのマスター`Vulnerability`行が当該アドバイザリのみで管理されていた（CVE/OSVデータを持たない`advisoryId`管理のみ）場合は、他に参照するアドバイザリが無ければマスター行も一緒に削除する。
-
-#### Fortinet PSIRT取得 ([src/worker/fortinet-fetcher.ts](src/worker/fortinet-fetcher.ts))
-- PSIRT アドバイザリ一覧ページ (`fortiguard.fortinet.com/psirt?page=N`) を全ページスクレイピングして完全な過去アーカイブを取得。以前は RSS フィード (`https://filestore.fortinet.com/fortiguard/rss/ir.xml`) のみで新着を発見していたが、これは「新着」フィードであり直近の一部しか見えなかった（[境界値精度検証](ACCURACY.ja.md#境界値スイープfortinet--palo-alto-networks)の実装中に発見）
-- CSAF 2.0 JSON (`https://filestore.fortinet.com/fortiguard/psirt/csaf_*.json`) で構造化データを取得
-- バージョンブランチごとに個別レコードを作成（例: FortiOS 7.6.x / 7.4.x / 7.2.x を分離）
-- `lastAffectedInt` による inclusive 範囲境界の正確な検索
-- 認証不要・レート制限なし（公開フィード）
-
-#### Palo Alto Networks PSIRT取得 ([src/worker/pan-fetcher.ts](src/worker/pan-fetcher.ts))
-- RSS フィード (`https://security.paloaltonetworks.com/rss.xml`) からアドバイザリ一覧を取得
-- CSAF JSON (`https://security.paloaltonetworks.com/csaf/{ID}`) を個別取得・パース
-- `vers:generic/<VERSION` / `>=VERSION` 形式の境界を「修正点」として読み、ブランチ（`M.m`）ごと・メンテナンスリリースごとの影響範囲に展開する。PAN はメンテナンスリリースごとにホットフィックスで修正するため、たとえば CVE-2025-0126 の PAN-OS 10.2 は `[10.2.0, 10.2.4-h25)`・`[10.2.5, 10.2.9-h13)`・`[10.2.10, 10.2.10-h6)` の3行になる（10.2.5 は 10.2.4-h25 より新しいが未修正）
-- バージョン比較は PAN 専用（[src/utils/pan-version.ts](src/utils/pan-version.ts)）。`10.2.9-h1` は 10.2.9 の**後**の版として扱う（汎用の `normalizeVersion()` は `-英字` をプレリリースとみなすため逆順になる）。保存時と検索時の両方で同じ符号化を使う
-- known_affected の `PAN-OS None` のような「None」エントリは影響なしとして扱う（PAN はアドバイザリ表の「Affected: None」をそのまま known_affected に入れている）
-- 認証不要・レート制限なし（公開フィード）
-
-#### Cisco PSIRT取得 ([src/worker/cisco-fetcher.ts](src/worker/cisco-fetcher.ts))
-- OAuth 2.0 (`CISCO_CLIENT_ID` / `CISCO_CLIENT_SECRET`) でアクセストークンを取得
-- openVuln API (`https://apix.cisco.com/security/advisories/v2/advisories/all`) でアドバイザリ一覧を取得
-- 各アドバイザリの `csafUrl` から CSAF JSON を取得して製品・バージョン情報を補完
-- `pnpm import:cisco latest` で最新100件のみ取得する増分モードをサポート
-
-#### Oracle Linux ELSA取得 ([src/worker/oracle-linux-fetcher.ts](src/worker/oracle-linux-fetcher.ts))
-- Oracle 公式 OVAL XML フィード（bzip2 圧縮、認証不要）をダウンロード
-- ELSA アドバイザリの深刻度・CVE リスト（CVSS スコア付き）・影響パッケージを解析
-- `criterion` のコメント文（"X is earlier than Y"）から `versionEnd`（exclusive）を抽出
-- `ol9` / `ol8` / `ol7` 等のバリアント別フィードに対応
-- RPM リリース番号（例: `2.9.13-6.el9`）は `normalizeVersion()` で4番目のコンポーネントとして正規化
-
-#### CPEマッピングについて
-
-NVDはCPE (Common Platform Enumeration) 形式で影響製品を記述します。本APIでは `cpe:2.3:a:` (application) および `cpe:2.3:o:` (OS) の `<product>` 部分をパッケージ名として使用し、`<vendor>` からエコシステムを推定します（ベストエフォート）。`cpe:2.3:h:` (hardware) はバージョンが常に `-` のため対象外です。
-
-CPE にはバージョン範囲フィールド（`versionStartIncluding` 等）と、URI 自体にバージョンが直接埋め込まれる2種類があります。後者（例: `cpe:2.3:a:vendor:product:3.0:*:*:*:*:*:*:*`）は「特定バージョンのみ影響あり」として `introduced = lastAffected = 3.0` に変換します。
-
-| vendor | 推定 ecosystem |
-|---|---|
-| `python` / `pypi` | `PyPI` |
-| `nodejs` / `npm` | `npm` |
-| `redhat` | `Red Hat` |
-| `almalinux` | `AlmaLinux` |
-| `centos` | `CentOS` |
-| `rockylinux` | `Rocky` |
-| `golang` | `Go` |
-| `rubygems` | `RubyGems` |
-
-## NVDデータ収集
-
-### 初回フルダウンロード（全件ミラー）
-```bash
-pnpm import:nvd full
-```
-約40万件のCVEを全件取得します。所要時間は**数時間**です（Docker Desktop for Mac での実測で約6時間。ハードウェアやNVDの応答時間により変動します）。NVD のレート制限が占める割合は小さく、時間の大半は2,000件/ページの取得と、CVEごとのDB書き込みに費やされます。フォアグラウンドで待つ前提にはしないでください。`NVD_API_KEY`（10→50 req/min）は引き続き設定を推奨します（無料キーは [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key) で取得できます）。
-
-フルダウンロードは**自動では再開されません**。`pnpm import:nvd full` を再実行すると、新しいジョブが最初から始まり、全件を再インポートします。リトライ後もページを取得できない場合、ジョブは `failed`（`completed` にはなりません）となり、コマンドは非ゼロで終了し、エラーメッセージの末尾に再開コマンドが表示されます。ジョブIDは開始時にもログへ出力され、進捗は `CollectionJob` にチェックポイントとして保存されているため、次のように再開します。
-
-```bash
-pnpm import:nvd full <job-id>
-```
-
-`failed` のジョブが `pnpm import:nvd update` の起点になることはありません。差分更新に頼る前に、該当ジョブの `metadata.lastStartIndex` が `totalResults` に達していることを確認してください。
-
-### 差分更新
-```bash
-pnpm import:nvd update
-```
-
-### 単一CVEの取得
-```bash
-pnpm import:nvd cve CVE-2021-44228
-```
-
-### 日付範囲指定
-```bash
-pnpm import:nvd range 2024-01-01 2024-03-31
-```
-
-NVD API の 120 日制限を自動的に 120 日以内のチャンクに分割して取得します。2 年分など長期間の指定も可能です。
-
-### NVD APIキー（推奨）
-
-`.env` に設定することでレート制限が緩和されます:
-```env
-NVD_API_KEY=your-api-key-here
-```
-APIキーは [NVD公式サイト](https://nvd.nist.gov/developers/request-an-api-key) で無料取得できます。
-
-## OSVデータ収集
-
-### サンプルデータのインポート
-```bash
-pnpm import:osv sample
-```
-
-### 特定パッケージの脆弱性をインポート
-```bash
-pnpm import:osv package npm lodash
-pnpm import:osv package PyPI requests
-```
-
-### エコシステム全体のインポート（全件）
-```bash
-pnpm import:osv ecosystem npm
-pnpm import:osv ecosystem PyPI
-pnpm import:osv ecosystem Go         # Go モジュール
-pnpm import:osv ecosystem Packagist  # PHP Composer パッケージ
-```
-
-**`ecosystem` / `update` コマンドで指定できるエコシステム一覧:**
-
-| 指定値 | 言語・プラットフォーム |
-|---|---|
-| `npm` | Node.js |
-| `PyPI` | Python |
-| `Go` | Go モジュール |
-| `RubyGems` | Ruby |
-| `crates.io` | Rust |
-| `Packagist` | PHP (Composer) |
-| `Maven` | Java / Kotlin |
-| `NuGet` | .NET |
-| `Hex` | Elixir / Erlang |
-| `Pub` | Dart / Flutter |
-| `ConanCenter` | C / C++ |
-| `SwiftURL` | Swift |
-| `CRAN` | R |
-| `Linux` | Linux カーネル |
-| `Android` | Android |
-| `OSS-Fuzz` | OSS-Fuzz プロジェクト |
-| `Bitnami` | Bitnami アプリケーションスタック |
-
-> エコシステム名は**大文字小文字を区別します**。上記の表記を正確に使用してください。
-> Linux ディストリビューション系（Alpine、Debian、Ubuntu、AlmaLinux、Rocky Linux 等）はバージョンなしでインポートできます（例: `pnpm import:osv ecosystem Ubuntu`）。**検索時**はバージョン省略可能で、`?ecosystem=Ubuntu` と指定すると全 Ubuntu バージョンにプレフィックスマッチします。`?ecosystem=Ubuntu:22.04:LTS` とすれば特定バージョンに絞り込めます。なお、これらのエコシステムはディストリビューション形式のバージョン文字列を格納するため、アップストリームの semver バージョンは一致しません。
-
-### 差分更新（前回実行以降の変更分のみ）
-```bash
-pnpm import:osv update npm           # npm の差分更新
-pnpm import:osv update PyPI          # PyPI の差分更新
-pnpm import:osv update malware       # MAL エントリの差分更新
-```
-
-差分更新は全件 ZIP をダウンロードしますが、`modified` タイムスタンプが前回の `CollectionJob` 完了時刻以前のエントリをスキップします。初回実行時は過去30日分を対象にします。
-
-**新しいエコシステムのオンボーディング**: 日次差分ジョブ（`osv-<ecosystem>`）を動かす**前に**必ず全件取り込み（`ecosystem <name>`）を実行すること——差分側は「カーソル以降に更新されたエントリ」しか拾わないため、初回の全件取り込みがスキップされたり途中で中断されたりすると、それ以降のどの差分実行でも欠落分は二度と取り込まれない。`pnpm import:osv ecosystem <name>`は現在、専用の`osv-full-<ecosystem>`という`CollectionJob`を記録するようになった（差分ジョブの`osv-<ecosystem>`とは別キーなので、ダッシュボード上の差分ジョブの表示を上書きしない）ため、完了したかどうかを後から検証できる——以前はこのコマンドが実行記録を一切残さず、それが原因で大半の追跡対象エコシステムが（GitHub Actionsは3.7%まで）本来あるべき件数を大きく下回ったまま、差分ジョブは毎日「completed」を報告し続けていた。実際の充足率はいつでも以下でライブのOSV一括エクスポートと突き合わせて検証できる:
-```bash
-pnpm validate:osv-coverage              # 追跡中の全エコシステムをチェック
-pnpm validate:osv-coverage Go PyPI      # 指定したエコシステムのみチェック
-```
-
-### マルウェア検知（MAL エントリ）
-
-[ossf/malicious-packages](https://github.com/ossf/malicious-packages) の悪意あるパッケージ情報をインポートします。
-
-```bash
-pnpm import:osv malware              # 全件インポート（初回）
-pnpm import:osv update malware       # 差分更新（2回目以降）
-```
-
-インポート後は通常の脆弱性検索で MAL エントリが取得できます：
-```bash
-curl -H "x-api-key: $API_KEY" \
-  "http://localhost:5000/api/v1/vulnerabilities/search?package=event-stream&version=3.3.6&ecosystem=npm"
-```
-
-> `update malware` はファイル一覧取得のために GitHub API を **1回だけ**呼び出します（未認証: 60 req/時）。スケジューラは1日1回の実行のため、通常 `GITHUB_TOKEN` は不要です。
-
-### 特定IDでインポート
-```bash
-pnpm import:osv id GHSA-67hx-6x53-jw92
-pnpm import:osv id CVE-2021-44228
-```
-
-## CISA KEVデータ収集
-
-CISA（米国サイバーセキュリティ・インフラセキュリティ庁）が公開する悪用実績のある脆弱性カタログです。
-
-```bash
-pnpm import:kev full    # カタログを取得してマスターテーブルに反映
-pnpm import:kev stats   # DB の KEV 統計を表示
-```
-
-- 約1,200件の CVE が対象
-- `Vulnerability.isKev = true` でフラグ付け
-- CISA が CVE を削除した場合にも対応（full-replace 方式）
-- カタログは [CISA公式サイト](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) で公開
-
-## EPSSスコア収集
-
-FIRST.org が提供する、脆弱性が今後30日以内に悪用される確率のスコアです。
-
-```bash
-pnpm import:epss full              # 本日の日次CSVを全件取得して反映
-pnpm import:epss full 2024-03-01   # 指定日付のCSVを取得
-pnpm import:epss cve CVE-2021-44228  # 単一CVEのみ更新
-```
-
-- 約32万件の CVE にスコアが付与されている
-- 毎日更新（日次実行を推奨）
-- `epssScore`: 0〜1 の悪用確率、`epssPercentile`: 全CVEの中でのパーセンタイル
-
-## CVE Program（CNA）＆ CISA Vulnrichment収集
-
-```bash
-pnpm import:cna              # 既にブートストラップ済みなら差分、未実施ならフルバンドルからブートストラップ
-pnpm import:cna --bootstrap  # フルバンドル取り込みを強制実行
-```
-
-[CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5) のGitHub Releaseから CVE Record を取得します（初回ブートストラップは約600MBのフルスナップショット、以降は1時間毎の差分バンドルで数MB/日）。認証不要、レート制限もありません。
-
-- **CNAが宣言する影響製品**: `containers.cna.affected`を`CnaAffectedProduct`という専用テーブルに保存します（ベンダーアドバイザリの検索経路には混ぜません — `cna-importer.ts`内の`CnaVulnerability`モデルのコメントを参照）。ブートストラップは`BOOTSTRAP_YEARS`(`src/scripts/import-cna.ts`)に限定しています。これより古い年代のレコードは、この機能が前提とする構造化された`versions`表記に対応していないためです。差分更新には年代制限はありません。
-- **CISA Vulnrichment（SSVC）**: 同じCVE Recordの`containers.adp`に、CISA-ADPというSSVC評価(`Exploitation`: none/poc/active、`Automatable`: yes/no、`Technical Impact`: partial/total)が含まれることがあります（[CISAのSSVCガイド](https://www.cisa.gov/stakeholder-specific-vulnerability-categorization-ssvc)参照）。既存のKEV/EPSSと同じ、CVE単位のフラットな形で`Vulnerability`マスターテーブルに直接保存します(`ssvcExploitation`/`ssvcAutomatable`/`ssvcTechnicalImpact`/`ssvcTimestamp`)。CVE ID検索(`GET /vulnerabilities/:id`)で返されます。最終的な優先度判定(Track/Track-star/Attend/Act)は意図的に算出しません — 4軸目（組織固有のMission & Well-being impact）が必要で、CISAはCVE単位ではこれを公開していないため。優先度への変換は利用側(heretix-management)の責務です。
-- CNAの影響製品データとは異なり、SSVCのバックフィルはブートストラップ時に`BOOTSTRAP_YEARS`で制限しません。フルバンドル自体はどのみちダウンロードされるため、含まれる全年代をSSVC抽出の対象にしても追加のネットワークコストはかかりません(`cna-importer.ts`の`bootstrapCna()`のコメント参照)。
-
-## ベンダーセキュリティアドバイザリ収集
-
-### Fortinet PSIRT
-
-Fortinet の公式 PSIRT（製品セキュリティインシデント対応チーム）アドバイザリを収集します。
-
-```bash
-pnpm import:fortinet
-```
-
-- RSS フィード（最新約50件）+ CSAF 2.0 JSON で取得（認証不要）
-- FortiOS・FortiProxy・FortiManager・FortiAnalyzer 等 Fortinet 製品全般を対象
-- バージョンブランチ（7.6.x / 7.4.x / 7.2.x 等）ごとに個別レコードを作成
-- CVE ID があれば NVD の `Vulnerability` レコードと自動リンク（KEV/EPSS も活用可能）
-
-#### 検索例
-
-```bash
-# FortiOS 7.4.3 に影響する脆弱性を検索（ecosystem 不要）
-curl "http://localhost:3001/api/v1/vulnerabilities/search?package=FortiOS&version=7.4.3"
-
-# アドバイザリ ID で詳細を取得
-curl "http://localhost:3001/api/v1/vulnerabilities/FG-IR-25-934"
-```
-
-### Palo Alto Networks PSIRT
-
-Palo Alto Networks の PSIRT アドバイザリを収集します。
-
-```bash
-pnpm import:pan
-```
-
-- RSS フィード + CSAF JSON で取得（認証不要）
-- PAN-OS・Prisma Access・Cortex XDR 等 PAN 製品全般を対象
-- `vers:generic/` 形式のバージョン範囲を解析して `versionEnd`（exclusive）と `versionFixed` に変換
-
-#### 検索例
-
-```bash
-# PAN-OS Firewall に影響する脆弱性を検索
-curl "http://localhost:3001/api/v1/vulnerabilities/search?package=PAN-OS+Firewall&version=12.1.3"
-```
-
-### Cisco PSIRT
-
-Cisco の PSIRT アドバイザリを収集します。`CISCO_CLIENT_ID` と `CISCO_CLIENT_SECRET` が必要です。
-
-```bash
-pnpm import:cisco          # 全件取得（初回）
-pnpm import:cisco latest   # 最新100件のみ（差分更新）
-```
-
-- OAuth 2.0 認証（openVuln API）+ CSAF JSON で取得
-- Cisco IOS XE・NX-OS・ASA・FTD 等 Cisco 製品全般を対象
-- 必須環境変数: `CISCO_CLIENT_ID`・`CISCO_CLIENT_SECRET`（[Cisco Developer Portal](https://apiconsole.cisco.com/) で取得）
-
-#### 検索例
-
-```bash
-# Cisco IOS XE に影響する脆弱性を検索
-curl "http://localhost:3001/api/v1/vulnerabilities/search?package=ios_xe&version=17.6.1"
-```
-
-### Oracle Linux ELSA
-
-Oracle Linux のセキュリティアドバイザリ（ELSA）を収集します。認証不要。
-
-```bash
-pnpm import:oracle-linux              # 全バージョン（all.xml.bz2）
-pnpm import:oracle-linux ol9          # Oracle Linux 9 のみ
-pnpm import:oracle-linux ol8          # Oracle Linux 8 のみ
-```
-
-- Oracle 公式 OVAL XML フィード（bzip2 圧縮）を利用（認証不要）
-- ELSA ID・深刻度・CVE・影響パッケージ/バージョン範囲を取得
-- RPM バージョン（例: `2.9.13-6.el9`）で範囲検索が可能
-- `versionEnd` は `epoch:version-release` の形式のまま epoch を保持して解析（epoch を除去すると、実際にepochを持つインストール済みビルドが epoch なし＝暗黙的に epoch 0 の修正行より新しいと誤判定され、そのパッケージの修正が静かに一致しなくなっていた。詳細は [`redhat-fetcher.test.ts`](src/worker/redhat-fetcher.test.ts) を参照）
-
-#### 検索例
-
-```bash
-# Oracle Linux の rsync パッケージに影響する脆弱性を検索
-curl -H "x-api-key: $API_KEY" \
-  "http://localhost:5000/api/v1/vulnerabilities/search?package=rsync&ecosystem=oracle-linux&version=3.2.4"
-```
-
-> **ecosystem の値**: `oracle-linux`（バージョンサフィックスなし）。バージョンは RPM 形式（`3.2.5-3.el9`）または upstream 形式（`3.2.4`）を指定できます。
-> Red Hat と同じ正確な `rpmvercmp` 比較にルーティングされます（[`rpmAdvisoryVendor`](src/utils/search-helpers.ts)参照）— 以前はこの ecosystem 値がルーティングに結び付けられておらず、上記の説明にかかわらず精度の低い BigInt 近似比較に静かにフォールバックしていました。詳細は [ACCURACY.ja.md](ACCURACY.ja.md#境界値スイープrhel--oracle-linux) の境界値スイープを参照。
-
-### Red Hat RHSA / RHBA
-
-Red Hat Enterprise Linux (RHEL) のセキュリティアドバイザリ（RHSA）およびバグ修正アドバイザリ（RHBA）を収集します。認証不要。
-
-```bash
-pnpm import:redhat                    # RHEL 9 + RHEL 8 を順次インポート
-pnpm import:redhat rhel9              # RHEL 9 のみ
-pnpm import:redhat rhel8              # RHEL 8 のみ
-```
-
-- Red Hat 公式 OVAL v2 XML フィード（bzip2 圧縮）を利用（認証不要）
-- RHSA/RHBA ID・深刻度・CVE リスト（CVSS3 スコア付き）・影響 RPM パッケージを解析
-- `class="patch"` の定義のみを解析——このフィードは「既に修正版が出ているCVE」しか収録しておらず、「対象であることは確定しているが修正がまだ無い」CVEを表現する手段が構造的に存在しない（そのケースは下記の Red Hat CSAF VEX で扱う）
-- `rpmvercmp` アルゴリズムによる RPM バージョン範囲比較に対応（`src/utils/rpm-version.ts`）
-- `versionEnd` は上記 Oracle Linux と同様、epoch を保持したまま解析
-- `rhel9` / `rhel8` のバリアント別フィードに対応（RHEL 7 は対象外）
-- CentOS は公式 OVAL フィードが存在しないため対象外
-
-#### 検索例
-
-```bash
-# RHEL 9 の curl パッケージに影響する脆弱性を検索
-curl -H "x-api-key: $API_KEY" \
-  "http://localhost:5000/api/v1/vulnerabilities/search?package=curl&version=7.76.1-23.el9&ecosystem=Red%20Hat:9"
-```
-
-> **ecosystem の値**: `Red Hat:9` または `Red Hat:8`（バージョン付き）。バージョンは RPM 形式（`7.76.1-23.el9`）を指定します。`rpmvercmp` で `versionEnd`（修正済みバージョン）と比較し、インストール済みバージョンが修正版より古い場合のみ脆弱性がヒットします。
-
-### Red Hat CSAF VEX（未修正の脆弱性）
-
-Red Hat公式のCSAF VEXアーカイブから、「対象であることは確定しているが修正がまだ提供されていない」CVEを収集します。上記OVALフィードが構造的に表現できないデータです。認証不要。
-
-```bash
-pnpm import:redhat-vex                # CSAF VEXアーカイブ全体（RHEL 8/9 に該当する分のみ抽出）
-```
-
-- `archive_latest.txt` → 全Red Hat製品を含む単一の`.tar.zst`アーカイブをダウンロードし、メモリに全展開せずzstd展開・tar展開をストリーミング処理(アーカイブはRHEL 5まで遡る全メジャーバージョンを含み、展開後は1GBを大きく超える)
-- CVEごとのJSONドキュメントの`product_tree.relationships`(`category: "default_component_of"`が素の`red_hat_enterprise_linux_N`製品を指すもの)を辿り、複合プロダクトIDを(RHELメジャーバージョン, パッケージ名)に変換
-- `product_status.known_affected`および`product_status.under_investigation`にあり`product_status.fixed`に無いパッケージを抽出——前者はRed Hat自身による「対象だが未修正」という明示的なシグナル、後者は「対象かどうかまだ未確定」(known_affectedより確度は低いが、対象外とも判明していないため同様に扱う)。いずれにせよOVALフィードは未解決のケースを一切表現できない
-- `.src`で終わる`product_reference`(ソースRPM。自身と同名のバイナリ出力に対する個別の関連付けが存在しないケースがある——実例: CVE-2026-5958/`sed`)はサフィックスを除去してインストール可能なパッケージ名を復元する。稼働中システムに`foo.src`という名前でインストールされることはあり得ないため、そのままでは絶対にSBOMと一致しない
-- RHEL 8/9(`RedHatFetcher`がサポートするバリアントと同じ)に限定——制限しない場合、アーカイブに含まれるサポート対象外の古いメジャーバージョン分がほぼそのまま件数に上乗せされ、フルアーカイブ処理時のOOMクラッシュの直接の原因になった
-- 該当パッケージはバージョン範囲情報を一切持たず`patchAvailable: false`として保存する——`matchesRpmVersionRange()`/`searchAdvisory()`(`src/utils/search-helpers.ts`、`src/api/routes/vulnerabilities.ts`)がこれを見て、クエリされたバージョンに関わらず無条件に一致させる（範囲が無く`patchAvailable`が`null`/未設定のままの通常行は、これまで通り一致しない。詳細は下記「高速バージョン検索の仕組み」参照）
-
-**Oracle Linux版は無し**: Oracle LinuxもRed Hatと全く同じ構造的ギャップを抱えている(OVALフィードは修正済みCVEの定義しか公開しない)が、ここへの取り込みは予定していない。Oracle自身も`linux.oracle.com/csaf/beta/vex/`にRed Hatと同じスキーマのCSAF VEXツリーを公開していることは実際に確認済みだが、Red Hatと違って`archive_latest.txt`/`.tar.zst`のような一括アーカイブが存在せず、年別ディレクトリ配下にCVEごとのJSONファイルが並んでいるだけ(1999年から全年、サンプルした2020/2023/2026年で年間約2,000〜6,600件)——`changes.csv`のような差分取得手段も無いため数万回規模の個別リクエストが必要になり、しかもプロダクトID(`P-1309V-10:dovecot`)がRed Hatの`red_hat_enterprise_linux_N:<パッケージ>`とは異なる未文書化の体系で`relationships`配列も無いため変換方法も別途調査が要る。これは本プロジェクトだけが対応を見送っている領域ではない: [Trivy公式ドキュメント](https://trivy.dev/docs/latest/coverage/os/oracle/)でもOracle Linuxの未修正脆弱性サポートは非対応と明記されており、Grypeのデータソース([vunnel](https://github.com/anchore/vunnel/tree/main/src/vunnel/providers/oracle))もOracle Linux向けはOVALのみ——実際にfetcherのソースを確認したところ、RHELプロバイダにあるようなCSAF/VEXクライアントは一切存在しなかった。
-
-> 確認済みの未修正ヒットは常に`fixedVersion: null`で、`sources[]`配列に`red-hat-vex`を含みます。`source`（単数）は該当CVEにNVD等の情報がある場合そちらを優先表示するため、VEX由来かどうかを判別するには`sources[]`を見る必要があります。
-
-### Sophos
-
-Sophos のセキュリティアドバイザリを収集します。認証不要。
-
-```bash
-pnpm import:sophos                    # 全63件（サイトマップ + RSS + ヘッドレスブラウザ）
-```
-
-- サイトマップから全アドバイザリ ID を取得 → RSS で最新情報を補完 → JS レンダリングが必要なページは Playwright stealth でフォールバック
-- CVE ID・深刻度を取得。バージョン範囲は非公開のため版本指定検索ではヒットしない（CVE 直接検索で確認可）
-- 対象製品: XG/XGS Firewall・Sophos AP シリーズ 等
-
-### SonicWall
-
-SonicWall PSIRT のアドバイザリを収集します。認証不要（公開 JSON API）。
-
-```bash
-pnpm import:sonicwall                 # 全件（約200件）
-```
-
-- SonicWall の React SPA が内部で呼び出す JSON API（`psirtapi.global.sonicwall.com/api/v1/vulnsummary/`）から直接取得
-- CVE ID・深刻度・CVSS スコア/ベクター・影響製品ファミリーを取得
-- バージョン情報は HTML テーブルからベストエフォートで抽出
-- 対象製品: SonicOS Gen5/6/7/8 Firewall・SMA シリーズ 等
-
-### Broadcom / VMware
-
-Broadcom/VMware の VMSA アドバイザリを収集します。認証不要（公開 JSON API）。
-
-```bash
-pnpm import:broadcom                  # 全件（JSON API + Playwright で詳細ページ取得）
-```
-
-- Broadcom サポートポータルの JSON API（非認証 POST エンドポイント）からアドバイザリ一覧を取得
-- 各詳細ページを Playwright でレンダリングし、影響製品・バージョンテーブルを抽出
-- VMware アップデートレベル形式（`8.0 U3d`）は内部形式（`8.0.3-4`）に自動変換されバージョン範囲検索に対応
-- 対象製品: vCenter Server / ESXi / NSX / VMware Aria / Horizon / Carbon Black 等
-
-> **バージョンクエリ形式**: VMware のアップデートレベル文字列をそのまま使用 — `version=8.0+U3d` は自動正規化されます。
-
-### Oracle Critical Patch Update
-
-Oracle の四半期セキュリティパッチ（CPU）を収集します。認証不要。
-
-```bash
-pnpm import:oracle-cpu                # 全履歴 CPU（RSS から全件）
-pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # 最新 CPU のみ
-```
-
-- Oracle 公式 RSS で発見（27〜28四半期分、CPUJan2020まで遡れる — Oracle自身のフィードがそれより古いものを含んでいない）
-- CSAF 2.0 JSON（CPUApr2022以降）で取得し、CSAFが存在しないCPUJan2020〜CPUApr2022は旧CVRF 1.1 XML形式にフォールバック。CPUJan2020より前はどちらの形式も存在せず未対応（対応するには旧HTMLアドバイザリページの個別スクレイピングが必要）
-- 各 CPU 内の CVE を個別 Advisory エントリに分割（externalId: `cpuapr2026-CVE-XXXX-NNNN`）する際、同じCVEが複数の`<Vulnerability>`要素（製品サブセットごとに分かれている場合がある）にまたがるケースをマージしてから1エントリにする（マージしないと後のエントリが前のエントリの製品データを上書きして消してしまう）
-- 1 CPU あたり約 450 CVE（MySQL・Java SE・WebLogic・E-Business Suite 等 Oracle ソフトウェア全般を対象）
-- `advisory-oracle-linux`（ELSA）とは別データ — こちらは Oracle ソフトウェア製品の CPU
-
-### Splunk
-
-Splunk のセキュリティアドバイザリアーカイブを収集します。認証不要。
-
-```bash
-pnpm import:splunk                    # 全件（アーカイブページ、300件以上）
-```
-
-- `advisory.splunk.com/advisories` の全履歴テーブル（1ページに集約）を取得
-- CVE ID・CVSS スコア/ベクター・製品ブランチ別の影響/修正バージョン・説明・対応策・軽減策を抽出
-- 同一 SVD ID の重複行は取得時にデデュープ
-- 対象製品: Splunk Enterprise・Splunk Cloud Platform・Splunk AI Toolkit 等（ブランチごとに個別の affectedProduct として記録）
-
-### Apache HTTP Server
-
-Apache httpd 2.4 系のセキュリティアドバイザリを収集します。認証不要。
-
-```bash
-pnpm import:apache                    # 全件（httpd.apache.org/security/vulnerabilities_24.html）
-```
-
-- 公式脆弱性ページの HTML を CVE 単位のブロックに分割してパース
-- `before X` / `through X` / `>=X, <=Y` / カンマ区切りバージョンリストなど複数の "Affects" 表記に対応
-- 2.4.x 系のみを対象（2.2/2.0/1.3 系は EOL のため対象外）
-- `pnpm validate:apache` の検証対象と同一ソース（`httpd.apache.org`）
-
-### Zabbix
-
-Zabbix のセキュリティアドバイザリを収集します。認証不要（公開検索API、client-side search-only key を使用）。
-
-```bash
-pnpm import:zabbix                    # 全件（Typesense 検索API経由でページング取得）
-```
-
-- `zabbix.com` の公式アドバイザリページが内部で使用する Typesense 検索 API から直接取得
-- CVE ID（Zabbix 独自の ZBV-YYYY-MM-DD-N と併記）・深刻度・CVSS スコア・影響/修正バージョンを抽出
-- レンジ表記（`6.0.0-6.0.44`）・単一バージョン・ワイルドカード上限（`4.4.4-4.4.*`）に対応、自由記述の古いエントリはベストエフォートでスキップ
-
-### Apache Tomcat
-
-Apache Tomcat のセキュリティアドバイザリを収集します。認証不要。
-
-```bash
-pnpm import:tomcat                    # 全メジャーブランチページを対象に全件取得
-```
-
-- tomcat.apache.org はメジャーバージョンブランチごとにページが分かれている（`security-8.html`, `security-9.html` 等）。既知のブランチページを全て取得し、存在しないページ（将来/廃止ブランチ）はスキップする
-- 同一 CVE が複数ブランチに異なるバージョン範囲で載っているケースが多いため、重複行に分割せず1つのアドバイザリに `affectedProducts` の複数要素としてマージする
-- CVE ID は見出し部分からのみ抽出し、本文中の CVE 言及（例:「CVE-YYYY の修正が不完全だった」）による誤マッチを防ぐ
-- `pnpm validate:tomcat` の検証対象と同一ソース
-
-### nginx
-
-nginx のセキュリティアドバイザリを収集します。認証不要。
-
-```bash
-pnpm import:nginx                     # 全件（nginx.org/en/security_advisories.html）
-```
-
-- 公式セキュリティアドバイザリページを解析。カンマ区切りの複数レンジ表記（例: `"0.6.18-1.25.2, 1.21.0-1.25.1"`）は1つのアドバイザリ内の複数 `affectedProducts` として扱う
-- `pnpm validate:nginx` の検証対象と同一ソース
-
-### Check Point
-
-Check Pointのセキュリティアドバイザリを収集します。認証不要。
-
-```bash
-pnpm import:checkpoint                # 全アクティブアドバイザリ（2026-09時点で155件）
-```
-
-- security-advisoriesページ自体はサーバー側データを持たないクライアントレンダリングのSPAのため、ページ本体ではなく、そのJSバンドルが内部で呼んでいる認証不要のJSON API（`iapi-services-ucs.checkpoint.com/.../securityAdvisories/getAllActive`）を直接叩く
-- 各アドバイザリの`products[]`は、リリース系列（`"R81.20"`）とその系列内の影響範囲文字列の組を持つ。系列ごとのfloor + 系列内のJHF(Jumbo Hotfix Accumulator)のTake番号による増分、というRHEL/Oracle LinuxのDNFモジュールストリームと同じ構造。実データにある約50種類の`affected`文字列の分類（"None"のような明示的な非該当宣言を行として作らない、等）は`checkpoint-fetcher.ts`の`parseAffected()`を参照
-- 各アドバイザリの詳細ページ（`support.checkpoint.com/results/sk/skNNNNNNN`、サーバーレンダリング）からSolution/Mitigationセクションも取得する
-- 1つのSK記事が複数の別CVEをまとめて説明しているケースがある（例: sk182899はApache HTTP Server関連の7つの別CVEをカバー）ため、`externalId`は`<skId>/<cveId>`という複合キーにして別アドバイザリとして区別する（Sophos/Broadcomと同じ形式）
-- 意図的に対応しない範囲: Harmony Endpointのクライアントビルド番号（`E86.x`〜`E89.x`、`R`系列とは別体系で、`affected`側が`version`と異なるメジャー番号を参照する実例もある）、`Hardware`/`Other`/`Cloud`（リリース系列自体が無い）、裸の数値のみの`affected`値（例: `"17"`、実際の修正Take番号との対応が実データ上一貫していない）。これらは推測せずに行を作らずスキップする。詳細は`checkpoint-fetcher.ts`の`parseVersionLine()`/`parseAffected()`を参照
-
-### 新規ベンダーの追加方法
-
-`AdvisoryFetcher` インターフェースを実装するだけで新規ベンダーを追加できます:
-
-```typescript
-// src/worker/my-vendor-fetcher.ts
-import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
-
-export class MyVendorFetcher implements AdvisoryFetcher {
-  source() { return 'myvendor'; }
-
-  async fetch(): Promise<NormalizedAdvisory[]> {
-    // ベンダーAPIを叩いて NormalizedAdvisory[] に変換して返す
-  }
-}
-```
-
-その後 `runAdvisoryFetcher(new MyVendorFetcher())` を呼び出すだけで、マスターテーブルへの紐付けを含む全インポート処理が自動的に行われます。
-
-## アーキテクチャの特徴
-
-### マスターテーブルによる重複排除
-
-複数ソースに同一の CVE が存在する場合でも、`Vulnerability` マスターテーブルが CVE ID をキーに1件に統合します。
-
-```
-CVE-2021-44228 (Log4Shell)
-  ├── NVDVulnerability            ─┐
-  ├── OSVVulnerability (GHSA-...) ─┤→ Vulnerability (cveId: "CVE-2021-44228", isKev: true)
-  └── AdvisoryVulnerability       ─┘   ↑ 全ソースが同一マスター行を共有
-```
-
-CVE ID を持たないアドバイザリは `advisoryId` フィールドで独立したマスター行として管理されます。
-
-### 高速バージョン検索の仕組み
-
-1. **バージョンの整数化**: `1.2.3` → `1_002_003_000`（PostgreSQL BigInt）; RPM `2.9.13-6.el9` → `2_009_013_006`
-2. **インデックス検索**: `(ecosystem, packageName)` + `(packageName, introducedInt, fixedInt)`
-
-```sql
-WHERE ecosystem = 'npm'
-  AND packageName = 'lodash'
-  AND introducedInt <= 4017020000
-  AND (fixedInt IS NULL OR fixedInt > 4017020000)
-```
-
-ベンダーアドバイザリでは `versionStartInt` / `lastAffectedInt`（inclusive）または `versionEndInt`（exclusive）による範囲検索、加えて `affectedVersions` 配列への完全一致検索も並行実施します。
-
-範囲情報を一切持たない行（`versionStart`/`versionEnd`/`versionFixed`/`lastAffected`/`affectedVersions`が全て無い）は、比較対象が無いためデフォルトでは一致しません——ただし`patchAvailable`が明示的に`false`の場合（Red Hat CSAF VEXの確認済み未修正行、上記参照）だけは例外として無条件に一致します。この扱いは明示的な`false`にのみ適用され、`patchAvailable: null`（ベンダーが単に修正状況を報告していないだけの通常ケース）は従来通り保守的なデフォルト(不一致)のままです。デフォルト自体を反転させていたら、単なるデータ欠損が「あらゆるバージョンで脆弱」という誤検知にすり替わってしまうところでした。
-
-### ソース優先度
-
-| フィールド | 優先ソース |
-|---|---|
-| cvssScore / cvssVector / severity | NVD に値があれば NVD、無ければ OSV（GHSA の重要度、OSV のベクトルから計算した CVSS）。NVD が未分析（値なし）の更新は既存の値を消さない |
-| summary / publishedAt | NVD 優先、null の場合のみ OSV/Advisory で補完 |
-| isKev / kev* | CISA KEV（独立更新） |
-| epssScore / epssPercentile | FIRST.org EPSS（独立更新） |
-| workaround / solution / url | Advisory（ベンダー固有情報） |
-
-## テスト
-
-```bash
-pnpm test               # 単体テスト（DB 不要）
-pnpm test:integration   # 結合テスト（TEST_DATABASE_URL が必要。開発用 DB とは別の使い捨て DB を指定すること）
 ```
-
-`TEST_DATABASE_URL` の初回セットアップ:
-```bash
-createdb heretix_test
-# .env に TEST_DATABASE_URL="postgresql://user:password@localhost:5432/heretix_test" を追記
-TEST_DATABASE_URL="postgresql://...heretix_test" pnpm exec prisma migrate deploy
+GET /api/v1/vulnerabilities/search?package=openssl&version=3.0.2-0ubuntu1.10&ecosystem=Ubuntu:22.04:LTS
+→ 46 件。そのうちの 1 件:
+  CVE-2024-6119  severity HIGH  distroPriority medium  fixedVersion 3.0.2-0ubuntu1.18  isKev false  epssScore 0.67
 ```
-
-`push`/`pull_request` ごとに CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）が両方を実行する。テスト対象の詳細・設計判断は [SPEC.md](SPEC.md) を参照。
-
-## 自動スケジューラ
-
-サーバー起動時に `src/scheduler.ts` が以下の定期ジョブを登録します:
-
-| ジョブ | スケジュール |
-|---|---|
-| NVD 差分更新 | 2 時間ごと |
-| KEV 全件置き換え | 毎日 09:00 UTC |
-| EPSS 一括更新 | 毎日 10:00 UTC |
-| Fortinet アドバイザリ | 毎日 11:00 UTC |
-| PAN アドバイザリ | 毎日 11:15 UTC |
-| Cisco アドバイザリ | 毎日 11:30 UTC |
-| Oracle Linux アドバイザリ | 毎日 11:45 UTC |
-| Sophos アドバイザリ | 毎日 12:00 UTC |
-| SonicWall アドバイザリ | 毎日 12:15 UTC |
-| Oracle CPU アドバイザリ | 毎日 12:30 UTC |
-| Broadcom/VMware アドバイザリ | 毎日 13:00 UTC |
-| Red Hat RHEL 9 アドバイザリ | 毎日 13:15 UTC |
-| Red Hat RHEL 8 アドバイザリ | 毎日 13:30 UTC |
-| Red Hat CSAF VEX（未修正CVE） | 毎日 15:00 UTC |
-| CVE Record（CNA）+ CISA Vulnrichment 差分 | 毎日 15:30 UTC |
-| Splunk アドバイザリ | 毎日 13:45 UTC |
-| Apache HTTP Server アドバイザリ | 毎日 14:00 UTC |
-| Zabbix アドバイザリ | 毎日 14:15 UTC |
-| Apache Tomcat アドバイザリ | 毎日 14:30 UTC |
-| nginx アドバイザリ | 毎日 14:45 UTC |
-| Check Point アドバイザリ | 毎日 16:00 UTC |
-| OSV 差分更新（DB 内エコシステム全て） | 毎日 08:00 UTC |
-| MAL 差分更新（ossf/malicious-packages） | 毎日 08:30 UTC |
-
-OSV はエコシステムごとに独立したジョブ（`osv-{ecosystem}`）として実行されるため、ダッシュボードでエコシステム単位のステータス確認・ON/OFF・手動実行ができます。
-
-ジョブ定義（ソースキー・ラベル・cron・実処理）は `src/jobs/registry.ts` に集約され、`src/jobs/executor.ts` が全ジョブ共通で `CollectionJob` のライフサイクル（`running` → `completed`/`failed` + 件数記録）と二重実行防止を扱います。スケジューラはレジストリを反復して cron を登録し、発火時に `JobConfig` の有効/無効を確認します（無効なジョブはスキップ）。トグルの変更は cron の再登録なしで次回発火時に即反映されます。
-
-## 既知の問題・制限事項
-
-### Ubuntu/Debian OSV アドバイザリの偽陽性（対処済み）
-
-Ubuntu/Debian 系の OSV アドバイザリは `introduced: "0"` + `fixed: "<ubuntu_patched_version>"` を「このパッケージの更新が必要」という意味で使用する。これは upstream の脆弱性バージョン範囲ではなく配布パッケージの更新要否を示すものであるため、upstream バージョンで semver range 比較すると偽陽性が発生する。そのためディストロエコシステムでは主に `affectedVersions` の完全一致方式を使う。現在の挙動と具体例は [ecosystem 別の検索挙動](#脆弱性検索単体) を参照。
-
-Debianの大半のエントリ（および一部のUbuntu/Alpine）は、この`introduced`/`fixed`範囲のみを公開しており、明示的な`affectedVersions`一覧を一切持たない——完全一致方式だけでは、どんなバージョンを指定してもこれらの行が絶対にヒットしない（Debianの OSV データの約68%がこの影響を受けることを確認済み）。`compareDpkgVersions()`（[`src/utils/dpkg-version.ts`](src/utils/dpkg-version.ts)、dpkgのバージョン比較アルゴリズム）による範囲比較のフォールバックを`Ubuntu:*`/`Debian:*`/`Alpine:*`エコシステムに追加して修正した。完全一致を先に試し、一覧にバージョンが含まれない（または一覧自体が存在しない）場合のみ範囲比較にフォールバックするため、既に正しく動いていた完全一致の結果には影響しない。
-
-エコシステムエイリアス: `composer` は自動的に `Packagist`（PHP Composer パッケージの OSV エコシステム名）に変換される。
 
-### RHEL/Oracle Linuxのモジュールストリームによる偽陽性（根本原因を修正済み。nodejs/postgresql/httpd/mysql/mariadb/php以外は一部残存）
+言語パッケージ（npm、PyPI、Go、Maven など）、Linux ディストリビューションのパッケージ（Debian、Ubuntu、Alpine、RHEL など）、ネットワーク機器や商用製品（FortiOS、PAN-OS、Cisco IOS XE、vCenter など）を検索できます。各脆弱性について、深刻度、悪用状況、修正バージョンを返します。
 
-RHEL/Oracle Linuxは一部のソフトウェアをDNFモジュールストリーム——同一パッケージ名の下に複数のバージョン系統が並行共存する形式——で配布している（例: `postgresql:12`/`:13`/`:15`/`:16`/`:17`/`:18`、同様に`nodejs`, `mysql`, `mariadb`, `php`, `ruby`, `redis`, `podman`, `qemu-kvm`, `libvirt`等）。`RedHatFetcher`/`OracleLinuxFetcher`がパースしていた人間可読な`"<package> is earlier than <version>"`というOVAL criterionは上限のみを表現し下限を持たないため、新しい系統（例: postgresql:18が`18.4-2.module+el9.8.0...`で修正）向けの行が、無関係な古い系統のクエリ（例: postgresql 16.4）まで数値的に巻き込んでしまっていた——上記のソフトウェア群を含む155製品名で確認済み。
+heretix 全体の構成は次のとおりです。
 
-**根本原因を修正**: 実はOVALフィード自体には失われていた下限情報が存在していた——これまでfetcher側が読み捨てていた兄弟criterionの中に。RHEL/Oracle LinuxのOVALは、`"Module <名前>:<ストリーム> is enabled"`というcriterionと、それが管理下に置くパッケージ群のOR条件を、常に同じ`<criteria operator="AND">`の子要素として並べて配置する（両ベンダーの実フィードで直接確認済み）。[`redhat-fetcher.ts`](src/worker/redhat-fetcher.ts)と[`oracle-linux-fetcher.ts`](src/worker/oracle-linux-fetcher.ts)の`collectCriteria()`は、この木構造をたどってストリームラベルを、それが適用範囲とする全criterionに伝播させ、インポート時点で`moduleStreamVersionStart()`経由で直接`versionStart`をセットするようになった——製品名による許可リストは無く、自己限定的（OVALエントリにModule criterionが無い製品はこの変更の影響を受けない。両ベンダーの実データで`.module+`ビルドマーカーの有無と完全に1対1で一致することを確認済み）。ストリームラベルは整数として解釈せずそのまま使う: `nodejs:20`のような単純な数値が大半だが、`mysql:8.4`や`mariadb:10.11`はそうではない——修正の初期版は数字しか拾えず、これらのストリームは黙って抽出に失敗し、より粗いブランケット方式のバックフィルに回ってmysqlの8.0系統と8.4系統が同じフロアに衝突していた（下記で確認・修正済み）。`searchAdvisoryRpm()`（[`vulnerabilities.ts`](src/api/routes/vulnerabilities.ts) / [`search-helpers.ts`](src/utils/search-helpers.ts)の`matchesRpmVersionRange()`）は、他の行と同様にこの`versionStart`を尊重する。修正前にインポート済みだった行は一度限りのバックフィル（`pnpm migrate:module-version-start`）で反映済みで、今後のインポートでは全てのDNFモジュール製品に自動的に適用される。
-
-`moduleStreamVersionStart()`にはもう一段のガードもある。上記の修正をリリースした後に[ACCURACY.mdのRHEL/Oracle Linux sweep](ACCURACY.md#境界値スイープrhel--oracle-linux)を再実行して見つかった問題で、ストリームラベルが必ずしもそのソフトウェア自身のバージョンとは限らないというもの。RHEL8の`javapackages-tools:201801`モジュールは、`ant`・`xmvn`・旧`maven`ラインなど複数の独立してバージョニングされたJavaビルドツールを、実バージョンとは無関係なビルド世代ラベル（"201801"）の1つのストリームにまとめて配布している——これをフロアとして使うと、510製品名が（自身の上限よりはるかに高いフロアのせいで）恒久的にヒットしなくなっていた。モジュール名で判定するのではなく汎用的に検出する（他のモジュールも同じ形をとりうるため）: ラベルがその行自身の`versionEnd`と数値的に「以下」である場合のみフロアとして採用し、そうでなければModule criterionが無かった場合と同様`inferBareVersionStart()`にフォールバックする。「日付っぽい形式かどうか」というヒューリスティックではない点に注意——`python-pytz`の"2017"ストリームのように、実際にカレンダー形式のバージョンを使う製品では、この整合性チェックを正当に通過する（自身の"2017.2..."バージョンと一致するため）。行自身のバージョンと本当に矛盾するラベルだけが弾かれる。このガードが存在する前に誤ったフロアで書き込まれていた行は、一度限りのバックフィル（`pnpm migrate:fix-implausible-module-floor`）で修正済み。
-
-**残存する問題**: 一部のアドバイザリは、抽出元となるModule criterionを一切持たない——パッケージがDNFモジュール化される以前のもの（例: RHEL9の`RHSA-2022:6595`、`nodejs 16.16.0-1.el9_0`）か、`postgresql`/`httpd`/`php`の一部RHELバージョンのように、そもそもそのRHELバージョンでは（あるいは一度も）モジュール化されていない。`inferBareVersionStart()`（[`advisory-helpers.ts`](src/worker/advisory-helpers.ts)）が`nodejs`・`postgresql`・`httpd`・`mysql`/`mariadb`/`php`ファミリー（`mysql-server`等、同じソースRPM由来のサブパッケージも含む——ただし`mysql-selinux`、`mariadb-connector-c`、PHPの`php-pecl-*`/`php-pear`等、独自のバージョン体系を持つ同梱ツールは個別に確認の上、除外）に限り、その行自身の`versionEnd`にフォールバックする実装を追加し、それぞれ実際のクエリで前後の挙動を確認済み——`.module+`行全体に対する主要な修正のような一律のルールではなく、確認済みの製品限定。フロアの粒度は各製品の実際の（互換性の無い）リリース系統の境界に合わせている: `nodejs`と`postgresql`（10以降）は先頭1桁のみ、`postgresql`の10未満（`9.0`〜`9.6`）・`httpd`（`2.2`/`2.4`）・DNFモジュール化以前の`mysql`（`5.0`/`5.1`）・`mariadb`（`5.5`）・`php`（`5.1`/`5.3`）は2桁まで含める。製品ごとの詳しい数値は[ACCURACY.md](ACCURACY.md#boundary-value-sweep-nodejs-module-streams--rhel--oracle-linux)参照。このフォールバックは、modular行とbare行が混在することが判明した残りの(製品, ベンダー)ペア（`golang`, `podman`, `libvirt`, `qemu-kvm`等）には**一般化していない**——それらについては、bare行が「同じ系統に属するモジュール化以前の名残」（フロアを設けても安全、その粒度も含めて）なのか、「リリース系統をまたいで連続する正当なバージョン履歴」（フロアを設けると新たな偽陰性を生む）なのかが未検証のため。
-
-### Go サブモジュールは完全なモジュールパスで検索する必要がある
-
-OSV は Go の脆弱性をサブモジュール単位（例: `go.opentelemetry.io/otel/baggage`）で記録するため、親モジュール（`go.opentelemetry.io/otel`）で検索しても結果が返らない。
-
-回避策: 完全なサブモジュールパスで検索する:
 ```
-GET /api/v1/vulnerabilities/search?package=go.opentelemetry.io/otel/baggage&version=1.36.0&ecosystem=Go
+ サーバー / コンテナ / ネットワーク機器
+            │  インベントリ（パッケージとバージョン）
+            ▼
+ heretix-cli, heretix-management ── 検索 ──► heretix-api ◄── 定期取り込み ── OSV, NVD, KEV, EPSS,
+            │                                (PostgreSQL)                     CVE レコード, ベンダーアドバイザリ
+            ▼
+ 脆弱性レポート
 ```
-
-Dependabot は依存グラフを解析して影響を受けるサブモジュールを特定するが、本 API ではプレフィックスマッチによる検索は未実装。
-
-### Sophos アドバイザリにはバージョン範囲情報がない
-
-Sophos アドバイザリはサイトマップ + RSS + ヘッドレスブラウザレンダリングで63件を収集している。CVE ID と severity は取得できるが、アドバイザリ詳細ページに構造化されたバージョン範囲データがないため、`?version=X.Y.Z` によるバージョン指定検索では Sophos の結果はヒットしない。CVE ID による直接検索（`/api/v1/vulnerabilities/CVE-YYYY-NNNNN`）で関連する Sophos アドバイザリを確認できる。
-
-### PANのCSAF文書でproduct_treeが空のケース（2013年以前のCVEのみ）
-
-ダッシュボードの件数が少なく見える（インポート済み211件 vs 既知のアドバイザリID563件）問題を調査したところ、[`pan-fetcher.ts`](src/worker/pan-fetcher.ts)のCSAFパース処理に2種類の異なる問題が見つかった。1つは実際のバグで、修正済み: `buildProductMap()`はレンジ形式の`product_tree`ブランチ（`vers:generic/<12.1.4`）しか認識していなかったため、同じ製品の下に「範囲を持たないプレースホルダーのブランチ」と「レンジを持つブランチ」が両方存在するケース（例: Prisma Access AgentのCSAFでは、バージョン情報を持たない"Prisma Access Agent 0"という影響マーカーのブランチと、`vers:generic/...>=26.2.2`という修正済みブランチが対になっている）で、製品データを一切解決できず、実際には脆弱性データを持つアドバイザリ全体が「解析不能」として黙って捨てられていた。`buildProductMap()`がレンジを持たない離散的なブランチも（兄弟のレンジブランチが提供する`versionFixed`と組み合わせて）記録するように修正し、全てのブランチ名がレンジ形式であることを前提としないようにした。
-
-もう1つは修正していない、本物の上流データ品質の問題: PalodAltoのCSAF文書の`product_status`が、その文書自身の`product_tree`のどこにも存在しない製品ID（例: `PANW-PAN-OS-496`）を参照していることがある——2013年以前の複数のCVE（例: `CVE-2012-6593`）で実際に確認済みで、`product_tree.branches`が単なる`[]`になっている。空のツリーからはどうパースしてもバージョン情報を復元できない。ID文字列自体から製品名を*推測*することは可能だが、確実に行うことはできない（実際のPAN製品名にはハイフンを含むもの（"PAN-OS"）とスペースを含むもの（"Prisma Access Agent"）が両方あり、ID文字列だけではどちらか判別できない）ため、10年以上前のわずかなアドバイザリのために製品名の不整合を生むリスクを負う価値は無いと判断した。これらは未インポートのまま——CVE IDでnvd.nist.govを直接調べればPANの影響有無は分かるが、このAPI経由では出てこない。
 
-### NVD と OSV のパッケージ名の表記ゆれ
+- **[heretix-cli](https://github.com/TITeee/heretix-cli)**: ホストやコンテナイメージをスキャンし、検出したパッケージを heretix-api で照合します。
+- **[heretix-management](https://github.com/TITeee/heretix-management)**: インベントリと検出結果を管理します。
+- **heretix-api**（このリポジトリ）: 各公開ソースのデータを定期的に PostgreSQL へ取り込みます。検索時に外部へアクセスすることはありません。
 
-NVD は CPE の `product` フィールドをパッケージ名として使用するため、OSV のパッケージ名と一致しない場合がある（例: NVD=`xz`、OSV=`xz-utils`）。両方のデータを同時に検索するには名寄せが必要。（未実装）
+heretix の他のツールと組み合わせずに、単体の脆弱性検索 API として使うこともできます。
 
-### 検索の limit/offset がメモリ上での処理に依存している
+### 処理の流れ
 
-現在の検索実装では `NVDAffectedPackage` / `OSVAffectedPackage` を limit なしで全件取得し、メモリ上で dedup した後に `limit/offset` を適用している。これは curl（約 900 件）程度では問題ないが、`openssl` や `linux_kernel` のように CPE エントリが数千件に及ぶパッケージでは応答時間・メモリ使用量が増加する可能性がある。
+1. **取り込み**: 定期ジョブが各ソース（OSV、NVD、CISA KEV、EPSS、CVE レコード、ベンダーアドバイザリ）からデータを取得し、ソースごとのテーブルに保存します。
+2. **統合**: 同じ CVE のデータをソースをまたいで 1 件にまとめ、KEV、EPSS、CISA の SSVC 評価といった悪用状況の情報を付与します。
+3. **検索**: 指定されたバージョンが各ソースの影響範囲に含まれるかを判定します。バージョンの比較にはエコシステムごとの規則（semver、dpkg、RPM、ベンダー独自の規則）を使います。同じ脆弱性が複数のソースで見つかっても、結果は 1 件にまとめて返します。
 
-改善策として、`Vulnerability` テーブルをベースにして `AffectedPackage` を JOIN 条件として使うクエリ構造に変更することで、DB 側で正確な件数ページネーションが可能になる。（未実装）
+## 特長
 
-精度検証スクリプト固有の制限事項（複数ソース間のバージョン namespace 衝突、RHEL/Oracle Linux の OVAL フィード改訂）は [ACCURACY.ja.md](ACCURACY.ja.md#既知の制限事項) に記載。
-
----
-
-## 精度検証
-
-公式セキュリティアドバイザリを正解データとして Precision / Recall を計測するスクリプト。専用の `AdvisoryFetcher` を持つ製品向けの自動境界値スイープを含む。対象製品が今後も増えていくため、専用ファイルに分離した: **[ACCURACY.ja.md](ACCURACY.ja.md)**。
-
----
-
-## トラブルシューティング
-
-### データベース接続エラー
-```
-Error: P1001: Can't reach database server
-```
-- `.env`ファイルの`DATABASE_URL`を確認
-- PostgreSQLサーバーが起動しているか確認
-- ファイアウォール/セキュリティグループの設定を確認
-
-### マイグレーションエラー
-```bash
-# マイグレーション状態をリセット
-pnpm prisma migrate reset
-
-# 再度マイグレーション実行
-pnpm db:migrate
-```
+- **ベンダーアドバイザリ**: Fortinet、Palo Alto Networks、Cisco、Sophos、SonicWall、Oracle CPU、Oracle Linux、Red Hat、Broadcom/VMware、Splunk、Apache HTTP Server、Apache Tomcat、nginx、Zabbix、Check Point
+- **ディストリビューション対応**: Linux ディストリビューションのパッケージは dpkg / RPM の規則でバージョンを比較する。ディストリビューション独自の重要度（`distroPriority`）と、「修正予定なし」などの修正状況（`fixStatus`）も返す
+- **マルウェア検知**: [ossf/malicious-packages](https://github.com/ossf/malicious-packages) に登録された悪意のあるパッケージ（`MAL-*`）も、脆弱性と同じ方法で検索できる
+- **シンプルな構成**: 必要なミドルウェアは PostgreSQL だけ（Redis は不要）。Docker Compose の設定、スケジューラ、取り込み状況のダッシュボードを同梱
 
-### バージョン正規化の注意点
+## サポート対象の OS リリース
 
-バージョン文字列は `major × 1,000,000,000 + minor × 1,000,000 + patch × 1,000 + release` の整数に変換されます。
+OSV には、Debian 3.0、Alpine v3.2、Ubuntu 14.04 といった古いリリースのデータも含まれています。このうち保守の対象とするのは、次のリリースだけです。保守対象のリリースは、精度の検証と不具合修正の対象になります。一覧は [src/config/support-policy.ts](src/config/support-policy.ts) で定義しています（最終見直し: 2026-10-03）。
 
-| 項目 | 動作 | 影響 |
+| ディストリビューション | 保守対象のリリース | 備考 |
 |---|---|---|
-| プレリリース版 (`1.0.0-beta.1`) | 正式版より小さい値として扱う (`1.0.0` - 1) | 軽微な誤差の可能性 |
-| ビルドメタデータ (`1.0.0+build.123`) | 除去して無視 | 影響なし |
-| RPM リリース番号 (`2.9.13-6.el9`) | リリース番号 (6) を4番目のコンポーネントとして含める → `2_009_013_006` | サブリリース単位の範囲検索が可能 |
-| minor/patch/release が 1,000 以上 | 999にクランプする（各桁は幅固定のスロットを占有しており、クランプせず通すと1つ上の桁を静かに壊してしまうため） | 同一パッケージ内でこの範囲の値同士は精度が粗くなるが、無関係な別バージョンと衝突することはなくなる |
-| いずれかのコンポーネントが 999,999 超 | 正規化失敗 (null) — バージョンではなくゴミ値（タイムスタンプ、gitハッシュ等）として扱う | フォールバック検索に移行。保存済みバージョン文字列の約0.46%が該当（`AdvisoryAffectedProduct`/`OSVAffectedPackage`/`NVDAffectedPackage`合計9,515,439件中44,000件）——大半はJenkins風のビルドID（`696.v52535c46f4c9`）や日付/git由来のバージョン（`20240325.1`、`0.20170427git-3...`）で、実際のバージョン番号ではないため正しく除外されている（バグではない） |
-| 非 semver 形式 (日付ベース等) | 正規化失敗 (null) | フォールバック検索に移行 |
+| Debian | 11、12、13、14 | 11 は通常のサポートが終了しているが、Debian LTS の期間中のため対象 |
+| Ubuntu | 20.04、22.04、24.04、26.04 LTS（Pro / FIPS / Realtime 版を含む） | 20.04 は ESM の期間中のため対象。中間リリース（25.10 など）は対象外 |
+| Alpine | v3.21 – v3.24 | |
+| AlmaLinux / Rocky Linux | 8、9、10 | |
+| Red Hat Enterprise Linux | 8、9、10 | OSV ではなく Red Hat のデータを取り込む。8/9 は OVAL と VEX、10 は VEX のみ（Red Hat が RHEL 10 の OVAL を公開していないため） |
 
-**フォールバック検索**: バージョンの正規化に失敗した場合、パッケージ名とエコシステムの一致で関連する全脆弱性を返します。この場合、レスポンスの各脆弱性レコードに `approximateMatch: true` が付与されます。
+対象外のリリースのデータも**削除しません**。引き続き検索できますが、精度の検証や不具合修正の対象にはなりません。Oracle Linux（Oracle の OVAL フィードから取り込み）も、同じ扱いで検索できます。npm や PyPI などの言語エコシステムは、このポリシーの対象外です。
 
-**複数セグメントを持つRPMリリース文字列**（例: Oracle Linux UEKカーネルの`5.4.17-2136.344.4.3.el8uek`における`2136.344.4.3`）は、**先頭の整数グループ**（`2136`）しか読み取っておらず、最初のドット以降は元々無視されます（これは今回の話と無関係に以前からの挙動です）。同じ先頭グループを共有する別ビルド（`2136.344...`と`2136.331...`）は同一の値に正規化されます。これは上記の「1,000以上のクランプ」とは別の問題（1,000未満のrelease値でも既に起きている）で、この節で既に受容している他のRPMサブリリース/4コンポーネント精度限界と同じ理由により対応していません — `ecosystem=oracle-linux`/`ecosystem=red-hat`を指定したクエリはこの汎用エンコーディングを経由せず`compareRpmVersions()`（RPMリリース文字列の完全な比較）を使うため、影響を受けません。
+## 動作要件
+
+PoC 環境向けの最小構成です（出典: [heretix の要件ページ](https://titeee.github.io/heretix-web/docs/)）。数値は heretix-api と heretix-management の合計で、その大半を heretix-api の PostgreSQL が占めます。
+
+| 項目 | 要件 |
+|---|---|
+| CPU | 2 vCPU 以上。取り込みや検索の実行中は heretix-api のコンテナが 1 コアの 70% 程度まで使うことがあり、取り込み中は PostgreSQL の負荷も加わる |
+| メモリ | 8 GB 以上（推奨 16 GB）。NVD 全件と複数の OSV エコシステムを取り込んだ状態で、heretix-api の PostgreSQL が約 7.7 GB を使用する |
+| ディスク | 20 GB 以上。heretix-api のデータベースは、数か月の運用で約 11 GB まで増える。OSV の全エコシステムを取り込む場合は、さらに多めに確保する |
+| ソフトウェア | Docker、Docker Compose v2、git |
+| ネットワーク | 各公開ソース（nvd.nist.gov、osv.dev、GitHub、各ベンダーのサイト）へアクセスできること |
+
+Docker を使わずに動かす場合（Node.js 22、pnpm、PostgreSQL 15 以上）は、[docs/operations.md](docs/operations.md#native) を参照してください。
+
+## クイックスタート
+
+### 1. 取得と設定
+
+```bash
+git clone https://github.com/TITeee/heretix-api.git
+cd heretix-api
+cp .env.example .env
+```
+
+`.env` に次の値を設定します。
+- `API_KEY`: API の認証キー。任意の文字列を設定します。リクエスト時は `x-api-key` ヘッダーでこの値を送ります。
+- `POSTGRES_PASSWORD`: 同梱の PostgreSQL のパスワード。`.env.example` には無いので、行を追加します。未設定時の `changeme` はローカルでの試用向けなので、独自の値を設定してください。
+- `NVD_API_KEY`（任意、推奨）: [NVD の API キー](https://nvd.nist.gov/developers/request-an-api-key)（無料）。設定すると NVD の取り込みが速くなります。
+
+Docker で動かす場合、`.env` の `DATABASE_URL` は使いません。接続先のデータベースは Docker Compose が設定します。
+
+### 2. 起動
+
+```bash
+docker compose up --build -d
+docker compose ps                    # db と app が起動していることを確認
+curl http://localhost:5000/health    # → {"status":"ok",...}
+```
+
+初回起動時にデータベースのスキーマが作成され、その後 API がポート 5000 で起動します。ログは `docker compose logs -f app` で確認できます。
+
+### 3. データの取り込み
+
+**起動直後のデータベースは空です。** NVD と OSV の定期ジョブは前回実行以降の差分しか取得しないため、利用を始める前に初回の取り込みを一度実行してください。
+
+```bash
+# NVD: 全 CVE（約 40 万件）。数時間かかるため、バックグラウンドで実行する
+docker compose exec -d app pnpm import:nvd full
+
+# OSV: 実際にスキャンするエコシステムだけを取り込む
+docker compose exec app pnpm import:osv ecosystem npm
+docker compose exec app pnpm import:osv ecosystem PyPI
+docker compose exec app pnpm import:osv ecosystem Go
+docker compose exec app pnpm import:osv ecosystem "Ubuntu:22.04:LTS"
+```
+
+取り込みを開始したら、`http://localhost:5000/dashboard` の[ダッシュボード](#ダッシュボード)を開き、API キーを入力します。
+- NVD の状態が `running` になり、完了すると `completed` に変わります。
+- NVD の完了後に、CISA KEV と EPSS の **Run** を押します。KEV と EPSS は、取り込み済みの CVE に情報を追加するものなので、NVD より後に実行する必要があります。2 回目以降は毎日自動で更新されます。
+- **取り込んだ OSV エコシステムの `osv-<エコシステム>` を On にしてください。** On にしないと、そのエコシステムのデータは更新されません。
+- そのほかに使うソースも、**On** にしてから **Run** を押して初回の取り込みを行います。対象は、ベンダーアドバイザリ（Fortinet、Red Hat など）、CVE レコード（`cna`）、悪意のあるパッケージ（`osv-mal`）、Debian security tracker（`debian-tracker`）です。
+
+取り込むソースの選び方は [docs/data-sources.md](docs/data-sources.md#choosing-what-to-import) を参照してください。
+
+### 4. 検索
+
+```bash
+export API_KEY=<設定したキー>
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:5000/api/v1/vulnerabilities/search?package=lodash&version=4.17.20&ecosystem=npm"
+```
+
+検索結果に反映されるのは、取り込みが完了したソースのデータです。
+
+### 停止と更新
+
+```bash
+docker compose down                        # 停止（データは残る。-v を付けると削除）
+git pull && docker compose up --build -d   # 最新版に更新
+```
+
+起動時には、データベースのマイグレーションとデータのバックフィルを適用してから API を起動します。データ量が多い環境では、バックフィルに数分かかることがあります。
+
+## 使い方
+
+`/health` と `/dashboard`（画面）を除き、すべてのエンドポイントで `x-api-key` ヘッダーが必要です。
+
+```bash
+# Linux ディストリビューションのパッケージ
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:5000/api/v1/vulnerabilities/search?package=bzip2-libs&version=1.0.8-8.el9&ecosystem=Red%20Hat:9"
+
+# ネットワーク機器（ベンダーアドバイザリ）
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:5000/api/v1/vulnerabilities/search?package=FortiOS&version=7.4.3"
+
+# ID を指定して取得
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-2021-44228"
+```
+
+`ecosystem` の指定によって、検索するソースとバージョンの比較方法が変わります。検索結果に漏れがないかを判断する前に、[エコシステム別の検索動作](docs/api.md#search-behavior-by-ecosystem)を確認してください。
+
+| エンドポイント | 用途 |
+|---|---|
+| `GET /api/v1/vulnerabilities/search` | パッケージとバージョンに該当する脆弱性の検索 |
+| `POST /api/v1/vulnerabilities/search/batch` | 最大 1,000 パッケージの一括検索 |
+| `GET /api/v1/vulnerabilities/search/cpe` | CPE 2.3 による検索（NVD） |
+| `GET /api/v1/vulnerabilities/suggest` | パッケージ名の候補 |
+| `GET /api/v1/vulnerabilities/:id` | CVE、OSV、ベンダーアドバイザリの ID による詳細の取得 |
+| `GET /api/v1/vulnerabilities/stats` | 件数の統計 |
+| `POST /api/v1/jobs/:source/run`、`PATCH /api/v1/jobs/:source` | 取り込みジョブの手動実行、有効・無効の切り替え |
+
+レスポンスの全項目を含むリファレンスは [docs/api.md](docs/api.md)（英語）にあります。
+
+## ダッシュボード
+
+`http://localhost:5000/dashboard` では、ソースごとの取り込み状況と件数を確認できます。定期ジョブの有効・無効の切り替えや、手動実行もここから行えます。データを表示するには、画面右上で API キーを入力する必要があります。
+
+![Import Status Dashboard](docs/dashboard.png)
+
+## データ収集
+
+初期状態で定期実行されるのは NVD、KEV、EPSS だけです。ほかのソースは、必要なものを On にしてください。
+
+| ソース | 内容 | スケジュール（UTC） |
+|---|---|---|
+| NVD | 全 CVE、CPE による影響範囲、CVSS | 2 時間ごと |
+| CISA KEV | 悪用が確認されている脆弱性 | 毎日 09:00 |
+| EPSS | 悪用される確率の予測値 | 毎日 10:00 |
+| OSV | 言語エコシステム、Linux ディストリビューション、マルウェア | 毎日 08:00（エコシステムごとに 1 ジョブ） |
+| CVE レコード（CNA） | CNA が登録した影響製品、CISA の SSVC 評価 | 毎日 15:30 |
+| Red Hat | OVAL（RHEL 8/9）、CSAF VEX（未修正の CVE と RHEL 10 全体） | 毎日 13:15 – 15:00 |
+| Debian security tracker | 修正状況（`no-dsa`、`ignored` など） | 毎日 07:15 |
+| ベンダーアドバイザリ | Fortinet、PAN、Cisco、Oracle、Broadcom など | 毎日 11:00 – 16:00 |
+
+ソースごとの詳細、取り込みコマンド、制約事項は [docs/data-sources.md](docs/data-sources.md)（英語）を参照してください。
+
+## ドキュメント
+
+詳細なドキュメントは英語のみです。
+
+| ドキュメント | 内容 |
+|---|---|
+| [docs/api.md](docs/api.md) | API リファレンス、検索の動作 |
+| [docs/data-sources.md](docs/data-sources.md) | データソースごとの取り込み方法、コマンド、注意点 |
+| [docs/operations.md](docs/operations.md) | セットアップ、環境変数、スケジューラ、バックフィル、トラブルシューティング |
+| [docs/architecture.md](docs/architecture.md) | データモデル、重複排除、バージョンの照合 |
+| [docs/known-issues.md](docs/known-issues.md) | 既知の制約 |
+| [ACCURACY.md](ACCURACY.md) | 公式アドバイザリを正解データとした適合率・再現率の測定結果 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 開発環境、テスト、ベンダーの追加方法 |
 
 ## ライセンス
 
-Apache License 2.0 — 詳細は [LICENSE](LICENSE) を参照してください。
-
+Apache License 2.0。詳細は [LICENSE](LICENSE) を参照してください。

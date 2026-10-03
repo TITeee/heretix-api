@@ -16,7 +16,7 @@
  * max (999) instead -- confirmed this doesn't introduce new same-line
  * ambiguity beyond what already existed (RPM releases with a multi-part
  * suffix like "2136.344.4.3" already only capture the leading integer group;
- * see README.md's RPM sub-release precision note). Values beyond
+ * see docs/known-issues.md's generic version encoding note). Values beyond
  * MAX_COMPONENT (999999) are still rejected outright as garbage (timestamps,
  * git hashes) rather than clamped, since clamping those would treat obvious
  * garbage as a real, comparable version.

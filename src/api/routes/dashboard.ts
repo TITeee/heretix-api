@@ -346,7 +346,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       <!-- Releases outside src/config/support-policy.ts: data is kept but not maintained -->
       <details id="osv-legacy" class="hidden border-t border-[var(--border)]">
         <summary class="px-4 py-3 text-sm text-[var(--muted-foreground)] cursor-pointer select-none hover:bg-[var(--accent)]/40">
-          Outside support policy (<span id="osv-legacy-count">0</span>) &mdash; data kept, best effort
+          Outside support policy (<span id="osv-legacy-count">0</span>): data kept, best effort
         </summary>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">

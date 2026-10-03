@@ -1,812 +1,53 @@
 # Heretix API
 
-Part of the **[heretix](https://titeee.github.io/heretix-web/)** project — a self-hosted suite that tracks CVEs across servers, containers, and network appliances (firewalls, VPNs) in one inventory (Apache-2.0).
-
-This repository, heretix-api, is the vulnerability data layer: it aggregates and normalizes CVE data from **OSV**, **NIST NVD**, **CISA KEV**, **EPSS**, published **CVE Records** (including CISA Vulnrichment's SSVC assessment), and **vendor security advisories** into one deduplicated master table, then serves it over a REST API to [heretix-cli](https://github.com/TITeee/heretix-cli) and [heretix-management](https://github.com/TITeee/heretix-management).
+heretix-api is the vulnerability database of **[heretix](https://titeee.github.io/heretix-web/)**, a self-hosted suite that tracks CVEs across servers, containers and network appliances (firewalls, VPNs) in one inventory (Apache-2.0).
 
 [日本語版 README](README.ja.md)
 
+## What it does
+
+Ask it "is this software vulnerable?", by package name and version, and it answers from a local copy of public vulnerability data:
+
+```
+GET /api/v1/vulnerabilities/search?package=openssl&version=3.0.2-0ubuntu1.10&ecosystem=Ubuntu:22.04:LTS
+→ 46 results, e.g.
+  CVE-2024-6119  severity HIGH  distroPriority medium  fixedVersion 3.0.2-0ubuntu1.18  isKev false  epssScore 0.67
+```
+
+It works for language packages (npm, PyPI, Go, Maven, ...), Linux distribution packages (Debian, Ubuntu, Alpine, RHEL, ...) and network appliances and commercial products (FortiOS, PAN-OS, Cisco IOS XE, vCenter, ...). Each result says how severe the vulnerability is, whether it is being exploited, and how to fix it.
+
+Where it sits in heretix:
+
+```
+ servers / containers / appliances
+            │  inventory (package + version)
+            ▼
+ heretix-cli, heretix-management ── search ──► heretix-api ◄── scheduled imports ── OSV, NVD, KEV, EPSS,
+            │                                  (PostgreSQL)                           CVE Records, vendor advisories
+            ▼
+ vulnerability reports
+```
+
+- **[heretix-cli](https://github.com/TITeee/heretix-cli)** scans a host or image and asks this API about each package.
+- **[heretix-management](https://github.com/TITeee/heretix-management)** keeps the inventory and the findings.
+- **heretix-api** (this repository) imports the public sources on a schedule into its own PostgreSQL database, so searches never call those sources directly.
+
+It can also be used on its own, as a self-hosted vulnerability lookup API.
+
+### How it works
+
+1. **Import**: scheduled jobs download each source (OSV, NVD, CISA KEV, EPSS, CVE Records, and vendor advisories) into per-source tables.
+2. **Merge**: records about the same CVE are linked to one master row, which also carries the exploitation signals (KEV, EPSS, CISA's SSVC assessment).
+3. **Search**: a search compares the version you give against each source's affected ranges. It uses that ecosystem's own version rules (semver, dpkg, RPM, vendor-specific), and returns one result per vulnerability.
+
 ## Features
 
-- **Multi-source**: OSV (Open Source Vulnerabilities), NIST NVD (CVE), and vendor advisories (Fortinet, Palo Alto Networks, Cisco PSIRT, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, Check Point, and more)
-- **Malware detection**: OSV `MAL-YYYY-NNNN` entries (malicious packages) are imported from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) and searchable via the same vulnerability search endpoint
-- **Deduplication**: A `Vulnerability` master table uses CVE ID as the primary key to merge duplicate entries across sources
-- **CPE alias support**: `src/config/product-aliases.ts` tracks CPE product name changes (e.g., post-acquisition renames) so search accuracy stays high
-- **Risk scoring**: CISA KEV (known-exploited flag), EPSS (exploitation probability score), and CISA Vulnrichment's SSVC assessment (exploitation state, automatability, technical impact) are attached to each vulnerability
-- **CVE Record ingestion**: CNA-declared affected products from every CVE Record ([CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5)), covering vendors with no dedicated advisory fetcher
-- **Simple**: Runs on PostgreSQL only — no Redis required. Docker Compose support included for easy deployment
-- **Fast search**: Version numbers are normalized to integers for high-speed range queries
-- **Scalable**: Raw data stored as JSONB, search fields kept normalized
-- **RESTful API**: Lightweight, high-throughput Fastify server
-- **Full NVD mirror**: Local mirror of all ~400,000 NVD CVEs with incremental update support
-- **Incremental updates**: OSV ecosystems and MAL entries support delta updates via `CollectionJob`-tracked timestamps
-
-## Setup
-
-### Option A: Docker (recommended)
-
-```bash
-cp .env.example .env   # edit values, especially API_KEY
-
-# Foreground (recommended for first run — shows logs)
-docker compose up --build
-
-# Or background (detached mode)
-docker compose up --build -d
-```
-
-The API is available at `http://localhost:5000`. `docker compose down` to stop (add `-v` to also remove the database volume). This runs the full stack — Postgres and the API — with a single command.
-
-### Option B: Manual (native PostgreSQL)
-
-1. **Install dependencies**
-   ```bash
-   pnpm install
-   ```
-
-2. **Prepare PostgreSQL** — use an existing instance or install one locally:
-   ```bash
-   psql --version   # verify PostgreSQL 15+ is installed
-   createdb vulndb
-   ```
-   Remote PostgreSQL (Supabase, Neon, Railway, AWS RDS, etc.) also works — just point `DATABASE_URL` at it.
-
-3. **Configure environment variables** — copy `.env.example` to `.env` and fill in the values. See [Environment variables](#environment-variables) below.
-
-4. **Run database migrations**
-   ```bash
-   pnpm db:migrate
-   ```
-   The Docker image also runs `pnpm migrate:all` on every container start, right
-   after schema migrations — see [One-time data backfills](#one-time-data-backfills)
-   below. Running it locally after `pnpm db:migrate` keeps a dev database caught up
-   the same way.
-
-5. **Start the server**
-   ```bash
-   pnpm dev      # development, with auto-reload
-   # or, for production:
-   pnpm build && pnpm start
-   ```
-   The server starts at http://localhost:5000.
-
-> **Import scripts in dev mode**: `pnpm import:*` commands run against the compiled `dist/` output. When running `pnpm dev` without a prior build, use `pnpm exec tsx src/scripts/<script>.ts` instead:
-> ```bash
-> pnpm exec tsx src/scripts/import-osv.ts update npm
-> pnpm exec tsx src/scripts/import-nvd.ts update
-> ```
-
-### Environment variables
-
-```env
-DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public"
-PORT=5000
-NODE_ENV=development                # use "production" for a production deployment
-API_KEY=your-api-key-here           # Required. Requests without x-api-key header return 401
-ALLOWED_ORIGINS=                    # Optional, comma-separated. Browser origins allowed to read cross-origin responses (default: none). Server-to-server callers are unaffected either way — see below
-DATABASE_POOL_MAX=20                # Optional. Postgres connection pool size (default 20)
-NVD_API_KEY=                        # Optional. Relaxes NVD rate limit from 10 → 50 req/min
-CISCO_CLIENT_ID=                    # Required for Cisco PSIRT import (openVuln API client ID)
-CISCO_CLIENT_SECRET=                # Required for Cisco PSIRT import (openVuln API client secret)
-GITHUB_TOKEN=                       # Optional. Authenticates the single GitHub tree API call used by MAL import/update. Only needed if running MAL commands more than 60 times/hr from the same IP.
-```
-
-## Database Management
-
-### One-time data backfills
-
-Some fixes need to correct rows already written before the fix existed, not just
-change how future rows are written — a `pnpm migrate:*` script under
-[`src/scripts/`](src/scripts/), one per fix. Each is idempotent: it finds rows still
-needing the correction and does nothing once none remain, safe to run any number of
-times.
-
-They're run together, in one pass, via:
-```bash
-pnpm migrate:all
-```
-which scans `dist/scripts/` for every `migrate-*.js` file and runs them in sequence —
-a new one just has to exist there, nothing has to add it to a list. `entrypoint.sh`
-calls this automatically on every container start, right after `prisma migrate
-deploy`, so a newly added backfill reaches production on the next deploy without a
-manual step to remember. Run it locally too after pulling changes that add one.
-
-Because it runs before the server starts, the API does not answer until every
-pending backfill has finished. Most take seconds, but a few read the stored OSV
-JSON of every record and take minutes on a full database — measured on ~430k OSV
-records: `migrate-backfill-distro-priority` ~8.5 min, `migrate-normalize-osv-severity`
-~4 min. Expect the first start after deploying such a script to take that much
-longer (only the first: once applied, a script is recorded and skipped), and allow
-for it in any orchestrator start-up timeout or health check.
-
-Individual scripts remain runnable on their own (`pnpm migrate:job-config-defaults`,
-etc.) for testing a specific one or re-running after investigating a partial
-failure.
-
-### Prisma Studio
-
-Browse and edit the database in a GUI:
-```bash
-pnpm db:studio
-```
-Opens http://localhost:5555 in your browser.
-
-## Import Status Dashboard
-
-A lightweight web dashboard is available at `/dashboard` (viewing requires no authentication).
-
-![Import Status Dashboard](docs/dashboard.png)
-
-```
-GET /dashboard
-```
-
-Displays:
-- **Record counts** — total rows in NVD, OSV, KEV, and Advisory tables
-- **Import status table** — latest `CollectionJob` per source with status badge, last completed time, inserted/updated counts, and any error message
-- **OSV ecosystems** — per-ecosystem import status and record counts. Distro releases outside the [support policy](#supported-os-releases) are folded into a collapsed "Outside support policy" section (`osvEcosystems[].maintained: false` in the JSON)
-
-Auto-refreshes every 60 seconds. Also available as JSON:
-
-```
-GET /api/v1/import-status     # requires x-api-key
-```
-
-The page itself is public, but the data it renders is not: enter your API key in the field at the top-right to load it. The key is kept in the browser's `localStorage` and sent with every subsequent request.
-
-The per-ecosystem record counts (`osvEcosystems[].recordCount`) are cached for 5 minutes: the underlying `COUNT(DISTINCT ...)` scans the entire `OSVAffectedPackage` table (no selective `WHERE` clause to seek on) and only changes once a day via the OSV delta cron, so re-running it on every 60-second poll bought nothing but load. Everything else in the response is uncached.
-
-### Job control (enable/disable & manual run)
-
-Each row has an **On/Off toggle** to enable/disable the scheduled run, and a **Run** button to trigger it on demand. OSV is controllable per ecosystem.
-
-These actions mutate state, so they require `x-api-key` authentication — the same key the dashboard already needs to load its data.
-
-Corresponding endpoints (inside the `/api/v1` auth scope):
-
-```
-POST  /api/v1/jobs/:source/run     # Manual run (fire-and-forget, 202; runs regardless of enabled state)
-PATCH /api/v1/jobs/:source          # Toggle enabled. Body: { "enabled": boolean }
-```
-
-`:source` is the `CollectionJob.source` (`nvd`, `kev`, `advisory-fortinet`, `osv-npm`, etc.). Re-running while in progress returns `409`; an unknown source returns `404`. The enabled state is persisted in the `JobConfig` table and defaults to enabled when no row exists.
-
-Example: `http://localhost:5000/dashboard`
-
----
-
-## API Endpoints
-
-Endpoints require the `x-api-key` header to match the `API_KEY` environment variable, except the following public routes: `/health`, `/dashboard`, `/icon.png`. `/dashboard` serves only the HTML shell — the data it loads (`/api/v1/import-status`) is authenticated like everything else.
-
-### Health check
-
-```
-GET /health
-```
-
-```json
-{ "status": "ok", "timestamp": "2025-01-18T12:00:00.000Z" }
-```
-
-### Search vulnerabilities (single)
-
-Search for vulnerabilities affecting a specific package and version. Queries OSV, NVD, and vendor advisory tables in parallel, then deduplicates results via the master table.
-
-```
-GET /api/v1/vulnerabilities/search
-```
-
-**Query parameters:**
-| Parameter | Required | Description |
-|---|---|---|
-| `package` | ✅ | Package or product name (e.g. `lodash`, `FortiOS`) |
-| `version` | | Version string (e.g. `4.17.20`, `7.4.3`). Omit to match the package/ecosystem alone — every vulnerability comes back with `approximateMatch: true` |
-| `ecosystem` | | Ecosystem or vendor (e.g. `npm`, `PyPI`, `Go`, `composer`, `fortinet`) |
-| `severity` | | Filter to one or more severities (e.g. `severity=CRITICAL` or `severity=CRITICAL&severity=HIGH`). Case-sensitive exact match against the `severity` value a result carries — round-tripping a value from a prior response always works. Values are `CRITICAL` / `HIGH` / `MEDIUM` / `LOW`, plus `NONE` (CVSS 0.0) and `INFORMATIONAL` (Splunk); GHSA's `MODERATE` is stored as `MEDIUM`. A result with no severity data never matches |
-| `limit` | | Max results (default: 500, max: 500) |
-| `offset` | | Pagination offset (default: 0) |
-
-**Examples:**
-```bash
-# OSV/NVD package
-curl -H "x-api-key: $API_KEY" \
-  "http://localhost:5000/api/v1/vulnerabilities/search?package=lodash&version=4.17.20&ecosystem=npm"
-
-# Vendor advisory (no ecosystem required)
-curl -H "x-api-key: $API_KEY" \
-  "http://localhost:5000/api/v1/vulnerabilities/search?package=FortiOS&version=7.4.3"
-```
-
-**Search behavior by ecosystem:**
-
-The `ecosystem` parameter changes *which sources are queried* and *how versions are compared* — not just a display filter. This trips people up, so read this table before assuming a search returned "everything":
-
-| `ecosystem` | Sources queried | Version comparison | Why |
-|---|---|---|---|
-| Language ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`) | **OSV only** | semver range | NVD/Advisory carry C-library/OS entries that share names with language packages (e.g. C `bzip2` vs. npm `bzip2`) — querying them here would produce false positives |
-| `Red Hat:*` (e.g. `Red Hat:9`) / `oracle-linux` | **Vendor advisory (OVAL/VEX) only** | RPM (`rpmvercmp`), against the advisory's `versionEnd` | OSV has no Red Hat/Oracle Linux ecosystem — the vendor OVAL feed is the only source of RHEL/Oracle Linux vulnerability data |
-| Other distro ecosystems (`Ubuntu:*`, `Debian:*`, `Alpine:*`, `AlmaLinux:*`, `Rocky:*`, `CentOS:*`) | **OSV only** | Exact match against `affectedVersions` (dpkg/rpm version strings) | Distro advisories express "needs a patched build," not an upstream version range (see [Known Issues](#known-issues)); vendor advisory product names also overlap with distro package names |
-| `advisory` | **Vendor advisory only** (Fortinet, PAN, Apache, Tomcat, nginx, etc.) | semver range, against the advisory's own version fields | Not a real NVD/OSV ecosystem name, so both return nothing for it — searchAdvisory() itself doesn't filter by ecosystem at all, so it's unaffected and returns its full result set. Use this to search vendor advisories only, with NVD/OSV noise excluded |
-| Not specified | OSV (distro ecosystems excluded) + NVD + Advisory (RPM module-stream rows excluded — see [Known Issues](#known-issues)) | semver range | Default — best for names not tied to a single ecosystem (e.g. `openssl`, `FortiOS`) |
-
-```bash
-# Language ecosystem — OSV only
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=lodash&version=4.17.20&ecosystem=npm"
-
-# Red Hat — RPM version comparison against OVAL advisories
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=rsync&version=3.2.4-1.el9&ecosystem=Red%20Hat:9"
-
-# Distro ecosystem — exact version-string match
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=xz-utils&version=5.2.4-1ubuntu1&ecosystem=Ubuntu:20.04:LTS"
-
-# advisory — vendor advisories only, NVD/OSV excluded
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=httpd&version=2.4.60&ecosystem=advisory"
-```
-
-**Response:**
-```json
-{
-  "results": [
-    {
-      "id": "clxxx...",
-      "externalId": "CVE-2019-10744",
-      "source": "nvd",
-      "sources": ["nvd"],
-      "severity": "CRITICAL",
-      "cvssScore": 9.8,
-      "cvssVector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
-      "summary": "Prototype pollution in lodash",
-      "publishedAt": "2019-07-26T00:00:00.000Z",
-      "approximateMatch": false,
-      "isKev": true,
-      "epssScore": 0.97,
-      "epssPercentile": 0.998,
-      "fixedVersion": "4.17.21",
-      "distroPriority": null,
-      "fixStatus": null,
-      "fixStatusDetail": null,
-      "aliases": ["CVE-2019-10744"]
-    }
-  ]
-}
-```
-
-`source` values: `"nvd"` · `"osv"` · `"advisory"`
-
-> `sources` — every source that matched this finding (`["nvd", "osv"]` when both do), unlike `source` (singular), which names only the preferred one.
-
-> `approximateMatch: true` — version normalization failed; results matched by package name and ecosystem only.
-
-> `isKev: true` — listed in the CISA Known Exploited Vulnerabilities catalog.
-
-> `epssScore` — probability of exploitation within 30 days (0–1); `epssPercentile` — rank among all CVEs.
-
-> `fixedVersion` — the version that resolves this finding, when the matching source states one; otherwise `null`.
-
-> `distroPriority` — the distribution's own rating of this CVE for the matched package, verbatim, when the match came from a source that carries one; otherwise `null`. Unlike `severity`, which is the same CVE-wide rating (NVD first) for every ecosystem, this can differ per distro — e.g. NVD `HIGH` but Ubuntu `negligible` — which is what triaging that distro's packages needs.
->
-> | Distro | Values | Source |
-> |---|---|---|
-> | Ubuntu | `negligible` / `low` / `medium` / `high` / `critical` | Ubuntu priority (OSV) |
-> | Debian | `unimportant` / `low` / `medium` / `high` / `end-of-life` / `not yet assigned` — per release | Debian security tracker urgency (OSV) |
-> | RHEL | `low` / `moderate` / `important` / `critical` | Red Hat's per-CVE impact (OVAL; VEX for unfixed CVEs and for RHEL 10) |
->
-> Alpine, AlmaLinux, Rocky Linux and Oracle Linux results carry `null`: the sources imported for them either have no distro rating, or only one per advisory rather than per CVE (Oracle Linux ELSA).
-
-> `fixStatus` — the fix status of the matched package, from a source that tracks unfixed packages: why there is no fix (e.g. `will_not_fix`), or `affected` when it is unfixed but the source gives no reason (`fixStatusDetail` is then `null`). `null` when the match came from a source that does not track fix status — which includes every match with only a `fixedVersion`. A different axis from `distroPriority` ("how much does this matter" vs "will a fix come"): Red Hat can rate a CVE `moderate` and still not fix it. `fixStatusDetail` carries the source's own wording verbatim (e.g. `Will not fix`).
->
-> | `fixStatus` | Meaning | Red Hat wording | Debian security tracker |
-> |---|---|---|---|
-> | `affected` | Not fixed yet; a fix may still come | `Affected` | open, no tag |
-> | `deferred` | The fix has been postponed, or will not come as a security update | `Fix deferred` | `postponed`; plain `no-dsa` (no security update; a point release may or may not fix it) |
-> | `will_not_fix` | The vendor has decided not to fix it | `Will not fix` | `ignored` |
-> | `out_of_support` | Outside the vendor's support scope; no fix will come | `Out of support scope` | `end-of-life` |
-> | `under_investigation` | Not yet confirmed whether it applies | (product status) | `undetermined` |
->
-> Sources today: RHEL's unfixed CVEs (Red Hat CSAF VEX), and Debian 12+ (the Debian security tracker, refreshed daily by the `debian-tracker` job, attached to unfixed Debian OSV matches). For Debian, `fixStatusDetail` is the tracker's tag and note, e.g. `ignored: Only affects Windows NTFS ...`. Debian 11 (bullseye) is not in the tracker's export, and other distros return `null`. **The set of values may grow** as more sources are mapped — treat a value you do not recognize like `affected`.
->
-> A RHEL result can carry both a `fixedVersion` and a `fixStatus`, for two reasons:
-> - Red Hat's VEX states "unfixed" per major version (all of RHEL 9) but "fixed" per release stream (9.3 GA, 9.2 EUS, ...), often both in the same document. heretix-api bounds such an unfixed entry by the newest fix the document records for that major, so builds at or past every fix are not reported; the newest fix is returned as `fixedVersion`. Builds between an older stream's fix (e.g. an EUS one) and that bound are still reported — a remaining false positive, preferred over guessing an installed build's stream and missing something.
-> - Red Hat's OVAL feed (fixed versions) and its VEX feed sometimes disagree outright: VEX records no fix for the major at all while OVAL does — mostly kernel packages, often CVEs assigned retroactively to fixes that shipped years earlier. Those VEX entries stay unbounded, and both are returned as Red Hat publishes them.
-
-> `aliases` — every identifier this finding is reachable by, including `externalId` itself. A vendor advisory or OSV record assigned a CVE after first publication keeps its own original id here even though `externalId` switches to the CVE.
-
-### Package name autocomplete
-
-Suggests real package names for a prefix, since NVD's `packageName` is the raw CPE `<product>` identifier (`http_server`, not "Apache HTTP Server") that a caller can't reasonably guess up front. Searches NVD, OSV, and CNA-declared products; not vendor-advisory products, which already have their own curated list elsewhere.
-
-```
-GET /api/v1/vulnerabilities/suggest
-```
-
-| Parameter | Required | Description |
-|---|---|---|
-| `q` | ✅ | Name prefix to match (case-sensitive) |
-| `ecosystem` | | Restrict to an ecosystem/vendor prefix |
-| `limit` | | Max suggestions (default: 10, max: 50) |
-
-```bash
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/suggest?q=lodash"
-# → { "suggestions": ["lodash", "lodash-amd", "lodash-electron", "lodash-es", ...] }
-```
-
-### Search vulnerabilities (batch)
-
-Search up to 1,000 packages in a single request.
-
-```
-POST /api/v1/vulnerabilities/search/batch
-```
-
-```bash
-curl -X POST -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
-  "http://localhost:5000/api/v1/vulnerabilities/search/batch" \
-  -d '{
-    "packages": [
-      { "package": "lodash",   "version": "4.17.20", "ecosystem": "npm" },
-      { "package": "requests", "version": "2.31.0",  "ecosystem": "PyPI" }
-    ]
-  }'
-```
-
-### CPE search (NVD only)
-
-Search using a CPE 2.3 string. NVD table only.
-
-```
-GET /api/v1/vulnerabilities/search/cpe
-```
-
-```bash
-# With version (range filter applied)
-curl -H "x-api-key: $API_KEY" \
-  "http://localhost:5000/api/v1/vulnerabilities/search/cpe?cpe=cpe:2.3:a:vercel:next.js:15.1.0:*:*:*:*:*:*:*"
-
-# Wildcard version (returns all matching vulnerabilities)
-curl -H "x-api-key: $API_KEY" \
-  "http://localhost:5000/api/v1/vulnerabilities/search/cpe?cpe=cpe:2.3:a:vercel:next.js:*"
-```
-
-When the `<version>` component is `*` or omitted, results are returned with `approximateMatch: true`.
-
-### CPE lookup by CVE + product
-
-Given a CVE and a product name, returns the CPE 2.3 string NVD recorded for it — useful for resolving a product name into the exact `vendor`/`product` pair to build a CPE search above. NVD table only; 404 when the CVE isn't in NVD, the product doesn't match any of its affected packages, or the product name matches more than one distinct vendor (ambiguous).
-
-```
-GET /api/v1/vulnerabilities/:id/cpe
-```
-
-| Parameter | Required | Description |
-|---|---|---|
-| `product` | ✅ | Product name to resolve (matched against NVD's affected-package names for this CVE) |
-
-```bash
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-2021-44228/cpe?product=log4j"
-# → { "cpe": "cpe:2.3:a:apache:log4j:*:*:*:*:*:*:*:*", "vendor": "apache", "product": "log4j" }
-```
-
-### Vulnerability detail
-
-Retrieve details by CVE ID, OSV ID, or vendor advisory ID.
-
-```
-GET /api/v1/vulnerabilities/:id
-```
-
-```bash
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-2021-44228"
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/GHSA-67hx-6x53-jw92"
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/FG-IR-25-934"
-```
-
-When available, the response includes CISA Vulnrichment's SSVC assessment (`ssvcExploitation`, `ssvcAutomatable`, `ssvcTechnicalImpact`, `ssvcTimestamp`) alongside the existing KEV/EPSS fields — see [CVE Program (CNA) & CISA Vulnrichment](#cve-program-cna--cisa-vulnrichment). Not included in the general product+version search results (`GET /vulnerabilities/search`), only this by-ID lookup.
-
-### Statistics
-
-```
-GET /api/v1/vulnerabilities/stats
-```
-
-```json
-{
-  "total": 280283,
-  "bySeverity": [
-    { "severity": "CRITICAL", "_count": 8234 },
-    { "severity": "HIGH",     "_count": 71234 }
-  ],
-  "kevCount": 1238,
-  "withEpss": 223107,
-  "bySource": {
-    "osv": 269380,
-    "nvd": 11311,
-    "advisory": 47,
-    "advisoryByVendor": { "fortinet": 47, "paloalto": 21, "cisco": 21 }
-  }
-}
-```
-
-### Run a job (manual trigger)
-
-```
-POST /api/v1/jobs/:source/run
-```
-
-Triggers the given source on demand (fire-and-forget). Runs regardless of enabled state.
-
-| Case | Response |
-|---|---|
-| Started | `202 { "status": "started", "source": "..." }` |
-| Already running | `409` |
-| Unknown source | `404` |
-
-```bash
-curl -X POST -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/jobs/nvd/run"
-```
-
-### Enable/disable a job
-
-```
-PATCH /api/v1/jobs/:source
-```
-
-Toggles whether the scheduler runs the job (does not affect manual runs). State is persisted in `JobConfig`.
-
-```bash
-curl -X PATCH -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
-  -d '{"enabled": false}' "http://localhost:5000/api/v1/jobs/osv-npm"
-# → { "source": "osv-npm", "enabled": false }
-```
-
-`:source` is the `CollectionJob.source` (`nvd`, `kev`, `advisory-fortinet`, `osv-npm`, etc.).
-
-## Project Structure
-
-```
-heretix-api/
-├── src/
-│   ├── api/
-│   │   ├── routes/
-│   │   │   ├── vulnerabilities.ts   # Vulnerability API endpoints
-│   │   │   ├── vulnerabilities.integration.test.ts  # search route integration test (fastify.inject, Vitest)
-│   │   │   ├── dashboard.ts         # Dashboard UI & import-status API
-│   │   │   ├── dashboard.integration.test.ts  # import-status auth & dashboard output-escaping tests
-│   │   │   └── jobs.ts              # Job manual-run & enable/disable API
-│   │   ├── server.ts                # Fastify server configuration
-│   │   ├── server.integration.test.ts  # CORS behavior tests (Vitest, requires TEST_DATABASE_URL)
-│   │   └── auth.ts                  # Shared x-api-key hook (timing-safe compare)
-│   ├── jobs/
-│   │   ├── types.ts                 # JobDefinition / JobResult types
-│   │   ├── registry.ts              # All job definitions (STATIC_JOBS) + dynamic resolver
-│   │   ├── executor.ts              # Shared job lifecycle + concurrency lock
-│   │   ├── executor.integration.test.ts  # executeJob / getDeltaCursor integration test (Vitest)
-│   │   └── config.ts                # Job enable/disable (JobConfig) accessors
-│   ├── db/
-│   │   ├── client.ts                # Prisma client
-│   │   ├── bulk-insert.ts           # createManyChunked() — chunks createMany under Postgres' bind-parameter limit
-│   │   └── bulk-insert.test.ts      # Unit tests (Vitest)
-│   ├── test-utils/
-│   │   └── db.ts                    # resetDb() — truncates all tables, used by integration test beforeEach()
-│   ├── scripts/
-│   │   ├── import-osv.ts            # OSV import CLI
-│   │   ├── import-nvd.ts            # NVD import CLI
-│   │   ├── import-kev.ts            # CISA KEV import CLI
-│   │   ├── import-epss.ts           # EPSS score import CLI
-│   │   ├── import-fortinet.ts       # Fortinet PSIRT import CLI
-│   │   ├── import-pan.ts            # Palo Alto Networks PSIRT import CLI
-│   │   ├── import-cisco.ts          # Cisco PSIRT import CLI
-│   │   ├── import-oracle-linux.ts   # Oracle Linux ELSA import CLI
-│   │   ├── import-sophos.ts         # Sophos advisory import CLI
-│   │   ├── import-sonicwall.ts      # SonicWall PSIRT import CLI
-│   │   ├── import-redhat.ts         # Red Hat RHSA/RHBA import CLI
-│   │   ├── import-redhat-vex.ts     # Red Hat CSAF VEX (unfixed CVEs) import CLI
-│   │   ├── import-oracle-cpu.ts     # Oracle CPU (quarterly patch) import CLI
-│   │   ├── import-broadcom.ts       # Broadcom/VMware VMSA import CLI
-│   │   ├── import-splunk.ts         # Splunk security advisory import CLI
-│   │   ├── import-apache.ts         # Apache HTTP Server advisory import CLI
-│   │   ├── import-zabbix.ts         # Zabbix security advisory import CLI
-│   │   ├── import-tomcat.ts         # Apache Tomcat advisory import CLI
-│   │   ├── import-nginx.ts          # nginx advisory import CLI
-│   │   ├── import-checkpoint.ts     # Check Point advisory import CLI
-│   │   ├── import-cna.ts            # CVE Program (CNA affected products) + CISA Vulnrichment (SSVC) import CLI
-│   │   ├── validate-tomcat.ts       # Tomcat search accuracy validator
-│   │   ├── validate-apache.ts       # Apache HTTPD search accuracy validator
-│   │   ├── validate-nginx.ts        # nginx search accuracy validator
-│   │   ├── validate-openssl.ts      # OpenSSL search accuracy validator
-│   │   ├── validate-postgresql.ts   # PostgreSQL search accuracy validator
-│   │   ├── validate-cna.ts          # CNA affected-products search accuracy validator
-│   │   └── clear-db.ts              # Drop all tables including Vulnerability
-│   ├── worker/
-│   │   ├── osv-fetcher.ts           # OSV API integration
-│   │   ├── nvd-fetcher.ts           # NVD REST API v2.0 integration
-│   │   ├── kev-fetcher.ts           # CISA KEV catalog fetch & import
-│   │   ├── epss-fetcher.ts          # FIRST.org EPSS daily dataset fetch & import
-│   │   ├── advisory-fetcher.ts      # Vendor advisory common interface & import logic
-│   │   ├── fortinet-fetcher.ts      # Fortinet PSIRT CSAF fetch & parse
-│   │   ├── pan-fetcher.ts           # Palo Alto Networks PSIRT CSAF fetch & parse
-│   │   ├── cisco-fetcher.ts         # Cisco PSIRT openVuln API fetch & parse
-│   │   ├── oracle-linux-fetcher.ts  # Oracle Linux OVAL XML fetch, decompress & parse
-│   │   ├── redhat-fetcher.ts        # Red Hat OVAL v2 XML fetch, decompress & parse
-│   │   ├── redhat-vex-fetcher.ts    # Red Hat CSAF VEX archive fetch, decompress & parse (unfixed CVEs)
-│   │   ├── sophos-fetcher.ts        # Sophos sitemap + RSS + headless browser fetch
-│   │   ├── sonicwall-fetcher.ts     # SonicWall PSIRT JSON API fetch & parse
-│   │   ├── oracle-cpu-fetcher.ts    # Oracle CPU CSAF 2.0 fetch & per-CVE split
-│   │   ├── broadcom-fetcher.ts      # Broadcom/VMware VMSA JSON API + Playwright fetch
-│   │   ├── splunk-fetcher.ts        # Splunk advisory archive HTML fetch & parse
-│   │   ├── apache-fetcher.ts        # Apache HTTP Server (httpd) security page HTML fetch & parse
-│   │   ├── zabbix-fetcher.ts        # Zabbix security advisory search API fetch & parse
-│   │   ├── tomcat-fetcher.ts        # Apache Tomcat multi-branch security page fetch & parse
-│   │   ├── nginx-fetcher.ts         # nginx security advisories page fetch & parse
-│   │   ├── checkpoint-fetcher.ts    # Check Point advisory JSON API + detail-page fetch & parse
-│   │   ├── cna-fetcher.ts           # cvelistV5 bundle download & CVE Record / CISA Vulnrichment (SSVC) parsing (pure, no DB import)
-│   │   ├── cna-importer.ts          # CNA affected-products + SSVC persistence, bootstrap & delta orchestration
-│   │   ├── *.test.ts                # Version-range parser unit tests (redhat/oracle-linux/splunk/apache/zabbix/tomcat/nginx/checkpoint/cna, Vitest)
-│   │   ├── advisory-fetcher.integration.test.ts  # importAdvisoryData integration test (Vitest, requires TEST_DATABASE_URL)
-│   │   ├── cna-importer.integration.test.ts      # CNA/SSVC import integration test (Vitest, requires TEST_DATABASE_URL)
-│   │   ├── epss-fetcher.integration.test.ts      # importEPSSData integration test (raw bulk UPDATE semantics)
-│   │   └── osv-fetcher.integration.test.ts       # importOSVData integration test — orphaned-master-row regression
-│   ├── config/
-│   │   ├── product-aliases.ts       # NVD CPE product name alias mappings
-│   │   └── product-aliases.test.ts  # Unit tests (Vitest)
-│   ├── utils/
-│   │   ├── logger.ts                # Pino logger configuration
-│   │   ├── version.ts               # Version normalization utility
-│   │   ├── rpm-version.ts           # RPM version comparison (rpmvercmp algorithm)
-│   │   ├── cpe.ts                   # CPE 2.3 parse utility
-│   │   ├── search-helpers.ts        # Search-time decision logic (dedup, ecosystem classification, etc.), extracted from vulnerabilities.ts
-│   │   ├── browser.ts               # Shared Playwright stealth browser singleton
-│   │   └── *.test.ts                # Unit tests for each utility (Vitest)
-│   ├── scheduler.ts                 # Iterates the job registry to register cron jobs (node-cron)
-│   └── index.ts                     # Entry point
-├── prisma/
-│   ├── schema.prisma                # Database schema
-│   └── migrations/                  # Migration files
-├── vitest.config.ts                 # Unit test configuration (Vitest, no DB)
-├── vitest.integration.config.ts     # Integration test configuration (Vitest, requires TEST_DATABASE_URL)
-├── .env.example                     # Environment variable template
-├── package.json
-└── tsconfig.json
-```
-
-## Key Components
-
-### Data model ([prisma/schema.prisma](prisma/schema.prisma))
-
-```
-Vulnerability (master)
-  ├── cveId      @unique  — CVE ID (shared dedup key across NVD/OSV/Advisory)
-  ├── osvId      @unique  — OSV ID (GHSA-xxx, PYSEC-xxx, etc. — only when no CVE)
-  ├── advisoryId @unique  — Vendor advisory ID (FG-IR-xx-xxx, etc. — only when no CVE/OSV)
-  ├── severity / cvssScore / cvssVector / summary
-  ├── isKev / kevDateAdded / kevDueDate / ...    — CISA KEV fields
-  ├── epssScore / epssPercentile / epssUpdatedAt — EPSS fields
-  ├── nvdVulnerability        — NVDVulnerability (1:1)
-  ├── osvVulnerabilities      — OSVVulnerability[] (1:N)
-  └── advisoryVulnerabilities — AdvisoryVulnerability[] (1:N)
-```
-
-**Dedup key priority:**
-
-| Field | When used |
-|---|---|
-| `cveId` | CVE ID exists (highest priority) — NVD, OSV, and advisories share one row |
-| `osvId` | No CVE ID but an OSV ID exists (GHSA-xxx, PYSEC-xxx, etc.) |
-| `advisoryId` | No CVE/OSV ID — vendor advisory-specific ID only (FG-IR-xx-xxx, etc.) |
-
-### Version normalization ([src/utils/version.ts](src/utils/version.ts))
-
-Semantic versions are converted to integers for fast range queries:
-- `1.2.3` → `1_002_003_000` (major × 1,000,000,000 + minor × 1,000,000 + patch × 1,000 + release)
-- RPM release numbers are included as the 4th component: `2.9.13-6.el9` → `2_009_013_006`
-- Stored as PostgreSQL BigInt with index-backed range scans
-
-### OSV data ([src/worker/osv-fetcher.ts](src/worker/osv-fetcher.ts))
-
-- Integrates with the OSV API (`https://api.osv.dev/v1/`) and the GCS ecosystem bucket
-- Single lookup, package query, bulk import, and delta update modes
-- **Malware detection**: imports `MAL-YYYY-NNNN` entries from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) — malicious packages are searchable via `/api/v1/vulnerabilities/search` with exact version matching
-- Automatically upserts to the `Vulnerability` master table on import
-- Delta updates track the last run via `CollectionJob` and skip entries not modified since then
-
-### NVD data ([src/worker/nvd-fetcher.ts](src/worker/nvd-fetcher.ts))
-
-- Integrates with NVD REST API v2.0 (`https://services.nvd.nist.gov/rest/json/cves/2.0`)
-- Full mirror with resumable pagination via `CollectionJob`
-- Incremental update via `lastModStartDate`
-- Authoritative source for CVSS scores
-
-### KEV data ([src/worker/kev-fetcher.ts](src/worker/kev-fetcher.ts))
-
-- Fetches the CISA KEV catalog (~1,200 entries)
-- Updates `Vulnerability.isKev` and related fields
-- Full-replace strategy (handles CISA-side removals)
-
-### EPSS data ([src/worker/epss-fetcher.ts](src/worker/epss-fetcher.ts))
-
-- Paginates the FIRST.org EPSS API (10,000 entries/page, ~320,000 total)
-- Updates `epssScore` / `epssPercentile` in chunks of 1,000
-
-### CVE Program & CISA Vulnrichment ([src/worker/cna-fetcher.ts](src/worker/cna-fetcher.ts), [src/worker/cna-importer.ts](src/worker/cna-importer.ts))
-
-- `cna-fetcher.ts` downloads and parses cvelistV5 GitHub release bundles (pure parsing, no DB import — same split as the vendor advisory fetchers); `cna-importer.ts` handles persistence and bootstrap/delta orchestration
-- CNA-declared affected products (`containers.cna.affected`) go into their own `CnaVulnerability`/`CnaAffectedProduct` tables, not the vendor-advisory search path — see the `CnaVulnerability` model's doc comment in `prisma/schema.prisma`
-- CISA Vulnrichment's SSVC assessment (`containers.adp`, the `CISA-ADP` entry) is extracted independently of whether the CNA affected-products parse succeeds, and written directly onto the `Vulnerability` master row (`ssvcExploitation`/`ssvcAutomatable`/`ssvcTechnicalImpact`/`ssvcTimestamp`) — the same flat per-CVE shape as KEV/EPSS. No final priority decision is computed; see the CVE Program section under Data Collection
-
-### Vendor advisory framework ([src/worker/advisory-fetcher.ts](src/worker/advisory-fetcher.ts))
-
-- Implement the `AdvisoryFetcher` interface to add new vendors
-- `importAdvisoryData()` handles master table linkage automatically
-- Import priority: CVE present → link to existing NVD record / no CVE → manage via `advisoryId`
-- **Stale-advisory pruning**: `runAdvisoryFetcher()` deletes advisories that have vanished from the source (retracted, corrected) rather than keeping them forever. Each `AdvisoryFetcher` implements `isCompleteSnapshot(): boolean` — `true` for fetchers whose `fetch()` always returns the *complete* current set (a full re-scrape/archive fetch, the vast majority — Apache, Nginx, Tomcat, Fortinet, Broadcom, Splunk, Sophos, SonicWall, Zabbix, Red Hat, Oracle Linux, Oracle CPU, Check Point), `false` when configured for a partial recent window (PAN/Cisco's `mode: 'latest'`, Oracle CPU's `latestOnly`) — pruning against a partial window would delete perfectly valid advisories that just fall outside it. Only complete-snapshot runs are eligible for pruning, and even then an advisory must be missing for 3 consecutive runs (`AdvisoryVulnerability.missingRunCount`, resets to 0 whenever it's seen again) before being hard-deleted, to tolerate a transient scrape hiccup rather than treating one bad run as a mass retraction. A run that returns zero advisories at all skips pruning entirely (indistinguishable from a parser/fetch bug returning an empty array without throwing — never treated as "everything was retracted"). Deleting an advisory also deletes its master `Vulnerability` row if that row was solely `advisoryId`-managed (no CVE/OSV data) and no other advisory still references it.
-
-### Fortinet PSIRT ([src/worker/fortinet-fetcher.ts](src/worker/fortinet-fetcher.ts))
-
-- Advisory discovery + CSAF 2.0 JSON per advisory (no authentication required). Paginates the full PSIRT advisory listing (`fortiguard.fortinet.com/psirt?page=N`) for complete historical coverage — previously discovered advisories via RSS only, which is a "what's new" feed exposing just a rolling window of recent items, not a full archive (found while building [boundary-value accuracy coverage](ACCURACY.md#boundary-value-sweep-fortinet--palo-alto-networks))
-- Covers FortiOS, FortiProxy, FortiManager, FortiAnalyzer, and more
-- Creates separate records per version branch (e.g., 7.6.x / 7.4.x / 7.2.x)
-
-### Palo Alto Networks PSIRT ([src/worker/pan-fetcher.ts](src/worker/pan-fetcher.ts))
-
-- RSS feed + CSAF JSON (no authentication required)
-- Covers PAN-OS, Prisma Access, Cortex XDR, and more
-- Reads every `vers:generic/` bound (`<X` under known_affected, `>=X` under fixed) as a fix point and expands them into one affected range per branch (`M.m`) and maintenance release. PAN fixes each maintenance release with its own hotfix, so e.g. CVE-2025-0126's PAN-OS 10.2 becomes `[10.2.0, 10.2.4-h25)`, `[10.2.5, 10.2.9-h13)`, `[10.2.10, 10.2.10-h6)` — 10.2.5 orders above 10.2.4-h25 but is not fixed
-- Compares versions with a PAN-specific ordering ([src/utils/pan-version.ts](src/utils/pan-version.ts)): `10.2.9-h1` is the hotfix *after* 10.2.9, whereas the generic `normalizeVersion()` reads any `-<letter>` suffix as a pre-release. Stored bounds and queried versions both go through the same encoding
-- Treats `known_affected` entries like `PAN-OS None` as not affected (PAN copies its advisory table's "Affected: None" column into `known_affected` verbatim)
-
-### Cisco PSIRT ([src/worker/cisco-fetcher.ts](src/worker/cisco-fetcher.ts))
-
-- OAuth 2.0 via `CISCO_CLIENT_ID` / `CISCO_CLIENT_SECRET` + openVuln API + CSAF JSON
-- Covers Cisco IOS XE, NX-OS, ASA, FTD, and more
-- `pnpm import:cisco latest` fetches the latest 100 advisories only
-
-### Oracle Linux ELSA ([src/worker/oracle-linux-fetcher.ts](src/worker/oracle-linux-fetcher.ts))
-
-- Downloads Oracle's public OVAL XML feed (bzip2-compressed, no authentication required)
-- Parses ELSA advisories: severity, CVE list with CVSS scores, affected package/version pairs
-- Uses `criterion` comment text ("X is earlier than Y") to extract `versionEnd` (exclusive) per package — the full `epoch:version-release` string, epoch included (a real, nonzero epoch dropped here made an installed build compare as newer than any epoch-omitted fix row regardless of its actual version, silently breaking every fix for that package; see [`redhat-fetcher.test.ts`](src/worker/redhat-fetcher.test.ts))
-- Per-variant feeds supported: `ol9`, `ol8`, `ol7`, etc.
-- RPM release numbers (e.g. `2.9.13-6.el9`) are handled by `normalizeVersion()` for accurate range queries
-
-### Red Hat OVAL ([src/worker/redhat-fetcher.ts](src/worker/redhat-fetcher.ts))
-
-- Downloads Red Hat's public OVAL v2 XML feed (bzip2-compressed, no authentication required)
-- Parses RHSA/RHBA `class="patch"` definitions only — this feed exclusively covers CVEs that already have a released fix; it has no representation at all for a CVE that's confirmed to affect a package with no fix yet (see Red Hat CSAF VEX below for that case)
-- Same epoch-preserving `versionEnd` extraction as Oracle Linux above
-- Per-variant feeds supported: `rhel9`, `rhel8`
-
-### Red Hat CSAF VEX ([src/worker/redhat-vex-fetcher.ts](src/worker/redhat-vex-fetcher.ts))
-
-- Downloads Red Hat's bulk CSAF VEX archive (`archive_latest.txt` → a `.tar.zst` covering every Red Hat product, streamed through zstd decompression and tar extraction rather than buffered in memory — the archive spans every RHEL major back to 5 and is well over a gigabyte decompressed)
-- Per CVE document, joins `product_tree.relationships` (`category: "default_component_of"` onto a bare `red_hat_enterprise_linux_N` product) to resolve each compound product ID down to (RHEL major, package name)
-- Extracts packages in `product_status.known_affected` and `product_status.under_investigation` that are *not* also in `product_status.fixed` — the former is Red Hat's explicit "still affected, no fix" signal, the latter "not yet confirmed either way" (narrower confidence, but not ruled out, so treated the same rather than silently dropped); either way, the OVAL feed above structurally cannot express an unresolved case at all
-- A `.src`-suffixed `product_reference` (a source RPM, with no separate relationship for its own same-named binary output — observed live on CVE-2026-5958/`sed`) has the suffix stripped to recover the installable package name; nothing on a running system is ever installed as `foo.src`, so left as-is it could never match an SBOM
-- Restricted to RHEL 8/9/10 — the archive's older, unsupported majors were dropped almost entirely for volume, and were a direct contributor to an early OOM crash processing the full archive
-- **RHEL 10 fixed CVEs come from here too.** Red Hat publishes no OVAL feed for RHEL 10 (the OVAL v2 tree stops at RHEL 9), so `RedHatFetcher` has nothing to import for it. For RHEL 10 only, each package in `product_status.fixed` also gets a `patchAvailable: true` row bounded by its newest fixed build across the release streams (`BaseOS-10.0.Z`, `AppStream-10.1.GA`, ...). `-debuginfo`/`-debugsource` packages are skipped, as OVAL never lists them. As with the unfixed bound, a build fixed only in an older stream (e.g. 10.0.Z when 10.1 also has a fix) is still reported
-- Stores affected-product rows with no version range at all and `patchAvailable: false` — the explicit signal `matchesRpmVersionRange()`/`searchAdvisory()` (`src/utils/search-helpers.ts`, `src/api/routes/vulnerabilities.ts`) key off of to match a query unconditionally, distinct from an ordinary row with no range and `patchAvailable` left `null`/unset, which still never matches (see "Confirmed-unfixed vulnerabilities" below)
-
-**No Oracle Linux equivalent**: Oracle Linux has the identical structural gap as Red Hat (its OVAL feed only ever publishes definitions for CVEs with a released fix), but no ingestible fix is planned here. Oracle does publish a CSAF VEX tree at `linux.oracle.com/csaf/beta/vex/` in the same schema Red Hat uses, confirmed live, but unlike Red Hat's there is no bulk archive (`archive_latest.txt`/`.tar.zst`) — only a per-CVE JSON file browsable one year-directory at a time, across every year back to 1999 (roughly 2,000–6,600 files/year sampled), which would mean tens of thousands of individual requests with no `changes.csv`-style incremental path, and the product IDs (`P-1309V-10:dovecot`) use a different, undocumented scheme than Red Hat's `red_hat_enterprise_linux_N:<pkg>` (no `relationships` array to resolve them from either). This isn't a corner this project cut alone: [Trivy's own docs](https://trivy.dev/docs/latest/coverage/os/oracle/) list unfixed-vulnerability support as unsupported for Oracle Linux, and Grype's data source ([vunnel](https://github.com/anchore/vunnel/tree/main/src/vunnel/providers/oracle)) is OVAL-only for it too — confirmed by reading its fetcher source, which has no CSAF/VEX client at all, unlike its RHEL provider.
-
-### CPE mapping notes
-
-NVD describes affected products in CPE 2.3 format. This API uses the `<product>` field of `cpe:2.3:a:` (application) and `cpe:2.3:o:` (OS) entries as the package name, and infers the ecosystem from `<vendor>`. Hardware CPEs (`cpe:2.3:h:`) are excluded because their version is always `-`.
-
-CPEs come in two forms: version range fields (`versionStartIncluding`, etc.) and versions embedded directly in the URI. The latter (e.g., `cpe:2.3:a:vendor:product:3.0:*:*:*:*:*:*:*`) is stored as `introduced = lastAffected = 3.0`.
-
-Old-style CPEs encode version detail in the `<update>` field (parts[6]) rather than the version field. NVD range fields only reflect the base version, losing the qualifier. Two patterns are recovered automatically at import time:
-
-| Pattern | Example CPE update field | Stored as | Query format |
-|---|---|---|---|
-| `update_N` | `update21` | `1.5.0_21` | `version=1.5.0_21` |
-| `rcN` | `rc3` | `4.19.0-rc3` | `version=4.19.0-rc3` |
-
-The following patterns are **not** recovered (version range ordering breaks due to how `normalizeVersion` strips non-numeric characters):
-
-| Pattern | Affected products | Impact |
-|---|---|---|
-| `rN` / `rN-sN` | Juniper Junos (~63k entries) | Version ordering incorrect |
-| `spN` | Windows Server Service Pack (~23k entries) | Version ordering incorrect |
-| `pN` | FreeBSD/OpenBSD patches (~25k entries) | Treated as equivalent to `.N` patch release |
-
-| vendor | Inferred ecosystem |
-|---|---|
-| `python` / `pypi` | `PyPI` |
-| `nodejs` / `npm` | `npm` |
-| `redhat` / `almalinux` | `AlmaLinux` |
-| `golang` | `Go` |
-| `rubygems` | `RubyGems` |
-
-### NVD product name aliases
-
-NVD sometimes uses multiple CPE product names for the same software (e.g., after vendor acquisitions). `src/config/product-aliases.ts` maps search terms to all known CPE product names. Aliases are verified against actual `NVDAffectedPackage` counts in the database.
-
-| Search term | CPE product names searched | Reason |
-|---|---|---|
-| `nginx` | `nginx`, `nginx_open_source`, `nginx_open_source_subscription` | F5 acquisition renamed the product |
-| `java` / `jre` / `jdk` | `jre`, `jdk` | Sun/Oracle uses both names interchangeably |
-| `openjdk` | `openjdk` | Kept separate — old entries have unbounded wildcard ranges |
-| `acrobat` / `acrobat_reader` | `acrobat`, `acrobat_dc`, `acrobat_reader`, `acrobat_reader_dc` | Four product names across generations |
-| `opera` | `opera`, `opera_browser` | Two distinct product names in NVD |
-| `macos` / `mac_os_x` | `macos`, `mac_os_x` | Apple renamed macOS |
-| `joomla` | `joomla`, `joomla!` | Exclamation mark variant in older NVD entries |
-| `curl` | `curl`, `libcurl` | Both names used in NVD |
-| `tomcat` | `tomcat` | Version-specific names (tomcat7/8/9/10) absent from DB |
-| `postgres` | `postgresql` | Common abbreviation |
-| `spring` / `spring_framework` | `spring_framework` | NVD uses full name only |
-| `k8s` | `kubernetes` | Common abbreviation |
-
-## Data Collection
-
-### NVD
-
-```bash
-pnpm import:nvd full              # Full mirror (~400k CVEs); starts a new job
-pnpm import:nvd full <job-id>     # Resume an interrupted or failed job from its checkpoint
-pnpm import:nvd update            # Incremental update (recent changes only)
-pnpm import:nvd cve CVE-2021-44228  # Single CVE
-pnpm import:nvd range 2024-01-01 2024-03-31  # Date range (auto-chunks at 120-day NVD limit)
-```
-
-The full mirror takes **several hours** (about 6 hours in one measured run on Docker Desktop for Mac; it varies with hardware and NVD's response times). The NVD rate limit is only a small part of that: most of the time goes into downloading 2,000-record pages and writing each CVE to the database, so don't plan on waiting for it in the foreground. `NVD_API_KEY` (50 req/min instead of 10) is still worth setting — get a free key at [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key).
-
-A full download is **not** resumed automatically: running `pnpm import:nvd full` again starts a new job from the beginning and re-imports everything. If a page still cannot be fetched after retries, the job is marked `failed` (never `completed`), the command exits non-zero, and the error message ends with the resume command. The job id is also logged at startup, and progress is checkpointed in `CollectionJob`, so continue with:
-
-```bash
-pnpm import:nvd full <job-id>
-```
-
-A failed job is never used as the starting point of `pnpm import:nvd update`. Before relying on incremental updates, check that the job's `metadata.lastStartIndex` has reached `totalResults`.
-
-### OSV
-
-```bash
-pnpm import:osv sample                    # Import sample data
-pnpm import:osv package npm lodash        # All vulnerabilities for a package
-pnpm import:osv ecosystem npm             # Entire ecosystem bulk download (full)
-pnpm import:osv ecosystem Go              # Go modules
-pnpm import:osv ecosystem Packagist       # PHP Composer packages
-pnpm import:osv update npm               # Delta update since last run
-pnpm import:osv update PyPI              # Delta update for PyPI
-pnpm import:osv update malware           # Delta update for MAL entries
-pnpm import:osv malware                  # Full import of all MAL entries (ossf/malicious-packages)
-pnpm import:osv id GHSA-67hx-6x53-jw92   # By OSV ID
-pnpm import:osv id CVE-2021-44228         # By CVE ID
-```
-
-Delta updates (`update <ecosystem>`) download the full ecosystem ZIP but skip entries whose `modified` timestamp is not newer than the last completed `CollectionJob`. `update malware` makes one GitHub tree API call (60 req/hr unauthenticated); set `GITHUB_TOKEN` only if running it more than 60 times per hour.
-
-**Onboarding a new ecosystem**: always run the full `ecosystem <name>` import *before* the daily delta job (`osv-<ecosystem>`) starts running against it — the delta path only ever catches entries modified after its cursor, so if the initial backfill is skipped or interrupted partway, the missing older entries are never picked up by any later delta run. `pnpm import:osv ecosystem <name>` now records its own `osv-full-<ecosystem>` `CollectionJob` (separate from the delta job's `osv-<ecosystem>`, so it doesn't clobber that dashboard row) so a completed run is auditable — this used to leave no trace at all, which is exactly how most tracked ecosystems ended up permanently stuck well below 100% coverage (as low as 3.7% for GitHub Actions) despite their delta jobs reporting "completed" every day. Verify actual completeness against the live OSV bulk export at any time with:
-```bash
-pnpm validate:osv-coverage              # check every tracked ecosystem
-pnpm validate:osv-coverage Go PyPI      # check only the named ecosystem(s)
-```
-
-**Supported ecosystems for `ecosystem` / `update` commands:**
-
-| Ecosystem value | Language / Platform |
-|---|---|
-| `npm` | Node.js |
-| `PyPI` | Python |
-| `Go` | Go modules |
-| `RubyGems` | Ruby |
-| `crates.io` | Rust |
-| `Packagist` | PHP (Composer) |
-| `Maven` | Java / Kotlin |
-| `NuGet` | .NET |
-| `Hex` | Elixir / Erlang |
-| `Pub` | Dart / Flutter |
-| `ConanCenter` | C / C++ |
-| `SwiftURL` | Swift |
-| `CRAN` | R |
-| `Linux` | Linux kernel |
-| `Android` | Android |
-| `OSS-Fuzz` | OSS-Fuzz projects |
-| `Bitnami` | Bitnami application stack |
-
-> Ecosystem names are **case-sensitive** — use exactly the values shown above.
-> Linux distribution ecosystems (Alpine, Debian, Ubuntu, AlmaLinux, Rocky Linux, etc.) can be imported without a version suffix (e.g. `pnpm import:osv ecosystem Ubuntu`). When **searching**, the version suffix is optional — `?ecosystem=Ubuntu` matches all Ubuntu versions via prefix match; `?ecosystem=Ubuntu:22.04:LTS` narrows to that specific version. Note that distro ecosystems store distro-format version strings, so upstream semver versions will not match.
-
-#### Supported OS releases
+- **Vendor advisories**: Fortinet, Palo Alto Networks, Cisco, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix and Check Point
+- **Distro-aware matching**: dpkg and RPM version comparison for Linux distributions, and each distro's own rating (`distroPriority`) and fix status (`fixStatus`, e.g. "will not fix") per result
+- **Malware detection**: malicious packages from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) (`MAL-*`), searchable like any vulnerability
+- **Simple to run**: PostgreSQL only (no Redis), Docker Compose included, a built-in scheduler and an import dashboard
+
+## Supported OS releases
 
 OSV publishes data for distro releases going back to Debian 3.0, Alpine v3.2 and Ubuntu 14.04. Only the releases below are maintained, meaning they are covered by accuracy checks and fixes. The list is defined in [src/config/support-policy.ts](src/config/support-policy.ts) and was last reviewed on 2026-10-03.
 
@@ -818,415 +59,157 @@ OSV publishes data for distro releases going back to Debian 3.0, Alpine v3.2 and
 | AlmaLinux / Rocky Linux | 8, 9, 10 | |
 | Red Hat Enterprise Linux | 8, 9, 10 | Imported from Red Hat, not OSV: OVAL plus VEX for 8/9, VEX only for 10 (Red Hat publishes no RHEL 10 OVAL) |
 
-Data for other releases is **not deleted**. It stays searchable, but on a best-effort basis: it is not part of the accuracy guarantee. Language ecosystems (npm, PyPI, ...) are unaffected.
+Data for other releases is **not deleted**. It stays searchable on a best-effort basis, without accuracy checks or fixes. Oracle Linux (imported from Oracle's OVAL feed) is also searchable on a best-effort basis. Language ecosystems (npm, PyPI, ...) are not affected by this policy.
 
-### CISA KEV
+## Requirements
 
-```bash
-pnpm import:kev full    # Fetch catalog and sync to master table (full-replace)
-pnpm import:kev stats   # Show KEV statistics from DB
-```
+Minimum sizing for a PoC deployment, from the [heretix requirements](https://titeee.github.io/heretix-web/docs/). The figures cover heretix-api and heretix-management together; heretix-api's PostgreSQL accounts for most of them.
 
-### EPSS
-
-```bash
-pnpm import:epss full                    # Today's daily dataset
-pnpm import:epss full 2024-03-01         # Dataset for a specific date
-pnpm import:epss cve CVE-2021-44228      # Update a single CVE
-```
-
-### CVE Program (CNA) & CISA Vulnrichment
-
-```bash
-pnpm import:cna              # Delta if already bootstrapped, else full-bundle bootstrap
-pnpm import:cna --bootstrap  # Force a full-bundle pass
-```
-
-Downloads CVE Records from [CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5)'s GitHub releases — a ~600MB full snapshot for the one-time bootstrap, then a few MB/day of hourly delta bundles. No API key, no rate limit.
-
-- **CNA-declared affected products**: `containers.cna.affected`, stored in `CnaAffectedProduct` (its own tables, not merged into the vendor-advisory search path — see `cna-importer.ts`'s doc comment). Bootstrap is restricted to `BOOTSTRAP_YEARS` (`src/scripts/import-cna.ts`) since older records predate the structured `versions` conventions this relies on; deltas apply to any year.
-- **CISA Vulnrichment (SSVC)**: the same CVE Record's `containers.adp` sometimes carries a CISA-ADP entry with an SSVC assessment (`Exploitation`: none/poc/active, `Automatable`: yes/no, `Technical Impact`: partial/total) — see [CISA's SSVC guide](https://www.cisa.gov/stakeholder-specific-vulnerability-categorization-ssvc). Stored directly on the `Vulnerability` master table (`ssvcExploitation`/`ssvcAutomatable`/`ssvcTechnicalImpact`/`ssvcTimestamp`), the same flat per-CVE shape as the existing KEV/EPSS fields, and returned by `GET /vulnerabilities/:id`. Deliberately **not** turned into a final Track/Track-star/Attend/Act decision: that needs a fourth axis (organization-specific Mission & Well-being impact) that CISA does not publish per CVE — left to the consumer (heretix-management) to combine with its own context.
-- Unlike CNA-affected-products, SSVC backfill during bootstrap is **not** restricted to `BOOTSTRAP_YEARS` — the full bundle is downloaded either way, so every year in it is scanned for SSVC data at no extra network cost (`bootstrapCna()`'s doc comment in `cna-importer.ts`).
-
-### Vendor advisories
-
-```bash
-pnpm import:fortinet                  # Fortinet PSIRT (all)
-pnpm import:pan                       # Palo Alto Networks PSIRT (all)
-pnpm import:cisco                     # Cisco PSIRT (all, requires credentials)
-pnpm import:cisco latest              # Cisco PSIRT (latest 100 only)
-pnpm import:sophos                    # Sophos security advisories (63 advisories via sitemap + browser)
-pnpm import:sonicwall                 # SonicWall PSIRT (all, ~200 advisories via JSON API)
-pnpm import:oracle-cpu                # Oracle Critical Patch Updates (all historical CPUs via CSAF)
-pnpm import:oracle-cpu latest         # Oracle CPU (most recent CPU only)
-pnpm import:broadcom                  # Broadcom/VMware security advisories (VMSA series, JSON API)
-```
-
-### Oracle Linux
-
-```bash
-pnpm import:oracle-linux              # Full feed (all OL versions)
-pnpm import:oracle-linux ol9          # Oracle Linux 9 only
-pnpm import:oracle-linux ol8          # Oracle Linux 8 only
-```
-
-```bash
-# Search Oracle Linux packages
-curl -H "x-api-key: $API_KEY" \
-  "http://localhost:5000/api/v1/vulnerabilities/search?package=rsync&ecosystem=oracle-linux&version=3.2.4"
-```
-
-> **ecosystem value**: `oracle-linux` (no version suffix). Range queries use RPM version strings.
-> Specify versions as `MAJOR.MINOR.PATCH-RELEASE.dist` (e.g. `3.2.5-3.el9`) or upstream `MAJOR.MINOR.PATCH` (e.g. `3.2.4`).
-> Routed to the same exact `rpmvercmp` comparison as Red Hat (see [`rpmAdvisoryVendor`](src/utils/search-helpers.ts)) — previously this ecosystem value wasn't wired up and silently fell back to the lossy BigInt approximation regardless of what this doc said; see the [boundary-value sweep](ACCURACY.md#boundary-value-sweep-rhel--oracle-linux) in ACCURACY.md.
-
-### Red Hat
-
-```bash
-pnpm import:redhat                    # Full feed, both variants (RHEL 9 + RHEL 8 OVAL)
-pnpm import:redhat rhel9              # RHEL 9 only
-pnpm import:redhat-vex                # CSAF VEX archive (confirmed-unfixed CVEs, RHEL 8/9/10; fixed CVEs for RHEL 10)
-```
-
-```bash
-# Search Red Hat packages
-curl -H "x-api-key: $API_KEY" \
-  "http://localhost:5000/api/v1/vulnerabilities/search?package=bzip2-libs&ecosystem=Red%20Hat:9&version=1.0.8-11.el9"
-```
-
-> **ecosystem value**: `Red Hat:<major>` (e.g. `Red Hat:9`, `Red Hat:10`). Range queries use RPM version strings, `epoch:version-release` included. RHEL 8/9 come from OVAL plus VEX; RHEL 10 comes from VEX alone (no OVAL feed exists for it), so it needs `import:redhat-vex`, not `import:redhat`.
-> A confirmed-unfixed hit from `import:redhat-vex` always has `fixedVersion: null` and carries `red-hat-vex` in its `sources[]` array — `source` (singular) still prefers `nvd`/the CVE's own primary source when one exists, so `sources[]` is what identifies the VEX origin, not `source`.
-
-### Sophos
-
-Sophos security advisories. No authentication required.
-
-```bash
-pnpm import:sophos                    # All 63 advisories (sitemap + RSS + headless browser)
-```
-
-- Fetches advisory IDs from sitemap → enriches with RSS → falls back to Playwright stealth for pages where CVE is not in the title
-- CVE IDs and severity extracted; no version ranges available (use CVE ID lookup instead)
-- Products: XG/XGS Firewall, Sophos AP series, etc.
-
-### SonicWall
-
-SonicWall PSIRT advisories via public JSON API. No authentication required.
-
-```bash
-pnpm import:sonicwall                 # All advisories (~200)
-```
-
-- Fetches directly from the JSON API (`psirtapi.global.sonicwall.com/api/v1/vulnsummary/`) that the React SPA calls internally
-- Extracts CVE IDs, severity, CVSS score/vector, and product family names
-- Version numbers extracted best-effort from HTML product tables
-- Products: SonicOS Gen5/6/7/8 firewalls, SMA series, etc.
-
-### Broadcom / VMware
-
-Broadcom/VMware VMSA advisories via public JSON API + Playwright for version detail. No authentication required.
-
-```bash
-pnpm import:broadcom                  # All VMSA advisories (JSON API + Playwright)
-```
-
-- Fetches the advisory list from the Broadcom support portal JSON API (unauthenticated POST endpoint)
-- Renders each advisory detail page with Playwright to extract the affected/fixed version table
-- VMware update-level version strings (`8.0 U3d`) are automatically normalized (`8.0.3-4`) for range queries
-- Products: vCenter Server, ESXi, NSX, VMware Aria, Horizon, Carbon Black, and more
-
-> **Version query format**: Use VMware update-level strings — `version=8.0+U3d` is automatically normalized.
-
-### Oracle Critical Patch Update
-
-Oracle quarterly CPU advisories. No authentication required.
-
-```bash
-pnpm import:oracle-cpu                # All historical CPUs (via RSS)
-pnpm exec tsx src/scripts/import-oracle-cpu.ts latest   # Most recent CPU only
-```
-
-- Discovers CPUs from Oracle RSS (28 quarters back to CPUJan2020 — Oracle's own feed doesn't go back further)
-- Fetches CSAF 2.0 JSON per CPU (CPUApr2022 onward), falling back to the older CVRF 1.1 XML format for CPUJan2020–CPUApr2022, where CSAF isn't published. CPUs before CPUJan2020 have neither format and aren't covered (would require scraping the legacy HTML advisory pages)
-- Each CPU is split into per-CVE advisory entries (`externalId: cpuapr2026-CVE-XXXX-NNNN`), merging affected products from every `<Vulnerability>` element sharing that CVE (a single CVE can be split across several CVRF entries, one per affected-product subset — naively taking one entry per CVE would silently drop the rest)
-- ~450 CVEs per CPU covering MySQL, Java SE, WebLogic, E-Business Suite, Fusion Middleware, etc.
-- Separate from `advisory-oracle-linux` (ELSA) — this covers Oracle software products, not OS packages
-
-### Splunk
-
-Splunk security advisory archive. No authentication required.
-
-```bash
-pnpm import:splunk                    # All advisories (300+, single archive page)
-```
-
-- Fetches the full historical table from `advisory.splunk.com/advisories` (one page covers the entire archive)
-- Extracts CVE ID, CVSS score/vector, per-branch affected/fixed versions, description, solution, and mitigations
-- Deduplicates rows sharing the same SVD ID
-- Products: Splunk Enterprise, Splunk Cloud Platform, Splunk AI Toolkit, etc. (each branch recorded as a separate affected product)
-
-### Apache HTTP Server
-
-Apache httpd 2.4 security advisories. No authentication required.
-
-```bash
-pnpm import:apache                    # All advisories (httpd.apache.org/security/vulnerabilities_24.html)
-```
-
-- Parses the official vulnerabilities page HTML into per-CVE blocks
-- Handles multiple "Affects" notations: `before X`, `through X`, `>=X, <=Y`, and comma-separated version lists
-- Covers 2.4.x only (2.2/2.0/1.3 are EOL and out of scope)
-- Same source used by `pnpm validate:apache` for accuracy validation
-
-### Zabbix
-
-Zabbix security advisories. No authentication required (public client-side search-only key).
-
-```bash
-pnpm import:zabbix                    # All advisories (paginated via Typesense search API)
-```
-
-- Fetches directly from the Typesense search API that zabbix.com's own advisory page uses internally
-- Extracts CVE ID (alongside Zabbix's own ZBV-YYYY-MM-DD-N identifier), severity, CVSS score, and affected/fixed versions
-- Handles range notation (`6.0.0-6.0.44`), single exact versions, and wildcard upper bounds (`4.4.4-4.4.*`); free-text legacy entries are skipped best-effort
-
-### Apache Tomcat
-
-Apache Tomcat security advisories. No authentication required.
-
-```bash
-pnpm import:tomcat                    # All advisories across all major branch pages
-```
-
-- tomcat.apache.org publishes one security page per major version branch (`security-8.html`, `security-9.html`, ...); fetches all known branch pages and skips ones that don't exist (future/retired branches)
-- The same CVE often affects multiple branches with different version ranges — these are merged into a single advisory with one `affectedProducts` entry per branch, rather than being split across duplicate rows
-- CVE IDs are extracted from the advisory heading only, to avoid false matches from CVE mentions in description text (e.g. "the fix for CVE-YYYY was incomplete")
-- Same source used by `pnpm validate:tomcat` for accuracy validation
-
-### nginx
-
-nginx security advisories. No authentication required.
-
-```bash
-pnpm import:nginx                     # All advisories (nginx.org/en/security_advisories.html)
-```
-
-- Parses the official security advisories page; handles comma-separated multi-range notation (e.g. `"0.6.18-1.25.2, 1.21.0-1.25.1"`) as separate `affectedProducts` entries under one advisory
-- Same source used by `pnpm validate:nginx` for accuracy validation
-
-### Check Point
-
-Check Point security advisories. No authentication required.
-
-```bash
-pnpm import:checkpoint                # All active advisories (155 as of 2026-09)
-```
-
-- Calls the unauthenticated JSON API the security-advisories page's own client-side bundle uses (`iapi-services-ucs.checkpoint.com/.../securityAdvisories/getAllActive`) rather than the page itself, which is a client-rendered SPA with no server-side data
-- Each advisory's `products[]` pairs a release line (`"R81.20"`) with an affected-range string; a per-line floor plus an in-line JHF (Jumbo Hotfix Accumulator) take-number increment, the same shape as RHEL/Oracle Linux's DNF module streams — see `checkpoint-fetcher.ts`'s `parseAffected()` for the full classification of the ~50 real string shapes this feed uses, including explicit not-affected declarations (`"None"`) that must not become a row at all
-- Also fetches each advisory's server-rendered detail page (`support.checkpoint.com/results/sk/skNNNNNNN`) for its Solution/Mitigation sections
-- A single sk article can document several distinct CVEs (e.g. sk182899 covers 7 separate Apache HTTP Server CVEs); `externalId` is `<skId>/<cveId>` to keep them as distinct advisories, the same composite-id shape used for Sophos/Broadcom
-- Not handled, by design: Harmony Endpoint's `E86.x`–`E89.x` client build numbering (a different scheme from the `R`-prefixed release lines, and one where `affected` can reference a different major than `version` itself); `Hardware`/`Other`/`Cloud` rows (no release line at all); and bare-number `affected` values (e.g. `"17"`) whose relationship to the actual fix take-number isn't consistent in real data. These rows are skipped rather than guessed at — see `parseVersionLine()`/`parseAffected()` in `checkpoint-fetcher.ts`
-
-### Adding a new vendor
-
-Implement the `AdvisoryFetcher` interface:
-
-```typescript
-// src/worker/my-vendor-fetcher.ts
-import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
-
-export class MyVendorFetcher implements AdvisoryFetcher {
-  source() { return 'myvendor'; }
-
-  async fetch(): Promise<NormalizedAdvisory[]> {
-    // Fetch from vendor API and return NormalizedAdvisory[]
-  }
-}
-```
-
-Then call `runAdvisoryFetcher(new MyVendorFetcher())` — master table linkage is handled automatically.
-
-## Architecture
-
-### Master table deduplication
-
-When the same CVE appears in multiple sources, the `Vulnerability` master table consolidates them into one row keyed by CVE ID:
-
-```
-CVE-2021-44228 (Log4Shell)
-  ├── NVDVulnerability            ─┐
-  ├── OSVVulnerability (GHSA-...) ─┤→ Vulnerability (cveId: "CVE-2021-44228", isKev: true)
-  └── AdvisoryVulnerability       ─┘   ↑ all sources share this single master row
-```
-
-Advisories without a CVE ID are managed as independent master rows via `advisoryId`.
-
-### Fast version search
-
-1. **Normalize versions**: `1.2.3` → `1_002_003_000` (PostgreSQL BigInt); RPM `2.9.13-6.el9` → `2_009_013_006`
-2. **Index-backed range scan**: `(ecosystem, packageName)` + `(packageName, introducedInt, fixedInt)`
-
-```sql
-WHERE ecosystem = 'npm'
-  AND packageName = 'lodash'
-  AND introducedInt <= 4017020000
-  AND (fixedInt IS NULL OR fixedInt > 4017020000)
-```
-
-Vendor advisory search also uses `versionStartInt` / `lastAffectedInt` (inclusive) or `versionEndInt` (exclusive), plus an exact match against `affectedVersions[]` for distro ecosystems.
-
-A row with no range data at all (no `versionStart`/`versionEnd`/`versionFixed`/`lastAffected`/`affectedVersions`) never matches by default — nothing to compare the queried version against — *except* when `patchAvailable` is explicitly `false` (Red Hat CSAF VEX's confirmed-unfixed rows, see above), which matches unconditionally instead. Only that explicit `false` is trusted this way; `patchAvailable: null` (the ordinary case — a vendor simply hasn't reported fix status) still falls through to the conservative default, so an ordinary data gap can't silently turn into "vulnerable at every version" the way flipping the default itself would have.
-
-### Source priority
-
-| Field | Authoritative source |
+| | Requirement |
 |---|---|
-| `cvssScore` / `cvssVector` / `severity` | NVD whenever NVD has a rating; otherwise OSV (GHSA rating, CVSS computed from the OSV vector). An NVD update with no rating yet leaves the existing value in place |
-| `summary` / `publishedAt` | NVD preferred; OSV/Advisory used only when NVD is null |
-| `isKev` / `kev*` | CISA KEV (updated independently) |
-| `epssScore` / `epssPercentile` | FIRST.org EPSS (updated independently) |
-| `workaround` / `solution` / `url` | Advisory (vendor-specific fields) |
+| CPU | 2 vCPU minimum. The heretix-api container can burst to roughly 70% of one core during imports and searches, and PostgreSQL adds its own load during an import |
+| RAM | 8 GB minimum, 16 GB recommended. heretix-api's PostgreSQL uses around 7.7 GB with a full NVD mirror and several OSV ecosystems loaded |
+| Disk | 20 GB to start. heretix-api's database can reach around 11 GB after months of NVD and OSV data; budget more to import every OSV ecosystem |
+| Software | Docker and Docker Compose v2, and git |
+| Network | Outbound access to the public sources (nvd.nist.gov, osv.dev, GitHub, vendor sites) |
 
-## Testing
+To run without Docker (Node.js 22, pnpm, PostgreSQL 15+), see [docs/operations.md](docs/operations.md#native).
+
+## Quick start
+
+### 1. Get the code and configure it
 
 ```bash
-pnpm test               # unit tests (no DB required)
-pnpm test:integration   # integration tests (requires TEST_DATABASE_URL — use a disposable DB, separate from your dev DB)
+git clone https://github.com/TITeee/heretix-api.git
+cd heretix-api
+cp .env.example .env
 ```
 
-One-time setup for `TEST_DATABASE_URL`:
+Edit `.env` and set:
+- `API_KEY`: any secret string. Every API request must send it as the `x-api-key` header.
+- `POSTGRES_PASSWORD` (add the line): the password of the bundled database. Set your own: the default, `changeme`, is only for a local trial.
+- `NVD_API_KEY` (optional, recommended): a [free NVD key](https://nvd.nist.gov/developers/request-an-api-key) makes the NVD import faster.
+
+With Docker, `DATABASE_URL` in `.env` is ignored, because Compose connects the API to its own database.
+
+### 2. Start it
+
 ```bash
-createdb heretix_test
-# add TEST_DATABASE_URL="postgresql://user:password@localhost:5432/heretix_test" to .env
-TEST_DATABASE_URL="postgresql://...heretix_test" pnpm exec prisma migrate deploy
+docker compose up --build -d
+docker compose ps                    # db and app are both up
+curl http://localhost:5000/health    # → {"status":"ok",...}
 ```
 
-Both run on every `push`/`pull_request` via CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). See [SPEC.md](SPEC.md) for test coverage details and design rationale.
+On first start, the container creates the database schema and then starts the API on port 5000. Logs: `docker compose logs -f app`.
 
-### Automatic scheduler
+### 3. Load data
 
-Job definitions (source key, label, cron, run logic) are centralized in `src/jobs/registry.ts` (`STATIC_JOBS`). On startup `src/scheduler.ts` iterates the registry to register cron jobs, checks each job's `JobConfig` enabled flag at fire time, then calls `executeJob()` from `src/jobs/executor.ts` — which handles the shared `CollectionJob` lifecycle (`running` → `completed`/`failed` + counts) and concurrency locking for every job.
+**The database starts empty**, and the scheduled NVD and OSV jobs only fetch *changes* since their last run. Run the initial import once before scanning anything:
 
-| Job | Schedule |
+```bash
+# NVD: every CVE (~400k). Takes several hours, so run it in the background.
+docker compose exec -d app pnpm import:nvd full
+
+# OSV: only the ecosystems you actually scan
+docker compose exec app pnpm import:osv ecosystem npm
+docker compose exec app pnpm import:osv ecosystem PyPI
+docker compose exec app pnpm import:osv ecosystem Go
+docker compose exec app pnpm import:osv ecosystem "Ubuntu:22.04:LTS"
+```
+
+Then open the [dashboard](#dashboard) at `http://localhost:5000/dashboard` and enter your API key:
+- The NVD row shows `running`, then `completed` when the import finishes.
+- After NVD completes, press **Run** on CISA KEV and EPSS. They only annotate CVEs that are already in the database. Their daily runs keep them current after that.
+- **Switch On the `osv-<ecosystem>` row of each OSV ecosystem you imported.** Without this, the ecosystem is never updated.
+- For each other source you need, switch its job **On** and press **Run** once to load it: vendor advisories (Fortinet, Red Hat, ...), CVE Records (`cna`), malicious packages (`osv-mal`), and the Debian security tracker (`debian-tracker`).
+
+Which sources to import: [docs/data-sources.md](docs/data-sources.md#choosing-what-to-import).
+
+### 4. Search
+
+```bash
+export API_KEY=<your key>
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:5000/api/v1/vulnerabilities/search?package=lodash&version=4.17.20&ecosystem=npm"
+```
+
+Results appear as soon as the matching source has been imported.
+
+### Stop and update
+
+```bash
+docker compose down             # stop; data is kept (add -v to delete it)
+git pull && docker compose up --build -d   # update to the latest version
+```
+
+On start, the container applies any new database migrations and data backfills before the API answers. A backfill can take several minutes on a full database.
+
+## Usage
+
+Every endpoint except `/health` and the `/dashboard` page requires the `x-api-key` header.
+
+```bash
+# Distro package
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:5000/api/v1/vulnerabilities/search?package=bzip2-libs&version=1.0.8-8.el9&ecosystem=Red%20Hat:9"
+
+# Network appliance (vendor advisory)
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:5000/api/v1/vulnerabilities/search?package=FortiOS&version=7.4.3"
+
+# By ID
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-2021-44228"
+```
+
+The `ecosystem` parameter changes which sources are queried and how versions are compared. Read [Search behavior by ecosystem](docs/api.md#search-behavior-by-ecosystem) before assuming a search returned everything.
+
+| Endpoint | Purpose |
 |---|---|
-| NVD delta update | Every 2 hours |
-| KEV full replace | Daily at 09:00 UTC |
-| EPSS bulk update | Daily at 10:00 UTC |
-| Fortinet advisory | Daily at 11:00 UTC |
-| PAN advisory | Daily at 11:15 UTC |
-| Cisco advisory | Daily at 11:30 UTC |
-| Oracle Linux advisory | Daily at 11:45 UTC |
-| Sophos advisory | Daily at 12:00 UTC |
-| SonicWall advisory | Daily at 12:15 UTC |
-| Oracle CPU advisory | Daily at 12:30 UTC |
-| Broadcom/VMware advisory | Daily at 13:00 UTC |
-| Red Hat RHEL 9 advisory | Daily at 13:15 UTC |
-| Red Hat RHEL 8 advisory | Daily at 13:30 UTC |
-| Red Hat CSAF VEX (unfixed CVEs) | Daily at 15:00 UTC |
-| CVE Record (CNA) + CISA Vulnrichment delta | Daily at 15:30 UTC |
-| Splunk advisory | Daily at 13:45 UTC |
-| Apache HTTP Server advisory | Daily at 14:00 UTC |
-| Zabbix advisory | Daily at 14:15 UTC |
-| Apache Tomcat advisory | Daily at 14:30 UTC |
-| nginx advisory | Daily at 14:45 UTC |
-| Check Point advisory | Daily at 16:00 UTC |
-| OSV delta (per ecosystem, all in DB) | Daily at 08:00 UTC |
-| MAL delta (ossf/malicious-packages) | Daily at 08:30 UTC |
-| Debian source package mappings | Weekly, Sunday at 07:00 UTC |
+| `GET /api/v1/vulnerabilities/search` | Vulnerabilities affecting a package and version |
+| `POST /api/v1/vulnerabilities/search/batch` | The same for up to 1,000 packages |
+| `GET /api/v1/vulnerabilities/search/cpe` | Search by CPE 2.3 string (NVD) |
+| `GET /api/v1/vulnerabilities/suggest` | Package name autocomplete |
+| `GET /api/v1/vulnerabilities/:id` | Detail by CVE, OSV or vendor advisory ID |
+| `GET /api/v1/vulnerabilities/stats` | Record counts |
+| `POST /api/v1/jobs/:source/run`, `PATCH /api/v1/jobs/:source` | Run or enable/disable an import job |
 
-Each OSV ecosystem runs as an independent job (`osv-{ecosystem}`) so its status, enable/disable toggle, and manual run appear separately in the dashboard. Jobs disabled via `JobConfig` are skipped at fire time (toggling takes effect immediately, without re-registering cron). Manual runs are also available via `POST /api/v1/jobs/:source/run` regardless of the enabled state.
+Full reference, including every response field: [docs/api.md](docs/api.md).
 
-## Accuracy Validation
+## Dashboard
 
-Scripts measure Precision / Recall against official security advisories, including automatic boundary-value sweeps for products with a dedicated `AdvisoryFetcher`. Moved to a dedicated file since coverage keeps growing: **[ACCURACY.md](ACCURACY.md)**.
+`http://localhost:5000/dashboard` shows each source's import status and record count. From the dashboard you can switch scheduled jobs on and off and run them on demand. To see the data, enter your API key in the top-right field.
 
-## Known Issues
+![Import Status Dashboard](docs/dashboard.png)
 
-### Ubuntu/Debian OSV false positives (mitigated)
+## Data collection
 
-Ubuntu/Debian OSV advisories use `introduced: "0"` + `fixed: "<ubuntu_patched_version>"` to indicate that a package update is required — not to express an upstream version range. Comparing upstream semver versions against this range would cause false positives, so distro ecosystems primarily use exact-match against `affectedVersions` instead. See [Search behavior by ecosystem](#search-vulnerabilities-single) for current behavior and examples.
+Only NVD, KEV and EPSS run by default; switch on the others you need.
 
-Most Debian entries (and a smaller fraction of Ubuntu/Alpine ones) publish only that `introduced`/`fixed` range with no enumerated `affectedVersions` list at all — exact-match alone silently matched nothing for those rows regardless of the version queried (confirmed to affect ~68% of Debian's OSV data). Fixed by adding a `compareDpkgVersions()` ([`src/utils/dpkg-version.ts`](src/utils/dpkg-version.ts), the dpkg version-comparison algorithm) range-comparison fallback for `Ubuntu:*`/`Debian:*`/`Alpine:*` ecosystems: exact-match is tried first, and only falls back to range comparison when the enumerated list doesn't contain (or doesn't exist for) the queried version — so already-correct exact-match results are unaffected.
-
-Ecosystem alias: `composer` is automatically mapped to `Packagist` (OSV's ecosystem name for PHP Composer packages).
-
-### RHEL/Oracle Linux module-stream false positives (fixed at the source; one residual gap remains for products other than nodejs/postgresql/httpd/mysql/mariadb/php)
-
-RHEL/Oracle Linux distribute some software as DNF module streams — several parallel, coexisting version lineages under one package name (e.g. `postgresql:12`/`:13`/`:15`/`:16`/`:17`/`:18`, similarly for `nodejs`, `mysql`, `mariadb`, `php`, `ruby`, `redis`, `podman`, `qemu-kvm`, `libvirt`, and others). The human-readable `"<package> is earlier than <version>"` OVAL criterion RedHatFetcher/OracleLinuxFetcher parse only expresses an exclusive upper bound, so a fix-version row for a *newer* stream (e.g. postgresql:18 fixed at `18.4-2.module+el9.8.0...`) had no way to exclude an unrelated, older stream's query (e.g. postgresql 16.4) from numerically matching too — confirmed to affect 155 product names across the packages above.
-
-**Root-cause fix**: the OVAL feed does carry the missing lower-bound information — it's just in a sibling criterion the fetchers previously discarded. RHEL/Oracle Linux OVAL always pairs a `"Module <name>:<stream> is enabled"` check and the OR-of-packages it guards as two children of the same `<criteria operator="AND">` parent (verified directly against both vendors' live feeds). `collectCriteria()` in both [`redhat-fetcher.ts`](src/worker/redhat-fetcher.ts) and [`oracle-linux-fetcher.ts`](src/worker/oracle-linux-fetcher.ts) now walks that tree propagating the stream label down to every criterion it scopes, and sets `versionStart` from it directly at import time via `moduleStreamVersionStart()` — no per-product heuristic or allowlist, and self-gating by construction (a product with no module criterion in its OVAL entry is untouched; confirmed 1:1 correlation with the `.module+` build marker across live samples from both feeds). The stream label is read verbatim, not parsed as an integer: most products use a plain number (`nodejs:20`), but `mysql:8.4` and `mariadb:10.11` don't — an early version of this fix only captured digits and silently failed to extract those, so their rows fell through to a cruder blanket backfill that collapsed e.g. mysql's 8.0 and 8.4 lines onto the same floor (confirmed and fixed: see below). `searchAdvisoryRpm()` ([`vulnerabilities.ts`](src/api/routes/vulnerabilities.ts) / `matchesRpmVersionRange()` in [`search-helpers.ts`](src/utils/search-helpers.ts)) then honors `versionStart` like any other row. A one-time backfill (`pnpm migrate:module-version-start`) applied this to rows already imported before the fix; the fetchers apply it automatically to all future imports, across every DNF-module product.
-
-`moduleStreamVersionStart()` also guards against one further failure mode found by re-running [ACCURACY.md's RHEL/Oracle Linux sweep](ACCURACY.md#boundary-value-sweep-rhel--oracle-linux) after the fix above shipped: the stream label isn't always the packaged software's own version. RHEL8's `javapackages-tools:201801` module bundles several independently-versioned Java build tools (`ant`, `xmvn`, an older `maven` line, ...) under one stream labeled by build generation ("201801") rather than any of their real versions — using it as a floor made 510 product names permanently unmatchable (a floor far above their own ceiling). Detected generically, not by module name (since other modules could share this shape): the label is only used as a floor when it's numerically `<=` the row's own `versionEnd`; otherwise it falls back to `inferBareVersionStart()` exactly as if there had been no Module criterion at all. This isn't a "looks date-shaped" heuristic — some products genuinely use calendar-based versions that legitimately satisfy the check (`python-pytz`'s "2017" stream matches its own "2017.2..." version) — only a label truly incompatible with the row's own version gets rejected. A one-time backfill (`pnpm migrate:fix-implausible-module-floor`) corrects rows already written with an implausible floor before this guard existed.
-
-**Residual gap**: some advisories carry no Module criterion to extract from at all — either they predate a package's move to DNF modules (e.g. RHSA-2022:6595 on RHEL9, `nodejs 16.16.0-1.el9_0`), or, for `postgresql`/`httpd`/`php` on some RHEL major versions, the product simply isn't (or wasn't) modularized there. `inferBareVersionStart()` ([`advisory-helpers.ts`](src/worker/advisory-helpers.ts)) falls back to the row's own `versionEnd` for `nodejs`, `postgresql`, `httpd`, and the `mysql`/`mariadb`/`php` families (including same-source-RPM subpackages like `mysql-server`, but excluding independently-versioned bundled tools like `mysql-selinux`, `mariadb-connector-c`, and PHP's `php-pecl-*`/`php-pear` — each confirmed individually), each confirmed by a live before/after query — not a blanket per-`.module+`-row rule like the primary fix above. The floor granularity is per-product, matching each product's real, mutually-incompatible release-line boundary: `nodejs` and `postgresql` (10+) need only a single major digit; `postgresql` before 10 (`9.0`–`9.6`), `httpd` (`2.2`/`2.4`), and the ancient pre-DNF `mysql` (`5.0`/`5.1`), `mariadb` (`5.5`), and `php` (`5.1`/`5.3`) lines all need the full two-component version. See [ACCURACY.md](ACCURACY.md#boundary-value-sweep-nodejs-module-streams--rhel--oracle-linux) for detailed numbers per product. This fallback is **not** generalized to the other (product, vendor) pairs found to mix modular and bare rows (`golang`, `podman`, `libvirt`, `qemu-kvm`, ...) — for those it's unverified whether a bare row is a genuine pre-modularization remnant of the same lineage (safe to floor, and at what granularity) or a legitimately continuous version history spanning release-line bumps (where flooring would introduce new false negatives).
-
-### Go sub-module search requires exact module path
-
-OSV records Go vulnerabilities at the sub-module level (e.g., `go.opentelemetry.io/otel/baggage`), not at the parent module level (`go.opentelemetry.io/otel`). Searching with the parent module returns no results even if a sub-module is affected.
-
-Workaround: search with the exact sub-module path:
-```
-GET /api/v1/vulnerabilities/search?package=go.opentelemetry.io/otel/baggage&version=1.36.0&ecosystem=Go
-```
-
-Dependabot and similar tools resolve the full dependency graph to find affected sub-modules. Prefix-based matching (searching `go.opentelemetry.io/otel` to also match `/baggage`) is not yet implemented.
-
-### Sophos advisory source has no version ranges
-
-Sophos advisories are collected via sitemap + RSS + headless browser rendering (63 advisories total). CVE IDs and severity are extracted; however, affected version ranges are not available because the advisory detail pages do not expose structured version data. Advisories are linked to CVEs where present, but version-specific matching (`?version=18.0.1`) will not return Sophos results. Use CVE ID lookup (`/api/v1/vulnerabilities/CVE-YYYY-NNNNN`) to find associated Sophos advisories.
-
-### PAN CSAF documents with an empty product_tree (pre-2013 CVEs only)
-
-Investigating a dashboard count that looked low (211 imported vs. 563 known advisory IDs) found two distinct gaps in [`pan-fetcher.ts`](src/worker/pan-fetcher.ts)'s CSAF parsing. One was a real, now-fixed bug: `buildProductMap()` only recognized range-shaped `product_tree` branches (`vers:generic/<12.1.4`), so a discrete/placeholder branch paired with a separate range branch under the same product (e.g. Prisma Access Agent's CSAF, which pairs a versionless "Prisma Access Agent 0" affected-marker branch with a `vers:generic/...>=26.2.2` fixed branch) resolved to no usable product data at all, and the whole advisory — despite carrying real vulnerability data — was silently dropped as unparseable. Fixed by having `buildProductMap()` record discrete branches too (with no version bound, matched with whatever `versionFixed` a sibling range branch supplies), rather than requiring every branch name to be range-shaped.
-
-The other gap is a genuine upstream data-quality issue, left unfixed: a Palo Alto CSAF document's `product_status` can reference product ids (e.g. `PANW-PAN-OS-496`) that don't appear anywhere in that same document's `product_tree` at all — confirmed live on several pre-2013 CVEs (e.g. `CVE-2012-6593`), where `product_tree.branches` is a bare `[]`. There is no version data to recover from an empty tree no matter how it's parsed; a product name could be *guessed* from the id string itself, but doing so reliably is not possible (some real PAN product names contain a hyphen, e.g. "PAN-OS", others a space, e.g. "Prisma Access Agent", and the id string alone doesn't distinguish which) and was judged not worth the resulting product-name inconsistency for a handful of advisories over a decade old. These stay unimported; CVE ID lookup on nvd.nist.gov will still show PAN's exposure, just not through this API.
-
-### NVD vs OSV package name discrepancies
-
-NVD uses CPE `product` as the package name, which may differ from the OSV package name (e.g., NVD=`xz`, OSV=`xz-utils`). Searching both sources simultaneously requires name normalization. (not yet implemented)
-
-### In-memory pagination for large result sets
-
-The current search implementation fetches all `NVDAffectedPackage` / `OSVAffectedPackage` rows without a limit, deduplicates in memory, then applies `limit`/`offset`. This is fine for most packages (~900 entries), but packages with thousands of CPE entries (e.g., `openssl`, `linux_kernel`) may see increased response time and memory usage.
-
-Two more limitations specific to the accuracy-validation scripts (cross-source version-namespace collisions, RHEL/Oracle Linux OVAL feed revisions) are documented in [ACCURACY.md](ACCURACY.md#known-limitations).
-
-## Troubleshooting
-
-### Database connection error
-
-```
-Error: P1001: Can't reach database server
-```
-- Check `DATABASE_URL` in `.env`
-- Confirm PostgreSQL is running
-- Check firewall / security group settings
-
-### Migration error
-
-```bash
-pnpm prisma migrate reset   # Reset migration state
-pnpm db:migrate             # Re-run migrations
-```
-
-### Version normalization edge cases
-
-Versions are converted as `major × 1,000,000,000 + minor × 1,000,000 + patch × 1,000 + release`.
-
-| Case | Behavior | Impact |
+| Source | What it provides | Schedule (UTC) |
 |---|---|---|
-| Pre-release (`1.0.0-beta.1`) | Treated as slightly less than the release (`1.0.0 - 1`) | Minor inaccuracy possible |
-| Build metadata (`1.0.0+build.123`) | Stripped and ignored | No impact |
-| RPM release (`2.9.13-6.el9`) | Release number (6) included as 4th component → `2_009_013_006` | Accurate sub-release range queries |
-| minor/patch/release ≥ 1,000 | Clamped to 999 (each occupies a fixed-width slot; letting it through unclamped would overflow into the next component up and silently corrupt it) | Bounded imprecision among values in this range for the same package, rather than colliding with an unrelated version |
-| Any component > 999,999 | Normalization fails (null) — treated as garbage (timestamp, git hash), not a real version | Falls back to approximate match. Affects ~0.46% of stored version strings (44,000 of 9,515,439 checked across `AdvisoryAffectedProduct`/`OSVAffectedPackage`/`NVDAffectedPackage`) — mostly Jenkins-style build ids (`696.v52535c46f4c9`) and date/git-based versions (`20240325.1`, `0.20170427git-3...`) that are correctly rejected as not being real version numbers, not a bug |
-| Non-semver (date-based, etc.) | Normalization fails (null) | Falls back to approximate match |
+| NVD | Every CVE, CPE ranges, CVSS | Every 2 hours |
+| CISA KEV | Known-exploited flag | Daily 09:00 |
+| EPSS | Exploitation probability | Daily 10:00 |
+| OSV | Language ecosystems, Linux distributions, malware | Daily 08:00, one job per ecosystem |
+| CVE Records (CNA) | CNA-declared affected products, CISA SSVC | Daily 15:30 |
+| Red Hat | OVAL (RHEL 8/9) and CSAF VEX (unfixed CVEs; all of RHEL 10) | Daily 13:15 – 15:00 |
+| Debian security tracker | Fix status (`no-dsa`, `ignored`, ...) | Daily 07:15 |
+| Vendor advisories | Fortinet, PAN, Cisco, Oracle, Broadcom, ... | Daily 11:00 – 16:00 |
 
-**Approximate match fallback**: when normalization fails, all vulnerabilities matching the package name and ecosystem are returned with `approximateMatch: true`.
+Per-source details, import commands and limitations: [docs/data-sources.md](docs/data-sources.md).
 
-**RPM release strings with multiple dot-separated segments** (e.g. `2136.344.4.3` in Oracle Linux UEK kernel builds like `5.4.17-2136.344.4.3.el8uek`) only have their *leading* integer group (`2136`) captured — everything after the first dot is ignored, same as it always has been. Different builds sharing that leading group (`2136.344...` vs `2136.331...`) normalize identically. This is orthogonal to the ≥1,000 clamping above (already true for release values under 1,000 too) and not fixed here for the same reason as the RPM sub-release / 4-component precision limits already accepted elsewhere in this section — `ecosystem=oracle-linux`/`ecosystem=red-hat` queries are unaffected, since those route through `compareRpmVersions()` (full RPM release-string comparison) instead of this generic encoding.
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/api.md](docs/api.md) | API reference and search behavior |
+| [docs/data-sources.md](docs/data-sources.md) | Each data source: how it is imported, commands, caveats |
+| [docs/operations.md](docs/operations.md) | Setup, environment variables, scheduler, backfills, troubleshooting |
+| [docs/architecture.md](docs/architecture.md) | Data model, deduplication, version matching |
+| [docs/known-issues.md](docs/known-issues.md) | Current limitations |
+| [ACCURACY.md](ACCURACY.md) | Precision / recall measurements against official advisories |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development, tests, adding a vendor |
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE) for details.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
