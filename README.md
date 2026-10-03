@@ -144,7 +144,7 @@ GET /dashboard
 Displays:
 - **Record counts** — total rows in NVD, OSV, KEV, and Advisory tables
 - **Import status table** — latest `CollectionJob` per source with status badge, last completed time, inserted/updated counts, and any error message
-- **OSV ecosystems** — per-ecosystem import status and record counts
+- **OSV ecosystems** — per-ecosystem import status and record counts. Distro releases outside the [support policy](#supported-os-releases) are folded into a collapsed "Outside support policy" section (`osvEcosystems[].maintained: false` in the JSON)
 
 Auto-refreshes every 60 seconds. Also available as JSON:
 
@@ -804,6 +804,20 @@ pnpm validate:osv-coverage Go PyPI      # check only the named ecosystem(s)
 
 > Ecosystem names are **case-sensitive** — use exactly the values shown above.
 > Linux distribution ecosystems (Alpine, Debian, Ubuntu, AlmaLinux, Rocky Linux, etc.) can be imported without a version suffix (e.g. `pnpm import:osv ecosystem Ubuntu`). When **searching**, the version suffix is optional — `?ecosystem=Ubuntu` matches all Ubuntu versions via prefix match; `?ecosystem=Ubuntu:22.04:LTS` narrows to that specific version. Note that distro ecosystems store distro-format version strings, so upstream semver versions will not match.
+
+#### Supported OS releases
+
+OSV publishes data for distro releases going back to Debian 3.0, Alpine v3.2 and Ubuntu 14.04. Only the releases below are maintained, meaning they are covered by accuracy checks and fixes. The list is defined in [src/config/support-policy.ts](src/config/support-policy.ts) and was last reviewed on 2026-10-03.
+
+| Distro | Maintained releases | Notes |
+|---|---|---|
+| Debian | 11, 12, 13, 14 | 11 is past regular EOL but still under Debian LTS |
+| Ubuntu | 20.04, 22.04, 24.04, 26.04 LTS, including their Pro / FIPS / Realtime variants | 20.04 is kept for its ESM period. Interim releases (e.g. 25.10) are not maintained |
+| Alpine | v3.21 – v3.24 | |
+| AlmaLinux / Rocky Linux | 8, 9, 10 | |
+| Red Hat Enterprise Linux | 8, 9 | Imported from Red Hat OVAL/VEX, not OSV. RHEL 10 is not imported yet |
+
+Data for other releases is **not deleted**. It stays searchable, but on a best-effort basis: it is not part of the accuracy guarantee. Language ecosystems (npm, PyPI, ...) are unaffected.
 
 ### CISA KEV
 
