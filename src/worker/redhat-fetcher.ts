@@ -1,13 +1,9 @@
 import axios from 'axios';
-import { createRequire } from 'module';
 import { XMLParser } from 'fast-xml-parser';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
+import { decompressBzip2 } from '../utils/bzip2.js';
 import { inferBareVersionStart, moduleStreamVersionStart } from './advisory-helpers.js';
-
-const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const bz2 = require('bzip2') as any;
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -214,9 +210,7 @@ export class RedHatFetcher implements AdvisoryFetcher {
 
     logger.info({ bytes: response.data.byteLength }, 'Downloaded OVAL bzip2 file, decompressing...');
 
-    const bits = bz2.array(new Uint8Array(response.data));
-    const decompressed: Uint8Array = bz2.simple(bits);
-    const xmlString = Buffer.from(decompressed).toString('utf8');
+    const xmlString = decompressBzip2(new Uint8Array(response.data)).toString('utf8');
 
     logger.info({ xmlLength: xmlString.length }, 'Decompressed, parsing OVAL XML...');
 
