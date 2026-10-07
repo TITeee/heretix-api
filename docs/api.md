@@ -140,7 +140,7 @@ Whether a fix will come for an unfixed package. It answers a different question 
 | `out_of_support` | Outside the vendor's support scope | `Out of support scope` | `end-of-life` |
 | `under_investigation` | Not yet confirmed whether it applies | (product status) | `undetermined` |
 
-Sources today: Red Hat CSAF VEX (RHEL 8/9/10) and the Debian security tracker (Debian 12 and later; Debian 11 is not in the tracker's export). Other results return `null`, including every match that only has a `fixedVersion`. **The set of values may grow**: treat an unknown value like `affected`.
+Sources today: Red Hat CSAF VEX (RHEL 8/9/10), the Debian security tracker (Debian 12 and later; Debian 11 is not in the tracker's export), and Check Point, which marks end-of-support release lines with no fix as `out_of_support` (`fixStatusDetail` is the release line, e.g. `R80.40 (EOS)`). Other results return `null`, including every match that only has a `fixedVersion`. **The set of values may grow**: treat an unknown value like `affected`.
 
 A RHEL result can carry both `fixedVersion` and `fixStatus`:
 - Red Hat's VEX says "unfixed" per major version but "fixed" per release stream (9.3 GA, 9.2 EUS, ...). Such an entry is bounded by the newest fix for that major, returned as `fixedVersion`. A build that is fixed only in an older stream (e.g. EUS) is still reported. This false positive is preferred over guessing which stream a build belongs to.

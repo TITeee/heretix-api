@@ -246,4 +246,13 @@ The search API behind zabbix.com's advisory page. Reads the CVE, Zabbix's own ZB
 
 [checkpoint-fetcher.ts](../src/worker/checkpoint-fetcher.ts) · `pnpm import:checkpoint` · daily 16:00 UTC
 
-The JSON API used by Check Point's advisory page, plus each sk article for its solution and mitigation. Each product row pairs a release line (`R81.20`) with a range of Jumbo Hotfix takes. An sk article covering several CVEs becomes one advisory per CVE (`<skId>/<cveId>`). Harmony Endpoint `E8x.x` builds, hardware/cloud rows and bare-number ranges are skipped rather than guessed.
+The JSON API used by Check Point's advisory page, plus each sk article for its solution and mitigation. Each product row pairs a release line (`R81.20`) with a range of Jumbo Hotfix takes. An sk article covering several CVEs becomes one advisory per CVE (`<skId>/<cveId>`).
+
+| `affected` | Stored as |
+|---|---|
+| `Prior to JHF Take N`, `Below take N` | Fixed in take N (`fixedVersion`) |
+| `Take N or below`, `Take N or lower` | Affected up to take N; no fixed take stated |
+| `All`, `Details in SK` | The whole release line is affected; no fixed take in the feed |
+| `None`, "Not Check Point's product CVE" | Not affected: no row |
+
+On an end-of-support line (`R80.40 (EOS)`) with no fixed take, the row carries `fixStatus: out_of_support`, since Check Point does not fix those lines. Harmony Endpoint `E8x.x` builds, SmartConsole and Quantum Spark build numbers, hardware/cloud rows and bare-number ranges are skipped rather than guessed.
