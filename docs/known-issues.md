@@ -69,6 +69,10 @@ Their OSV data only lists fixed vulnerabilities, so unfixed ones are not reporte
 
 Sophos detail pages expose no structured version data, so only CVE IDs and severity are imported. Version searches do not return Sophos results; look up the CVE by ID instead.
 
+### Check Point rows without a fixed take
+
+For `All` and `Details in SK` rows on supported release lines, the feed states no fixed take; for `Details in SK` it is only in the sk article, which is not parsed. These rows report no `fixedVersion`. Release lines that use other numbering (Harmony Endpoint `E8x.x`, SmartConsole and Quantum Spark builds) are not imported.
+
 ### Broadcom legacy advisories
 
 Older Broadcom/VMware advisories use a table without a fixed-version column and are not parsed.

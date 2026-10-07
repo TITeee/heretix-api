@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
+import type { FixStatusInfo } from '../utils/fix-status.js';
 
 // The public page (https://support.checkpoint.com/security-advisories) is a
 // client-rendered SPA with no server-side data; its "Export to CSV" button
@@ -79,10 +80,10 @@ export type AffectedRange =
   | { kind: 'range'; versionEnd?: string; lastAffected?: string };
 
 // Real "prior to"/"below" wording always pairs with a JHF (Jumbo Hotfix
-// Accumulator) take number in this data; "or below" is the only inclusive
-// phrasing observed.
+// Accumulator) take number in this data. Inclusive phrasing is "or below" or
+// "or lower"; "or lowe" is a truncated "or lower" that appears in the live feed.
 const EXCLUSIVE_TAKE = /^(?:Prior to (?:JHF )?Take |Below [Tt]ake )(\d+)$/i;
-const INCLUSIVE_TAKE = /^Take (\d+) or below$/i;
+const INCLUSIVE_TAKE = /^Take (\d+) or (?:below|lower|lowe)$/i;
 
 /**
  * Classifies one `products[].affected` string, given the release-line floor
@@ -139,6 +140,16 @@ export function parseAffected(affected: string, versionFloor: string): AffectedR
   return { kind: 'unparseable' };
 }
 
+/**
+ * An end-of-support release line ("R80.40 (EOS)") with no fix take: Check
+ * Point does not ship fixes for these lines, so no fix will come. The
+ * version string, annotation included, is kept as the detail.
+ */
+export function endOfSupportStatus(version: string, fixedTake: string | undefined): FixStatusInfo | Record<string, never> {
+  if (fixedTake || !/\(EOS\)/i.test(version)) return {};
+  return { fixStatus: 'out_of_support', fixStatusDetail: version };
+}
+
 /** Builds the AdvisoryAffectedProduct rows for one advisory's products[] list. */
 export function buildCheckpointAffectedProducts(
   products: CheckpointProduct[],
@@ -162,7 +173,13 @@ export function buildCheckpointAffectedProducts(
       product: name,
       versionStart: floor,
       versionEnd: range.versionEnd,
+      // The exclusive take bound is the fix itself ("Prior to JHF Take 158" =
+      // fixed in take 158), so it is also the row's fixed version. Search
+      // reports a vendor advisory's fixedVersion from versionFixed only.
+      versionFixed: range.versionEnd,
+      patchAvailable: range.versionEnd ? true : undefined,
       lastAffected: range.lastAffected,
+      ...endOfSupportStatus(version, range.versionEnd),
     });
   }
 
@@ -227,10 +244,15 @@ export class CheckpointFetcher implements AdvisoryFetcher {
   async fetch(): Promise<NormalizedAdvisory[]> {
     this.detailFailed = 0;
     logger.info('Fetching Check Point security advisories');
-    const { data } = await axios.get<CheckpointAdvisory[]>(ADVISORIES_URL, {
+    const { data, status } = await axios.get<CheckpointAdvisory[]>(ADVISORIES_URL, {
       timeout: 30000,
       headers: { 'User-Agent': 'heretix-api/1.0' },
     });
+    // The API sometimes answers 202 with an empty body instead of the list.
+    // Fail with the status so the job error says what happened.
+    if (!Array.isArray(data)) {
+      throw new Error(`Check Point advisory API returned HTTP ${status} without an advisory list`);
+    }
 
     const results: NormalizedAdvisory[] = [];
 

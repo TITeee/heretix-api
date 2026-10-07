@@ -85,6 +85,11 @@ describe('parseAffected', () => {
     });
   });
 
+  it('reads "Take N or lower" and its truncated "or lowe" spelling like "or below" (real data: sk1000171, sk1000155)', () => {
+    expect(parseAffected('Take 166 or lower', '81.20')).toEqual({ kind: 'range', lastAffected: '81.20.166' });
+    expect(parseAffected('Take 190 or lowe', '81.10')).toEqual({ kind: 'range', lastAffected: '81.10.190' });
+  });
+
   it('leaves a bare number unparseable', () => {
     // Real sk1000117 data: the documented fix is "take 24", but `affected`
     // carries 10/17/44/126/166 for other release lines on the same CVE --
@@ -118,6 +123,31 @@ describe('buildCheckpointAffectedProducts', () => {
     expect(rows.every(r => r.versionEnd === undefined)).toBe(true);
     expect(rows.map(r => r.versionStart)).toEqual(['80.0', '80.10', '80.20', '80.30', '80.40', '81.0', '81.10']);
     expect(rows.map(r => r.lastAffected)).toEqual(['80.0.999', '80.10.999', '80.20.999', '80.30.999', '80.40.999', '81.0.999', '81.10.999']);
+  });
+
+  it('marks an end-of-support line with no fix take as out_of_support', () => {
+    const rows = buildCheckpointAffectedProducts(sk1000117Products);
+    expect(rows.every(r => r.fixStatus === 'out_of_support' && r.versionFixed === undefined)).toBe(true);
+    expect(rows[0].fixStatusDetail).toBe('R80 (EOS)');
+  });
+
+  it('records the exclusive take bound as the fixed version, with no fix status', () => {
+    const [row] = buildCheckpointAffectedProducts([
+      { name: 'Security Gateway', version: 'R81.20', affected: 'Prior to JHF Take 79' },
+    ]);
+    expect(row).toMatchObject({ versionEnd: '81.20.79', versionFixed: '81.20.79', patchAvailable: true });
+    expect(row.fixStatus).toBeUndefined();
+  });
+
+  it('keeps a supported line with no fix take free of a fix status', () => {
+    const rows = buildCheckpointAffectedProducts([
+      { name: 'Security Management Server', version: 'R81.20', affected: 'Take 166 or lower' },
+      { name: 'Security Management Server', version: 'R81.10 (EOS)', affected: 'Take 190 or lowe' },
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ lastAffected: '81.20.166' });
+    expect(rows[0].fixStatus).toBeUndefined();
+    expect(rows[1]).toMatchObject({ lastAffected: '81.10.190', fixStatus: 'out_of_support', fixStatusDetail: 'R81.10 (EOS)' });
   });
 
   it('drops a "None" row while keeping the rest of the same advisory (real data: advisory 168)', () => {
