@@ -116,11 +116,35 @@ describe('parseAdvisoryBlock', () => {
     expect(advisory?.affectedProducts[0]).toMatchObject({ versionEnd: '2.4.66', versionFixed: '2.4.66' });
   });
 
-  it('leaves versionFixed unset for a non-contiguous multi-version affected list, even with a heading available', () => {
+  it('spans a multi-version affected list from its lowest entry up to the fix', () => {
     const b = makeBlock('2.4.46, 2.4.43, 2.4.41');
     const advisory = parseAdvisoryBlock({ ...b, index: 1000 }, [{ index: 500, version: '2.4.47' }]);
+    expect(advisory?.affectedProducts[0]).toMatchObject({
+      versionStart: '2.4.41',
+      versionFixed: '2.4.47',
+      affectedVersions: ['2.4.46', '2.4.43', '2.4.41'],
+      patchAvailable: true,
+    });
+  });
+
+  it('orders a list numerically, so 2.4.9 is below 2.4.10', () => {
+    const b = makeBlock('2.4.10, 2.4.9');
+    const advisory = parseAdvisoryBlock({ ...b, index: 1000 }, [{ index: 500, version: '2.4.11' }]);
+    expect(advisory?.affectedProducts[0]).toMatchObject({ versionStart: '2.4.9', versionFixed: '2.4.11' });
+  });
+
+  it('keeps a multi-version list exact-only when the fix is not above every listed version', () => {
+    const b = makeBlock('2.4.46, 2.4.43, 2.4.41');
+    const advisory = parseAdvisoryBlock({ ...b, index: 1000 }, [{ index: 500, version: '2.4.46' }]);
+    expect(advisory?.affectedProducts[0].versionStart).toBeUndefined();
     expect(advisory?.affectedProducts[0].versionFixed).toBeUndefined();
     expect(advisory?.affectedProducts[0].patchAvailable).toBe(false);
+  });
+
+  it('keeps a multi-version list exact-only when no heading precedes the block', () => {
+    const b = makeBlock('2.4.46, 2.4.43, 2.4.41');
+    const advisory = parseAdvisoryBlock({ ...b, index: 1000 }, []);
+    expect(advisory?.affectedProducts[0].versionFixed).toBeUndefined();
   });
 
   it('ignores a heading that appears after the block (only the nearest preceding heading counts)', () => {

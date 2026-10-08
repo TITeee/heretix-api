@@ -68,6 +68,17 @@ export function parseAffects(raw: string): AffectsSpec | null {
   return null;
 }
 
+/** Numeric comparison of dotted versions ("2.4.9" < "2.4.10"). */
+function compareDotted(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
 export interface AdvisoryBlock {
   cveId: string;
   severity: string;
@@ -140,17 +151,28 @@ export function parseAdvisoryBlock(b: AdvisoryBlock, fixedHeadings: FixedHeading
   if (spec) {
     // versionFixed must only be set alongside a genuine range (versionStart..versionEnd,
     // whether that range came from "before/through X" text or was inferred below for a
-    // single known-affected version). importAdvisoryData() falls back to versionFixed as
-    // the range's exclusive upper bound when versionEnd is absent — applying that to a
-    // multi-entry affectedVersions list (a non-contiguous set of tested releases, not
-    // necessarily "every version below the highest one listed") would incorrectly widen
-    // the affected range down to version zero.
+    // known-affected version list). importAdvisoryData() falls back to versionFixed as
+    // the range's exclusive upper bound when versionEnd is absent, so without a
+    // versionStart it would widen the affected range down to version zero.
     let versionStart = spec.versionStart;
     const isRange = spec.versionEnd !== undefined || spec.lastAffected !== undefined;
-    const isSingleKnownVersion = !isRange && spec.affectedVersions?.length === 1;
-    if (isSingleKnownVersion) versionStart = spec.affectedVersions![0];
+    const listed = spec.affectedVersions ?? [];
+    const candidateFixed = proseFixed ?? headingFixed;
+    if (!isRange && listed.length > 0) {
+      // A list of affected releases ("2.4.46, 2.4.43, 2.4.41, ...") names the releases
+      // that were checked, not a gap-ridden set: the releases it skips (2.4.44, 2.4.47)
+      // are affected as well, and NVD records the same advisories as one contiguous
+      // range. So a list spans from its lowest entry up to the fix, as long as the fix
+      // lies above everything listed.
+      const lowest = [...listed].sort(compareDotted)[0];
+      const highest = [...listed].sort(compareDotted).pop()!;
+      if (listed.length === 1 || (candidateFixed && compareDotted(candidateFixed, highest) > 0)) {
+        versionStart = lowest;
+      }
+    }
+    const isInferredRange = !isRange && versionStart !== undefined && listed.length > 0;
 
-    const versionFixed = (isRange || isSingleKnownVersion) ? (proseFixed ?? headingFixed) : undefined;
+    const versionFixed = (isRange || isInferredRange) ? candidateFixed : undefined;
     solution = versionFixed ? `Upgrade to version ${versionFixed} or later.` : undefined;
 
     affectedProducts.push({
