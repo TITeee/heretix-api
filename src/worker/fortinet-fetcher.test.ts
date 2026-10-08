@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseListingPage } from './fortinet-fetcher.js';
+import { parseCsaf, parseListingPage } from './fortinet-fetcher.js';
 
 // Row markup as served by fortiguard.fortinet.com/psirt since 2026-08: the row
 // link lives in a script at the end of the page, not on the row itself.
@@ -54,5 +54,66 @@ describe('parseListingPage', () => {
 
   it('returns nothing for a page past the end of the listing', () => {
     expect(parseListingPage('<section class="table-body"><div class="container-xxl"></div></section>')).toEqual([]);
+  });
+});
+
+// The shape of a real CSAF file, reduced to the fields parseCsaf reads.
+function csaf(
+  productNames: string[],
+  status: { known_affected: string[]; known_not_affected: string[] },
+  remediation: string,
+) {
+  return {
+    document: { title: 't', tracking: { id: 'FG-IR-00-000', initial_release_date: '2024-01-01T00:00:00Z' } },
+    product_tree: { branches: [{ category: 'vendor', name: 'Fortinet', branches: productNames.map(name => ({ category: 'product', name })) }] },
+    vulnerabilities: [{
+      cve: 'CVE-2024-0001',
+      product_status: status,
+      remediations: [{ category: 'vendor_fix', details: remediation }],
+    }],
+  };
+}
+
+describe('parseCsaf with an exactly-listed affected version', () => {
+  it('bounds the version by the later release of its branch named in known_not_affected', () => {
+    const adv = parseCsaf(csaf(
+      ['FortiOS'],
+      { known_affected: ['FortiOS 7.4.1'], known_not_affected: ['FortiOS-7.4.2', 'FortiOS/ 7.2 all versions'] },
+      'FortiOS 7.4: Upgrade to 7.4.2 or above\nFortiOS 7.2: Not Applicable',
+    ), 'FG-IR-24-017');
+    expect(adv!.affectedProducts).toEqual([
+      { vendor: 'fortinet', product: 'FortiOS', versionStart: '7.4.1', versionFixed: '7.4.2', affectedVersions: ['7.4.1'], patchAvailable: true },
+    ]);
+  });
+
+  it('ignores a fix on another branch and one that is not later', () => {
+    const adv = parseCsaf(csaf(
+      ['FortiOS'],
+      { known_affected: ['FortiOS 7.4.3'], known_not_affected: ['FortiOS-7.4.2', 'FortiOS-7.6.1'] },
+      '',
+    ), 'FG-IR-24-018');
+    expect(adv!.affectedProducts).toEqual([
+      { vendor: 'fortinet', product: 'FortiOS', versionStart: undefined, versionFixed: undefined, affectedVersions: ['7.4.3'], patchAvailable: true },
+    ]);
+  });
+
+  it('falls back to the remediation text when known_not_affected has no fixed release', () => {
+    const adv = parseCsaf(csaf(
+      ['FortiSandbox Cloud'],
+      { known_affected: ['FortiSandbox Cloud 5.0.4'], known_not_affected: ['FortiSandbox Cloud/ 4.4 all versions'] },
+      'FortiSandbox Cloud 4.4: Not Applicable\nFortiSandbox Cloud 5.0: Fortinet remediated this issue in 5.0.5 and hence customers do not need to perform any action.',
+    ), 'FG-IR-26-096');
+    expect(adv!.affectedProducts).toMatchObject([
+      { product: 'FortiSandbox Cloud', versionStart: '5.0.4', versionFixed: '5.0.5' },
+    ]);
+  });
+
+  it('picks the numerically lowest later release, not the lexicographically lowest', () => {
+    const adv = parseCsaf(csaf(
+      ['FortiOS'],
+      { known_affected: ['FortiOS 7.4.1'], known_not_affected: ['FortiOS-7.4.10', 'FortiOS-7.4.2'] },
+      '',
+    ), 'FG-IR-24-019');
+    expect(adv!.affectedProducts[0].versionFixed).toBe('7.4.2');
   });
 });

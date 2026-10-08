@@ -150,9 +150,50 @@ function findFixVersion(
   return matching.sort()[0];
 }
 
+/** Numeric comparison of dotted versions ("7.4.2" < "7.4.10"). */
+function compareDotted(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/**
+ * Fixed version for one exactly-listed affected version ("FortiOS 7.4.1").
+ *
+ * known_not_affected usually names it ("FortiOS-7.4.2"), but not always: a
+ * cloud service's fix can appear only in the remediation text ("FortiSandbox
+ * Cloud 5.0: Fortinet remediated this issue in 5.0.5 ..."). Either way it must
+ * be a later release of the same branch -- a fix on another branch says nothing
+ * about this version.
+ */
+function findFixForExactVersion(
+  affected: string,
+  productName: string,
+  notAffectedVersions: string[],
+  remediation: string | undefined,
+): string | undefined {
+  if (!/^\d+\.\d+\.\d+$/.test(affected)) return undefined;
+  const branch = affected.split('.').slice(0, 2).join('.');
+  const isLaterOnBranch = (v: string) => v.startsWith(branch + '.') && compareDotted(v, affected) > 0;
+
+  const fromStatus = notAffectedVersions.filter(isLaterOnBranch).sort(compareDotted)[0];
+  if (fromStatus) return fromStatus;
+
+  // "<product> <branch>: Upgrade to 7.4.2 or above" / "...remediated this issue in 5.0.5 ..."
+  for (const line of (remediation ?? '').split('\n')) {
+    const m = line.trim().match(/^(.+?)\s+(\d+(?:\.\d+)*):\s.*?(?:Upgrade to|remediated (?:this issue )?in)\s+(\d+(?:\.\d+)+)/i);
+    if (m && m[1] === productName && m[2] === branch && isLaterOnBranch(m[3])) return m[3];
+  }
+  return undefined;
+}
+
 // ─── CSAF → NormalizedAdvisory Conversion ────────────────────
 
-function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdvisory | null {
+export function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdvisory | null {
   const vulns = csaf.vulnerabilities ?? [];
   if (vulns.length === 0) return null;
 
@@ -211,11 +252,19 @@ function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdvisory |
 
       if (spec.exactVersions?.length) {
         // Single version specification
+        const exact = spec.exactVersions[0];
+        const exactFixed = spec.exactVersions.length === 1
+          ? findFixForExactVersion(exact, name, notAffectedVersions, fixRemediation?.details)
+          : undefined;
         affectedProducts.push({
           vendor:          'fortinet',
           product:         name,
+          // Bounded on both sides: versionFixed alone would turn the exact
+          // version into an open range from zero.
+          versionStart:    exactFixed ? exact : undefined,
+          versionFixed:    exactFixed,
           affectedVersions: spec.exactVersions,
-          patchAvailable:  notAffectedVersions.length > 0,
+          patchAvailable:  notAffectedVersions.length > 0 || !!exactFixed,
         });
       } else {
         // Version range specification (one record per branch)
