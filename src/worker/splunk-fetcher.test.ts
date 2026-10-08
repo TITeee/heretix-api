@@ -14,6 +14,16 @@ describe('parseAffectedVersion', () => {
     expect(parseAffectedVersion('1.5 and earlier')).toEqual({ lastAffected: '1.5' });
   });
 
+  it('parses "Versions before X" and "X and lower"', () => {
+    expect(parseAffectedVersion('Versions before 9.0')).toEqual({ versionEnd: '9.0' });
+    expect(parseAffectedVersion('Versions below 8.1')).toEqual({ versionEnd: '8.1' });
+    expect(parseAffectedVersion('4.0 and lower')).toEqual({ lastAffected: '4.0' });
+  });
+
+  it('reads a list of affected releases as the span they cover', () => {
+    expect(parseAffectedVersion('5.1.2, 5.1.1 and 5.1.0')).toEqual({ versionStart: '5.1.0', lastAffected: '5.1.2' });
+  });
+
   it('returns null for unrecognized text', () => {
     expect(parseAffectedVersion('N/A')).toBeNull();
   });
@@ -85,6 +95,46 @@ describe('buildAffectedProducts', () => {
         versionFixed: '8.2.13',
         patchAvailable: true,
       },
+    ]);
+  });
+
+  it('bounds a single affected release by its later fix', () => {
+    const cells = {
+      'Affected Product': 'Python for Scientific Computing (for Linux 64-bit) 4.3',
+      'Fixed Versions': '4.3.2',
+      'Affected Versions': '4.3.1',
+    };
+    expect(buildAffectedProducts(cells)).toEqual([
+      {
+        vendor: 'splunk',
+        product: 'Python for Scientific Computing (for Linux 64-bit)',
+        versionStart: '4.3.1',
+        versionFixed: '4.3.2',
+        affectedVersions: ['4.3.1'],
+        patchAvailable: true,
+      },
+    ]);
+  });
+
+  it('keeps a single affected release without a fix as an exact version only', () => {
+    const cells = {
+      'Affected Product': 'Splunk Enterprise 9.0',
+      'Fixed Versions': '-',
+      'Affected Versions': '9.0.1',
+    };
+    expect(buildAffectedProducts(cells)).toEqual([
+      { vendor: 'splunk', product: 'Splunk Enterprise', affectedVersions: ['9.0.1'], versionFixed: undefined, patchAvailable: false },
+    ]);
+  });
+
+  it('does not bound a single release by a fix that is not later than it', () => {
+    const cells = {
+      'Affected Product': 'Splunk SOAR (On-premises) 6.1',
+      'Fixed Versions': '6.1.1',
+      'Affected Versions': '6.1.1',
+    };
+    expect(buildAffectedProducts(cells)).toEqual([
+      { vendor: 'splunk', product: 'Splunk SOAR (On-premises)', affectedVersions: ['6.1.1'], versionFixed: undefined, patchAvailable: true },
     ]);
   });
 });
