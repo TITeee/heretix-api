@@ -31,6 +31,7 @@ Old-style CPEs that put the version detail in the `<update>` field are only part
 Outside the RPM, dpkg and PAN comparators, versions are compared as integers (see [architecture.md](architecture.md#version-matching)):
 - Components of 1,000 or more are clamped to 999, so for example `1.2.1500` and `1.2.1999` compare equal.
 - Only the leading number of an RPM release is used: `2136.344.4.3` and `2136.331.7` compare equal. This does not affect `Red Hat:*` / `Oracle Linux:*` searches, which use `rpmvercmp`.
+- A label attached to the number is read by what it means. Pre-release labels (`dev`, `a`, `b`, `M`, `rc`, ...) sort just below their release, in stage order (`1.2.3a1 < 1.2.3rc1 < 1.2.3`). Post-release labels (`p`, `R`, `z`, `STABLE`, `u`, ...) take the release slot (`7.4 < 7.4p1 < 7.5`). Only a dotted version of up to three parts with a 1-3 digit label number is read this way. Other shapes (`21h1`, `1.305b241111`, `v200r007c00spcb00`) keep the generic encoding. Pre-release numbers above 199 compare equal, and once a label is read, anything after the first hyphen is ignored (`17.3R3-S2` equals `17.3R3`).
 - Versions that cannot be encoded (dates, git hashes, build IDs; about 0.5% of stored versions) fall back to package-name matching with `approximateMatch: true`.
 
 ### Large result sets are paginated in memory
