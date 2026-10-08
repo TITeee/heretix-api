@@ -43,16 +43,34 @@ function extractCells(rowHtml: string): Record<string, string> {
 }
 
 export function parseAffectedVersion(text: string): { versionStart?: string; versionEnd?: string; lastAffected?: string } | null {
-  const below = text.match(/^Below\s+([\d.]+)/i);
+  const below = text.match(/^(?:Versions?\s+)?(?:Below|before)\s+([\d.]+)/i);
   if (below) return { versionEnd: below[1] };
 
   const range = text.match(/^([\d.]+)\s+to\s+([\d.]+)$/i);
   if (range) return { versionStart: range[1], lastAffected: range[2] };
 
-  const earlier = text.match(/^([\d.]+)\s+and\s+earlier$/i);
+  const earlier = text.match(/^([\d.]+)\s+and\s+(?:earlier|lower)$/i);
   if (earlier) return { lastAffected: earlier[1] };
 
+  // "5.1.2, 5.1.1 and 5.1.0": the affected releases of one product line, listed
+  // out. Read as the span they cover.
+  if (/^\d[\d.]*(?:\s*,\s*\d[\d.]*)*\s*(?:,|and)\s*\d[\d.]*$/i.test(text)) {
+    const versions = text.match(/\d[\d.]*\d|\d/g)!.sort(compareDotted);
+    return { versionStart: versions[0], lastAffected: versions[versions.length - 1] };
+  }
+
   return null;
+}
+
+/** Numeric comparison of dotted versions ("9.0.2303" < "9.0.2303.100"). */
+function compareDotted(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
 }
 
 /** "Splunk AI Toolkit 5.7" → "Splunk AI Toolkit" (strip the trailing branch version). */
@@ -94,6 +112,17 @@ export function buildAffectedProducts(cells: Record<string, string>): Normalized
         // unbounded range (the bug fixed for the Apache/Zabbix fetchers).
         versionFixed: isRange ? cleanFixed : undefined,
         patchAvailable: !!cleanFixed,
+      });
+    } else if (cleanFixed && /^\d[\d.]*\d$/.test(affectedText) && compareDotted(affectedText, cleanFixed) < 0) {
+      // A single affected release with a later fix ("4.3.1", fixed in 4.3.2):
+      // bounded on both sides, so versionFixed cannot widen it into an open range.
+      affectedProducts.push({
+        vendor: 'splunk',
+        product,
+        versionStart: affectedText,
+        versionFixed: cleanFixed,
+        affectedVersions: [affectedText],
+        patchAvailable: true,
       });
     } else {
       // Unrecognized format (best-effort): keep raw version tokens found in the text
