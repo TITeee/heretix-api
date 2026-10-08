@@ -1,3 +1,55 @@
+// Pre-release labels, lowest stage first. A pre-release sorts below its release,
+// ordered by stage and then by its number: 1.2.3.dev1 < 1.2.3a1 < 1.2.3b2 <
+// 1.2.3rc1 < 1.2.3rc2 < 1.2.3. Without the ordering, a range between two
+// pre-releases ("3.15.0a1" to "3.15.0b3", as CPython's CNA records use) would
+// collapse to nothing.
+const PRE_RELEASE_STAGES: Record<string, number> = {
+  dev: 0, devel: 0,
+  a: 1, alpha: 1, ea: 1, test: 1,
+  b: 2, beta: 2, m: 2, milestone: 2, pre: 2, preview: 2,
+  c: 3, rc: 3, cr: 3,
+};
+const PRE_RELEASE_STAGE_WIDTH = 200;
+// The top rank (rc199) lands on release - 1, where a hyphenated pre-release
+// ("1.2.3-rc1") already sits; dev0 is the lowest, release - 800.
+const PRE_RELEASE_MAX_RANK = 4 * PRE_RELEASE_STAGE_WIDTH - 1;
+
+// Labels that come after, or qualify, a release: OpenSSH/sudo "p1", Checkmk
+// "p49", Junos "R3"/"X53"/"F6", IOS XE "z2"/"y1"/"s1", squid "STABLE3",
+// "u29"/"SR2"/"SU3" updates. Their number goes into the release slot, the way
+// "-N" already does: 7.4 < 7.4p1 < 7.5, 17.3R3 < 17.3R10 < 17.4R1.
+const POST_RELEASE_LABELS = new Set([
+  'p', 'pl', 'patch', 'post', 'u', 'update', 'sr', 'su', 'stable', 'h', 'r', 'z', 'y', 's', 'x', 'f',
+]);
+
+/**
+ * Split a version whose first hyphen-separated part is a dotted number with a
+ * label and a 1-3 digit number attached ("6.0.18rc1", "2.1.0.dev2", "7.4p1").
+ *
+ * Deliberately narrow, so opaque identifiers keep the encoding they had
+ * (usually null, and so exact-string matching): the base must be dotted with
+ * at most 3 parts (not Windows "21h1" or "202308a1"), the number at most 3
+ * digits (not a build stamp, "1.305b241111"), and nothing may follow the
+ * number except, for a pre-release, a further dotted part ("0.5.0b3.dev13") --
+ * not "1.0.2b05_20181207" or Huawei's "v200r007c00spcb00". Anything after the
+ * first hyphen is ignored: "17.3R3-S2" encodes as "17.3R3".
+ */
+function labelledVersion(version: string):
+  | { kind: 'pre'; base: string; label: string; num: number }
+  | { kind: 'post'; base: string; num: number }
+  | null {
+  const first = version.split('-')[0];
+  const m = first.match(/^[vV]?(\d+(?:\.\d+){1,2})\.?([A-Za-z]+)(\d{1,3})(.*)$/);
+  if (!m) return null;
+  const [, base, rawLabel, num, rest] = m;
+  const label = rawLabel.toLowerCase();
+  if (label in PRE_RELEASE_STAGES && (rest === '' || /^[.+]/.test(rest))) {
+    return { kind: 'pre', base, label, num: Number(num) };
+  }
+  if (POST_RELEASE_LABELS.has(label) && rest === '') return { kind: 'post', base, num: Number(num) };
+  return null;
+}
+
 /**
  * Convert a semantic version string to a numeric value
  * "1.2.3"       -> 1002003000  (major * 1_000_000_000 + minor * 1_000_000 + patch * 1_000 + release)
@@ -58,6 +110,21 @@ export function normalizeVersion(version: string): bigint | null {
       const sub = letter ? `-${letter.charCodeAt(0) - 96}` : '';
       return `.${u}${sub}`;
     });
+  }
+
+  // A label attached straight to the number ("6.0.18rc1", "7.4p1", "17.3R3").
+  // Must be handled before the generic logic below, which strips letters but
+  // keeps their digits and so reads "6.0.18rc1" as patch 181 -- non-monotonic,
+  // and far past the release the label belongs to. See labelledVersion().
+  const labelled = labelledVersion(withoutEpoch);
+  if (labelled) {
+    const base = normalizeVersion(labelled.base);
+    if (base === null) return null;
+    if (labelled.kind === 'post') return normalizeVersion(`${labelled.base}-${labelled.num}`);
+    const rank = PRE_RELEASE_STAGES[labelled.label] * PRE_RELEASE_STAGE_WIDTH
+      + Math.min(labelled.num, PRE_RELEASE_STAGE_WIDTH - 1);
+    const value = base - 1n - BigInt(PRE_RELEASE_MAX_RANK - rank);
+    return value > 0n ? value : 0n;
   }
 
   // Detect pre-release (only when character after hyphen is a letter)

@@ -111,6 +111,56 @@ describe('normalizeVersion', () => {
   it('handles missing minor/patch as zero', () => {
     expect(normalizeVersion('5')).toBe(5000000000n);
   });
+
+  describe('a label attached straight to the number', () => {
+    const ordered = (...versions: string[]) => {
+      const encoded = versions.map(v => normalizeVersion(v) as bigint);
+      for (let i = 1; i < encoded.length; i++) {
+        expect(encoded[i - 1], `${versions[i - 1]} < ${versions[i]}`).toBeLessThan(encoded[i]);
+      }
+    };
+
+    it('does not read the label number into the previous component (Zabbix "6.0.18rc1" read as patch 181)', () => {
+      expect(normalizeVersion('6.0.18rc1')).toBeLessThan(normalizeVersion('6.0.18') as bigint);
+      expect(normalizeVersion('6.0.18rc1')).toBeGreaterThan(normalizeVersion('6.0.17') as bigint);
+    });
+
+    it('orders pre-releases by stage and number, just below their release', () => {
+      ordered('1.2.2', '1.2.3.dev1', '1.2.3a1', '1.2.3b2', '1.2.3rc1', '1.2.3rc2', '1.2.3', '1.2.4');
+      ordered('3.14.0', '3.15.0a1', '3.15.0a6', '3.15.0b3', '3.15.0rc1', '3.15.0');
+      ordered('9.0.0.M1', '9.0.0');
+      ordered('2.1.0.dev2', '2.1.0b3.dev13', '2.1.0');
+    });
+
+    it('keeps a hyphenated pre-release at release - 1, above every attached one', () => {
+      expect(normalizeVersion('1.0.0-rc1')).toBe((normalizeVersion('1.0.0') as bigint) - 1n);
+      ordered('1.0.0rc1', '1.0.0-rc1', '1.0.0');
+    });
+
+    it('puts a post-release label number in the release slot', () => {
+      expect(normalizeVersion('7.4p1')).toBe(normalizeVersion('7.4-1'));
+      ordered('7.4', '7.4p1', '7.5', '7.5p1', '7.10p1');
+      ordered('1.9.5', '1.9.5p2', '1.9.6', '1.9.10');
+      ordered('2.3.0', '2.3.0p9', '2.3.0p49', '2.3.1');
+      ordered('17.3R3', '17.3R10', '17.4R1', '18.1R1');
+      ordered('17.12.1', '17.12.1z2', '17.12.2');
+      ordered('2.5.STABLE3', '2.5.STABLE10', '2.6.STABLE1');
+    });
+
+    it('ignores what follows the first hyphen once a label is found', () => {
+      expect(normalizeVersion('17.3R3-S2')).toBe(normalizeVersion('17.3R3'));
+    });
+
+    it('leaves opaque identifiers with the encoding they had', () => {
+      // Each of these used to encode as shown, and changing it would turn an
+      // exact-string match into a range match.
+      expect(normalizeVersion('v200r007c00spcb00')).toBeNull();
+      expect(normalizeVersion('1.305b241111')).toBeNull();
+      expect(normalizeVersion('21h1')).toBe(211000000000n);
+      expect(normalizeVersion('2023.Q3.1')).toBe(2023003001000n);
+      expect(normalizeVersion('1.0.2b05_20181207')).toBe(normalizeVersion('1.0.2505_20181207'));
+    });
+  });
 });
 
 describe('isValidVersion', () => {
