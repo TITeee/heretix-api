@@ -172,6 +172,58 @@ describe('extractCnaRows', () => {
     expect(dropped.unusableVersionString).toBe(1);
   });
 
+  describe('NetScaler build ranges', () => {
+    // CVE-2025-12101 as the CNA wrote it: the branch is the version, the build the bound.
+    const netscaler = (versions: unknown[], vendor = 'NetScaler', product = 'ADC') =>
+      [{ vendor, product, defaultStatus: 'unaffected', versions }];
+
+    it('drops the branch + build ranges, which would read 14.1 up to 56.73 and so flag the fixed builds', () => {
+      const { rows, dropped } = extractCnaRows(netscaler([
+        { status: 'affected', version: '14.1', lessThan: '56.73', versionType: 'patch' },
+        { status: 'affected', version: '13.1', lessThan: '60.32', versionType: 'patch' },
+        { status: 'affected', version: '13.1-FIPS and NDcPP', lessThan: '37.250', versionType: 'patch' },
+      ]));
+      expect(rows).toEqual([]);
+      expect(dropped.netscalerBuildBound).toBe(3);
+    });
+
+    it('drops the other spelling too, where the bound is the whole version ("14.1-73.37" loses its 37)', () => {
+      const { rows } = extractCnaRows(netscaler(
+        [{ status: 'affected', version: '0', lessThan: '14.1-73.37', versionType: 'Patch' }],
+        'Citrix NetScaler', 'Gateway',
+      ));
+      expect(rows).toEqual([]);
+    });
+
+    it('also covers the other NetScaler products (SDX, Console)', () => {
+      const { rows } = extractCnaRows(netscaler(
+        [{ status: 'affected', version: '13.1', lessThan: '58.32', versionType: 'patch' }], 'NetScaler', 'Console',
+      ));
+      expect(rows).toEqual([]);
+    });
+
+    it('keeps a NetScaler version with no bound, which is stored for equality matching only', () => {
+      const { rows } = extractCnaRows(netscaler([{ status: 'affected', version: '14.1-56.73', versionType: 'patch' }]));
+      expect(rows).toEqual([expect.objectContaining({ affectedVersions: ['14.1-56.73'] })]);
+    });
+
+    it('leaves other vendors that use versionType "patch" for ordinary ranges alone', () => {
+      const { rows } = extractCnaRows([{
+        vendor: 'Concrete CMS', product: 'Concrete CMS', defaultStatus: 'unaffected',
+        versions: [{ status: 'affected', version: '5.6', lessThan: '9.4.3', versionType: 'patch' }],
+      }]);
+      expect(rows).toEqual([expect.objectContaining({ versionStart: '5.6', versionEnd: '9.4.3' })]);
+    });
+
+    it('leaves the Citrix client apps alone: they are not NetScaler and their versions are plain', () => {
+      const { rows } = extractCnaRows([{
+        vendor: 'Citrix', product: 'Secure Access Client for Windows', defaultStatus: 'unaffected',
+        versions: [{ status: 'affected', version: '1', lessThan: '26.6.1.20', versionType: 'patch' }],
+      }]);
+      expect(rows).toHaveLength(1);
+    });
+  });
+
   it('drops entries with a missing or single-character product name', () => {
     const { rows, dropped } = extractCnaRows([
       { vendor: 'Acme', product: 'i', versions: [{ version: '7.6', status: 'affected' }] },

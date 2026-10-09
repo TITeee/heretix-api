@@ -118,7 +118,7 @@ pnpm import:cna              # Delta if already bootstrapped, otherwise a full b
 pnpm import:cna --bootstrap  # Force the full bundle (~600 MB)
 ```
 
-- **CNA-declared affected products** (`containers.cna.affected`) go into their own `CnaVulnerability` / `CnaAffectedProduct` tables. They cover vendors that have no dedicated advisory fetcher. The bootstrap only imports recent years (`BOOTSTRAP_YEARS` in `src/scripts/import-cna.ts`); deltas apply to any year.
+- **CNA-declared affected products** (`containers.cna.affected`) go into their own `CnaVulnerability` / `CnaAffectedProduct` tables. They cover vendors that have no dedicated advisory fetcher. The bootstrap only imports recent years (`BOOTSTRAP_YEARS` in `src/scripts/import-cna.ts`); deltas apply to any year. Ranges that cannot be ordered are not stored: git commit hashes, free text, and NetScaler's branch-plus-build bounds (`14.1` up to `56.73`, which read as 14.1.0 up to 56.73.0 and flagged the fixed builds).
 - **CISA Vulnrichment SSVC** (`containers.adp`, the CISA-ADP entry): exploitation (none/poc/active), automatable (yes/no) and technical impact (partial/total). Stored on the master row and returned by `GET /vulnerabilities/:id`. No final SSVC decision is computed, since that needs the consumer's own mission impact. SSVC is backfilled from every year in the bundle.
 - The daily delta runs at 15:30 UTC. No API key or rate limit.
 

@@ -71,7 +71,8 @@ export type DropReason =
   | 'gitVersionType'
   | 'unusableVersionString'
   | 'exactVersionUnusable'
-  | 'unencodableRangeBound';
+  | 'unencodableRangeBound'
+  | 'netscalerBuildBound';
 
 export interface ExtractResult {
   rows: CnaAffectedRow[];
@@ -143,6 +144,27 @@ function isUsableName(v: unknown): v is string {
   return s !== undefined && s.length >= 2 && !PLACEHOLDER_NAMES.has(s.toLowerCase());
 }
 
+/**
+ * A NetScaler range: the CNA (NetScaler / Cloud Software Group) writes the
+ * release branch as the version and the build as the bound --
+ * { version: "14.1", lessThan: "56.73", versionType: "patch" } -- or, in another
+ * spelling, the whole thing as the bound ("14.1-73.37"). Neither is a version
+ * that normalizeVersion() can order:
+ *   - "14.1" .. "56.73" reads as 14.1.0 up to 56.73.0, so every build of 14.1 and
+ *     later, the fixed ones included, comes back as affected (the fix 14.1-56.73
+ *     and the later 14.1-60.52 among them);
+ *   - "14.1-73.37" keeps only the 73 of its build, so 73.37 and 73.99 compare equal.
+ * The builds are in the NetScaler security bulletins, which need an order of
+ * their own, so these ranges are not stored here rather than stored wrong.
+ *
+ * Other vendors use versionType "patch" for ordinary ranges (Concrete CMS
+ * "5.6" to "9.4.3"), and Citrix's own client apps use it for client versions;
+ * only the NetScaler products are matched.
+ */
+function isNetScalerBuildRange(vendor: string, versionType: string | undefined, hasUpperBound: boolean): boolean {
+  return hasUpperBound && versionType?.toLowerCase() === 'patch' && /netscaler/i.test(vendor);
+}
+
 function bump(dropped: Partial<Record<DropReason, number>>, reason: DropReason): void {
   dropped[reason] = (dropped[reason] ?? 0) + 1;
 }
@@ -199,6 +221,11 @@ export function extractCnaRows(affected: unknown): ExtractResult {
       const lessThan = asString(v.lessThan);
       const lessThanOrEqual = asString(v.lessThanOrEqual);
       const upperRaw = lessThan ?? lessThanOrEqual;
+
+      if (isNetScalerBuildRange(vendor, versionType, upperRaw !== undefined)) {
+        bump(dropped, 'netscalerBuildBound');
+        continue;
+      }
 
       if (upperRaw !== undefined) {
         if (!isUsableVersion(upperRaw)) {

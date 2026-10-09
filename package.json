@@ -50,6 +50,7 @@
     "migrate:sophos-sonicwall-composite-externalid": "node dist/scripts/migrate-sophos-sonicwall-composite-externalid.js",
     "migrate:prune-orphaned-advisory-masters": "node dist/scripts/migrate-prune-orphaned-advisory-masters.js",
     "migrate:remove-withdrawn-osv-packages": "node dist/scripts/migrate-remove-withdrawn-osv-packages.js",
+    "migrate:remove-netscaler-cna-build-ranges": "node dist/scripts/migrate-remove-netscaler-cna-build-ranges.js",
     "migrate:recompute-sophos-product-names": "node dist/scripts/migrate-recompute-sophos-product-names.js",
     "migrate:recompute-osv-pseudo-versions": "node dist/scripts/migrate-recompute-osv-pseudo-versions.js",
     "migrate:backfill-distro-priority": "node dist/scripts/migrate-backfill-distro-priority.js",
