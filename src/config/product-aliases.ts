@@ -117,6 +117,60 @@ const CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS = [
   'Quantum Security Management',
 ];
 
+// Ivanti. Its advisories name products without the vendor prefix ("Connect
+// Secure", not "Ivanti Connect Secure") -- see productName() in
+// ivanti-fetcher.ts -- while NVD uses the CPE token (connect_secure), and the
+// products that were Pulse Secure's until 2020 appear under both names.
+//
+// An alias list REPLACES the searched name, and the same lookup serves NVD, the
+// vendor advisories and CNA records. So every list below carries the NVD token
+// as well as the advisory name: a list holding only the advisory name would make
+// a search for connect_secure find the Ivanti advisories and lose its 130 NVD
+// rows. (That is what the first version of these aliases did.)
+//
+// `keys` are the spellings that reach `names`; any case, since lookup lowercases.
+const IVANTI_PRODUCTS: { keys: string[]; names: string[] }[] = [
+  { keys: ['connect secure', 'connect_secure', 'ivanti connect secure', 'pulse connect secure', 'pulse_connect_secure'],
+    names: ['connect_secure', 'pulse_connect_secure', 'Connect Secure', 'Pulse Connect Secure'] },
+  { keys: ['policy secure', 'policy_secure', 'ivanti policy secure', 'pulse policy secure', 'pulse_policy_secure'],
+    names: ['policy_secure', 'pulse_policy_secure', 'Policy Secure', 'Pulse Policy Secure'] },
+  { keys: ['endpoint manager mobile', 'endpoint_manager_mobile', 'epmm', 'ivanti endpoint manager mobile'],
+    names: ['endpoint_manager_mobile', 'Endpoint Manager Mobile'] },
+  { keys: ['endpoint manager', 'endpoint_manager', 'ivanti endpoint manager'],
+    names: ['endpoint_manager', 'Endpoint Manager'] },
+  { keys: ['sentry', 'ivanti sentry'], names: ['sentry', 'Sentry'] },
+  { keys: ['avalanche', 'ivanti avalanche'], names: ['avalanche', 'Avalanche'] },
+  { keys: ['secure access client', 'secure_access_client', 'ivanti secure access client'],
+    names: ['secure_access_client', 'Secure Access Client'] },
+  { keys: ['neurons for itsm', 'neurons_for_itsm', 'ivanti neurons for itsm'],
+    names: ['neurons_for_itsm', 'Neurons for ITSM'] },
+  { keys: ['neurons for secure access', 'neurons_for_secure_access', 'ivanti neurons for secure access'],
+    names: ['neurons_for_secure_access', 'Neurons for Secure Access'] },
+  { keys: ['neurons for zta gateways', 'zta gateways', 'zta gateway', 'ivanti neurons for zta gateways'],
+    names: ['Neurons for ZTA gateways', 'ZTA Gateways', 'ZTA Gateway'] },
+  { keys: ['cloud services appliance', 'cloud_services_appliance', 'ivanti cloud services appliance'],
+    names: ['cloud_services_appliance', 'Cloud Services Appliance'] },
+  { keys: ['virtual traffic manager', 'virtual_traffic_manager', 'ivanti virtual traffic manager'],
+    names: ['virtual_traffic_manager', 'Virtual Traffic Manager'] },
+  { keys: ['workspace control', 'workspace_control', 'ivanti workspace control'],
+    names: ['workspace_control', 'Workspace Control'] },
+  { keys: ['application control', 'application_control', 'ivanti application control'],
+    names: ['application_control', 'Application Control'] },
+  { keys: ['security controls', 'security_controls', 'ivanti security controls'],
+    names: ['security_controls', 'Security Controls'] },
+  { keys: ['xtraction', 'ivanti xtraction'], names: ['xtraction', 'Xtraction'] },
+  { keys: ['performance manager', 'performance_manager', 'ivanti performance manager'],
+    names: ['performance_manager', 'Performance Manager'] },
+  { keys: ['velocity license server', 'velocity_license_server', 'ivanti velocity license server'],
+    names: ['velocity_license_server', 'Velocity License Server'] },
+  { keys: ['desktop and server management', 'ivanti desktop and server management'],
+    names: ['Desktop and Server Management'] },
+];
+
+const IVANTI_ALIASES: Record<string, string[]> = Object.fromEntries(
+  IVANTI_PRODUCTS.flatMap(({ keys, names }) => keys.map(key => [key, names])),
+);
+
 export const PRODUCT_ALIASES: Record<string, string[]> = {
   // ── VMware vCenter (Broadcom) ────────────────────────────────────────────────
   'vmware vcenter server': VCENTER_PRODUCTS,
@@ -138,6 +192,9 @@ export const PRODUCT_ALIASES: Record<string, string[]> = {
   'security management': CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS,
   'security management server': CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS,
   'quantum security management': CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS,
+
+  // ── Ivanti (see IVANTI_PRODUCTS) ────────────────────────────────
+  ...IVANTI_ALIASES,
 
   // ── nginx ──────────────────────────────────────────────────────────────────
   // After F5 acquired NGINX, the NVD CPE product name changed.

@@ -66,6 +66,10 @@ Their OSV data only lists fixed vulnerabilities, so unfixed ones are not reporte
 
 ## Vendor advisories
 
+### Ivanti advisories are found by article name
+
+The Ivanti fetcher takes the articles of the hub.ivanti.com sitemap whose name contains `Security-Advisory` (about 90). An advisory published under another name is not found, except for the older ones that are kept as data (see [Ivanti](data-sources.md#ivanti)). The Pulse Secure bulletins from 2018 and earlier (`SA40xxx` to `SA43xxx`, about 46) are not imported. The January 2024 patches only cover the release trains Ivanti patched; an older, unpatched train is not reported. Ivanti has no feed or API for its advisories, so a change to the site's layout can break the fetch; the job then fails rather than importing nothing.
+
 ### Sophos advisories have no version ranges
 
 Sophos detail pages expose no structured version data, so only CVE IDs and severity are imported. Version searches do not return Sophos results; look up the CVE by ID instead.

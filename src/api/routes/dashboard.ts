@@ -63,6 +63,7 @@ const ADVISORY_SOURCE_MAP: Record<string, string> = {
   'advisory-tomcat':     'advisory-tomcat',
   'advisory-nginx':      'advisory-nginx',
   'advisory-checkpoint': 'advisory-checkpoint',
+  'advisory-ivanti':     'advisory-ivanti',
 };
 
 export default async function dashboardRoute(fastify: FastifyInstance) {

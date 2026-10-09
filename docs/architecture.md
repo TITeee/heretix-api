@@ -89,6 +89,7 @@ Where this encoding is not precise enough, exact comparators are used instead:
 | Red Hat / Oracle Linux (`ecosystem=Red Hat:*`, `Oracle Linux:*`) | `rpmvercmp` ([rpm-version.ts](../src/utils/rpm-version.ts)), full epoch:version-release |
 | Ubuntu / Debian / Alpine OSV ranges | dpkg ordering ([dpkg-version.ts](../src/utils/dpkg-version.ts)), when the enumerated version list has no match |
 | Palo Alto Networks | PAN hotfix ordering ([pan-version.ts](../src/utils/pan-version.ts)) |
+| Ivanti | Four-component ordering with the `R` release (`22.7R2.5`, `12.7.0.1`) ([ivanti-version.ts](../src/utils/ivanti-version.ts)) |
 
 A row with no range data at all never matches, except when `patchAvailable` is explicitly `false` (an unfixed package from Red Hat VEX): that row matches every version. `patchAvailable: null`, meaning unknown, does not.
 

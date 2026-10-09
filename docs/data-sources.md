@@ -9,7 +9,7 @@ Each source has an import job that the [scheduler](operations.md#scheduler) runs
 - [OSV](#osv)
 - [CISA KEV](#cisa-kev) · [EPSS](#epss) · [CVE Records (CNA) and CISA Vulnrichment](#cve-records-cna-and-cisa-vulnrichment)
 - Linux distributions: [Red Hat](#red-hat) · [Oracle Linux](#oracle-linux) · [Debian security tracker](#debian-security-tracker)
-- Vendor advisories ([common behavior](architecture.md#vendor-advisories)): [Fortinet](#fortinet) · [Palo Alto Networks](#palo-alto-networks) · [Cisco](#cisco) · [Sophos](#sophos) · [SonicWall](#sonicwall) · [Broadcom / VMware](#broadcom--vmware) · [Oracle Critical Patch Update](#oracle-critical-patch-update) · [Splunk](#splunk) · [Apache HTTP Server](#apache-http-server) · [Apache Tomcat](#apache-tomcat) · [nginx](#nginx) · [Zabbix](#zabbix) · [Check Point](#check-point)
+- Vendor advisories ([common behavior](architecture.md#vendor-advisories)): [Fortinet](#fortinet) · [Palo Alto Networks](#palo-alto-networks) · [Cisco](#cisco) · [Sophos](#sophos) · [SonicWall](#sonicwall) · [Broadcom / VMware](#broadcom--vmware) · [Oracle Critical Patch Update](#oracle-critical-patch-update) · [Splunk](#splunk) · [Apache HTTP Server](#apache-http-server) · [Apache Tomcat](#apache-tomcat) · [nginx](#nginx) · [Zabbix](#zabbix) · [Check Point](#check-point) · [Ivanti](#ivanti)
 
 ## Choosing what to import
 
@@ -256,3 +256,22 @@ The JSON API used by Check Point's advisory page, plus each sk article for its s
 | `None`, "Not Check Point's product CVE" | Not affected: no row |
 
 On an end-of-support line (`R80.40 (EOS)`) with no fixed take, the row carries `fixStatus: out_of_support`, since Check Point does not fix those lines. Harmony Endpoint `E8x.x` builds, SmartConsole and Quantum Spark build numbers, hardware/cloud rows and bare-number ranges are skipped rather than guessed.
+
+## Ivanti
+
+[ivanti-fetcher.ts](../src/worker/ivanti-fetcher.ts) · `pnpm import:ivanti` · daily 16:30 UTC
+
+Ivanti publishes its advisories as knowledge articles on the Innovators Hub (hub.ivanti.com, a Salesforce community). The pages are rendered in the browser, so a headless browser renders each one. The sitemap lists the articles, and those whose name contains `Security-Advisory` are fetched. Each has a CVE table (score, vector) and an "Affected Versions" table with the affected and resolved versions per product. An article covering several CVEs becomes one advisory per CVE (`<article>/<cveId>`).
+
+| Affected version | Stored as |
+|---|---|
+| `22.7R2.5 and prior`, `and below`, `and previous` | Affected up to that version |
+| `22.7R2 through 22.7R2.4` | Affected range |
+| `Prior to X`, `All versions before X`, `5.1 versions prior to 5.1.2` | Affected below X |
+| `2025.2, 2025.3` | The listed releases, spanned up to the fix |
+
+A resolved version is paired with the affected versions of its own release line (major.minor), so Sentry's `R10.8.1 and prior` / `R10.7.2 and prior` with `R10.8.2` / `R10.7.3` gives one range per line. Versions use Ivanti's own ordering (`22.7R2.5`, `R10.8.1`, 4-component `12.7.0.1`, Endpoint Manager `2024 SU4 SR1`), because the generic encoding drops the 4th component, which is where EPMM's fix boundary is.
+
+Older advisories are not in this template and are kept as data in [ivanti-legacy-advisories.ts](../src/worker/ivanti-legacy-advisories.ts), each read once from its article: the Pulse Secure bulletins from 2019 on that name a version (SA44019 to SA45520, 14 of them), the January 2024 Connect Secure articles (CVE-2023-46805, CVE-2024-21887, CVE-2024-21888, CVE-2024-21893) and the Sentry article for CVE-2023-38035. Their versions sit in prose, in lists inside a sentence, or in tables of a different shape, and they no longer change. Bulletins from 2018 and earlier are left out (end-of-support products), as are those that name no version (products "Not Vulnerable" or "Vulnerable" with no release). A January 2024 patch is a rebuild of an R-train: `9.1R18.4` fixes train 9.1R18, and the first build of a train (`22.2R3`) fixes the line before it.
+
+Rows for Ivanti's own cloud services are skipped, since no customer runs a version of them. Versions Ivanti's order cannot place (Endpoint Manager's monthly "November security update", Neurons "Sept 2026 Security Patch") are left out, so those advisories carry a CVE and severity but no version range.

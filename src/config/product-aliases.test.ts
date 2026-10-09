@@ -128,6 +128,45 @@ describe('ORACLE_PRODUCT_PREFIXES data integrity', () => {
   });
 });
 
+describe('Ivanti aliases', () => {
+  const IVANTI_KEYS = [
+    'connect secure', 'connect_secure', 'ivanti connect secure', 'pulse connect secure', 'pulse_connect_secure',
+    'policy secure', 'policy_secure', 'endpoint manager mobile', 'endpoint_manager_mobile', 'epmm',
+    'endpoint manager', 'endpoint_manager', 'sentry', 'avalanche', 'secure access client', 'secure_access_client',
+    'neurons for itsm', 'neurons_for_itsm', 'virtual traffic manager', 'virtual_traffic_manager',
+    'cloud services appliance', 'workspace control', 'application control', 'xtraction',
+  ];
+
+  it('reaches Ivanti advisories and NVD rows by any spelling of a product', () => {
+    for (const q of ['connect_secure', 'Connect Secure', 'Ivanti Connect Secure', 'Pulse Connect Secure', 'pulse_connect_secure']) {
+      expect(expandProductAliases(q), q).toEqual(['connect_secure', 'pulse_connect_secure', 'Connect Secure', 'Pulse Connect Secure']);
+    }
+    for (const q of ['endpoint_manager_mobile', 'EPMM', 'Ivanti Endpoint Manager Mobile']) {
+      expect(expandProductAliases(q), q).toEqual(['endpoint_manager_mobile', 'Endpoint Manager Mobile']);
+    }
+    expect(expandProductAliases('Sentry')).toEqual(['sentry', 'Sentry']);
+    expect(expandProductAliases('neurons_for_itsm')).toEqual(['neurons_for_itsm', 'Neurons for ITSM']);
+  });
+
+  it('keeps the NVD token in every list whose key is one, so an NVD search by that token loses nothing', () => {
+    // An alias list replaces the searched name; a list holding only the advisory name made
+    // a search for connect_secure drop its 130 NVD rows (and endpoint_manager 116 -> 54).
+    // 'epmm' is an abbreviation no source stores, so it is not one of these.
+    for (const key of IVANTI_KEYS.filter(k => /^[a-z0-9_]+$/.test(k) && k !== 'epmm')) {
+      expect(expandProductAliases(key), key).toContain(key);
+    }
+  });
+
+  it('gives the products of one family the same list', () => {
+    expect(expandProductAliases('pulse_policy_secure')).toEqual(expandProductAliases('Policy Secure'));
+    expect(expandProductAliases('zta gateways')).toEqual(expandProductAliases('Neurons for ZTA gateways'));
+  });
+
+  it('leaves a name it does not know as it is', () => {
+    expect(expandProductAliases('Some Other Product')).toEqual(['Some Other Product']);
+  });
+});
+
 describe('PRODUCT_ALIASES data integrity', () => {
   it('uses lowercase keys throughout (lookup is case-insensitive, so uppercase keys would be unreachable)', () => {
     for (const key of Object.keys(PRODUCT_ALIASES)) {

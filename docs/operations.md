@@ -67,7 +67,7 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 | `advisory-apache` / `-zabbix` / `-tomcat` / `-nginx` | Daily 14:00 / 14:15 / 14:30 / 14:45 | |
 | `advisory-redhat-vex` | Daily 15:00 | |
 | `cna` (CVE Records and CISA SSVC) | Daily 15:30 | |
-| `advisory-checkpoint` | Daily 16:00 | |
+| `advisory-checkpoint` / `-ivanti` | Daily 16:00 / 16:30 | `advisory-ivanti` renders about 90 pages in a headless browser and takes 10 to 15 minutes |
 
 Switch jobs on and off with the dashboard's On/Off toggle or `PATCH /api/v1/jobs/:source` (see [api.md](api.md#jobs)). On a fresh install only NVD, KEV and EPSS are enabled. The other jobs are high-volume scrapers, so switch on just the ones you need. Each OSV ecosystem job appears once that ecosystem has been imported.
 
