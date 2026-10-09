@@ -31,6 +31,7 @@ import { TomcatFetcher } from '../worker/tomcat-fetcher.js';
 import { NginxFetcher } from '../worker/nginx-fetcher.js';
 import { CheckpointFetcher } from '../worker/checkpoint-fetcher.js';
 import { IvantiFetcher } from '../worker/ivanti-fetcher.js';
+import { CitrixFetcher } from '../worker/citrix-fetcher.js';
 import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { importCnaDelta } from '../worker/cna-importer.js';
 import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
@@ -100,6 +101,7 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-nginx',        label: 'Nginx',              cron: '45 14 * * *', run: () => runAdvisory('advisory-nginx', new NginxFetcher()) },
   { source: 'advisory-checkpoint',   label: 'Check Point',        cron: '0 16 * * *',  run: () => runAdvisory('advisory-checkpoint', new CheckpointFetcher()) },
   { source: 'advisory-ivanti',       label: 'Ivanti',             cron: '30 16 * * *', run: () => runAdvisory('advisory-ivanti', new IvantiFetcher()) },
+  { source: 'advisory-citrix',       label: 'NetScaler',          cron: '45 16 * * *', run: () => runAdvisory('advisory-citrix', new CitrixFetcher()) },
   {
     // Delta bundles only. The one-time bootstrap of historical years is run by
     // hand (`pnpm import:cna --bootstrap`) since it downloads a ~600MB archive.

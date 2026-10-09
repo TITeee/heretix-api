@@ -171,6 +171,36 @@ const IVANTI_ALIASES: Record<string, string[]> = Object.fromEntries(
   IVANTI_PRODUCTS.flatMap(({ keys, names }) => keys.map(key => [key, names])),
 );
 
+// NetScaler (formerly Citrix ADC / Gateway). The bulletins are stored under the
+// NetScaler names ("NetScaler ADC", "NetScaler Gateway"), NVD under CPE tokens
+// (netscaler_application_delivery_controller, netscaler_gateway, and a _firmware
+// twin of each), and the product was Citrix ADC / Citrix Gateway until 2022. As with
+// Ivanti, each list holds the NVD tokens too: the lookup replaces the searched
+// name for every source, so a list of the advisory name alone would make a search
+// for netscaler_gateway lose its NVD rows.
+//
+// The generic tokens "gateway" and "application_delivery_controller" are left out:
+// other vendors' products carry them, and a search for "NetScaler Gateway" must not
+// return those. The FIPS / NDcPP builds are a product of their own in the bulletins
+// (their numbering differs) and stay out of the "NetScaler ADC" list for that reason.
+const NETSCALER_PRODUCTS: { keys: string[]; names: string[] }[] = [
+  { keys: ['netscaler adc', 'citrix adc', 'netscaler application delivery controller', 'netscaler_application_delivery_controller', 'netscaler_application_delivery_controller_firmware'],
+    names: ['netscaler_application_delivery_controller', 'netscaler_application_delivery_controller_firmware', 'NetScaler ADC'] },
+  { keys: ['netscaler adc fips and ndcpp', 'netscaler adc fips'],
+    names: ['NetScaler ADC FIPS and NDcPP'] },
+  { keys: ['netscaler gateway', 'citrix gateway', 'netscaler_gateway', 'netscaler_gateway_firmware'],
+    names: ['netscaler_gateway', 'netscaler_gateway_firmware', 'NetScaler Gateway'] },
+  { keys: ['netscaler console', 'netscaler adm', 'citrix adm', 'netscaler_console', 'application_delivery_management'],
+    names: ['netscaler_console', 'application_delivery_management', 'NetScaler Console'] },
+  { keys: ['netscaler agent', 'netscaler_agent'], names: ['netscaler_agent', 'NetScaler Agent'] },
+  { keys: ['netscaler sdx (svm)', 'netscaler sdx', 'netscaler_sdx_firmware'],
+    names: ['netscaler_sdx_firmware', 'NetScaler SDX (SVM)'] },
+];
+
+const NETSCALER_ALIASES: Record<string, string[]> = Object.fromEntries(
+  NETSCALER_PRODUCTS.flatMap(({ keys, names }) => keys.map(key => [key, names])),
+);
+
 export const PRODUCT_ALIASES: Record<string, string[]> = {
   // ── VMware vCenter (Broadcom) ────────────────────────────────────────────────
   'vmware vcenter server': VCENTER_PRODUCTS,
@@ -192,6 +222,9 @@ export const PRODUCT_ALIASES: Record<string, string[]> = {
   'security management': CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS,
   'security management server': CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS,
   'quantum security management': CHECKPOINT_SECURITY_MANAGEMENT_PRODUCTS,
+
+  // ── NetScaler (see NETSCALER_PRODUCTS) ─────────────────────────
+  ...NETSCALER_ALIASES,
 
   // ── Ivanti (see IVANTI_PRODUCTS) ────────────────────────────────
   ...IVANTI_ALIASES,

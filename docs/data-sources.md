@@ -9,7 +9,7 @@ Each source has an import job that the [scheduler](operations.md#scheduler) runs
 - [OSV](#osv)
 - [CISA KEV](#cisa-kev) · [EPSS](#epss) · [CVE Records (CNA) and CISA Vulnrichment](#cve-records-cna-and-cisa-vulnrichment)
 - Linux distributions: [Red Hat](#red-hat) · [Oracle Linux](#oracle-linux) · [Debian security tracker](#debian-security-tracker)
-- Vendor advisories ([common behavior](architecture.md#vendor-advisories)): [Fortinet](#fortinet) · [Palo Alto Networks](#palo-alto-networks) · [Cisco](#cisco) · [Sophos](#sophos) · [SonicWall](#sonicwall) · [Broadcom / VMware](#broadcom--vmware) · [Oracle Critical Patch Update](#oracle-critical-patch-update) · [Splunk](#splunk) · [Apache HTTP Server](#apache-http-server) · [Apache Tomcat](#apache-tomcat) · [nginx](#nginx) · [Zabbix](#zabbix) · [Check Point](#check-point) · [Ivanti](#ivanti)
+- Vendor advisories ([common behavior](architecture.md#vendor-advisories)): [Fortinet](#fortinet) · [Palo Alto Networks](#palo-alto-networks) · [Cisco](#cisco) · [Sophos](#sophos) · [SonicWall](#sonicwall) · [Broadcom / VMware](#broadcom--vmware) · [Oracle Critical Patch Update](#oracle-critical-patch-update) · [Splunk](#splunk) · [Apache HTTP Server](#apache-http-server) · [Apache Tomcat](#apache-tomcat) · [nginx](#nginx) · [Zabbix](#zabbix) · [Check Point](#check-point) · [Ivanti](#ivanti) · [NetScaler](#netscaler)
 
 ## Choosing what to import
 
@@ -118,7 +118,7 @@ pnpm import:cna              # Delta if already bootstrapped, otherwise a full b
 pnpm import:cna --bootstrap  # Force the full bundle (~600 MB)
 ```
 
-- **CNA-declared affected products** (`containers.cna.affected`) go into their own `CnaVulnerability` / `CnaAffectedProduct` tables. They cover vendors that have no dedicated advisory fetcher. The bootstrap only imports recent years (`BOOTSTRAP_YEARS` in `src/scripts/import-cna.ts`); deltas apply to any year.
+- **CNA-declared affected products** (`containers.cna.affected`) go into their own `CnaVulnerability` / `CnaAffectedProduct` tables. They cover vendors that have no dedicated advisory fetcher. The bootstrap only imports recent years (`BOOTSTRAP_YEARS` in `src/scripts/import-cna.ts`); deltas apply to any year. Ranges that cannot be ordered are not stored: git commit hashes, free text, and NetScaler's branch-plus-build bounds (`14.1` up to `56.73`, which read as 14.1.0 up to 56.73.0 and flagged the fixed builds).
 - **CISA Vulnrichment SSVC** (`containers.adp`, the CISA-ADP entry): exploitation (none/poc/active), automatable (yes/no) and technical impact (partial/total). Stored on the master row and returned by `GET /vulnerabilities/:id`. No final SSVC decision is computed, since that needs the consumer's own mission impact. SSVC is backfilled from every year in the bundle.
 - The daily delta runs at 15:30 UTC. No API key or rate limit.
 
@@ -275,3 +275,22 @@ A resolved version is paired with the affected versions of its own release line 
 Older advisories are not in this template and are kept as data in [ivanti-legacy-advisories.ts](../src/worker/ivanti-legacy-advisories.ts), each read once from its article: the Pulse Secure bulletins from 2019 on that name a version (SA44019 to SA45520, 14 of them), the January 2024 Connect Secure articles (CVE-2023-46805, CVE-2024-21887, CVE-2024-21888, CVE-2024-21893) and the Sentry article for CVE-2023-38035. Their versions sit in prose, in lists inside a sentence, or in tables of a different shape, and they no longer change. Bulletins from 2018 and earlier are left out (end-of-support products), as are those that name no version (products "Not Vulnerable" or "Vulnerable" with no release). A January 2024 patch is a rebuild of an R-train: `9.1R18.4` fixes train 9.1R18, and the first build of a train (`22.2R3`) fixes the line before it.
 
 Rows for Ivanti's own cloud services are skipped, since no customer runs a version of them. Versions Ivanti's order cannot place (Endpoint Manager's monthly "November security update", Neurons "Sept 2026 Security Patch") are left out, so those advisories carry a CVE and severity but no version range.
+
+## NetScaler
+
+[citrix-fetcher.ts](../src/worker/citrix-fetcher.ts) · `pnpm import:citrix` · daily 16:45 UTC
+
+The security bulletins of NetScaler ADC and Gateway (formerly Citrix ADC and Gateway), read from the knowledge articles on support.citrix.com. The sitemap lists them; plain HTTP is enough, no browser. A bulletin becomes one advisory per CVE (`<CTX id>/<cveId>`), with the CVSS v4 score from its CVE table.
+
+The bulletins of 2022 and later share a template, one line per product and release branch:
+
+```
+NetScaler ADC and NetScaler Gateway 14.1 BEFORE 14.1-73.32
+NetScaler ADC 13.1-FIPS before 13.1-37.277
+```
+
+Each line becomes a range from the branch (`14.1`) to the first fixed build, for each product it names. A line under "affected by CVE-x :" applies to that CVE only (the NetScaler Console bulletin). A branch the bulletin calls end of life and vulnerable (`12.1`) is affected with no fix (`fixStatus: out_of_support`). The FIPS / NDcPP builds run on their own numbering (`13.1-37.x` against `13.1-6x.x`), so they are a separate product, `NetScaler ADC FIPS and NDcPP`.
+
+A NetScaler version is a branch and a build (`14.1-73.32`); it is ordered with its own order ([citrix-version.ts](../src/utils/citrix-version.ts)), because the generic encoding keeps only the 73 of 73.32, and a bound written as a branch plus a bare build (`14.1` up to `56.73`, how the CVE record gives it) reads as 14.1.0 up to 56.73.0 and flags every later build. The CVE-record (CNA) ranges of NetScaler are therefore not stored.
+
+Other Citrix bulletins (Workspace app, StoreFront, XenServer, SD-WAN, Session Recording) word their versions differently and are not read.
