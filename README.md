@@ -42,7 +42,7 @@ It can also be used on its own, as a self-hosted vulnerability lookup API.
 
 ## Features
 
-- **Vendor advisories**: Fortinet, Palo Alto Networks, Cisco, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, Check Point and Ivanti
+- **Vendor advisories**: Fortinet, Palo Alto Networks, Cisco, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, Check Point, Ivanti and NetScaler
 - **Distro-aware matching**: dpkg and RPM version comparison for Linux distributions, and each distro's own rating (`distroPriority`) and fix status (`fixStatus`, e.g. "will not fix") per result
 - **Malware detection**: malicious packages from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) (`MAL-*`), searchable like any vulnerability
 - **Simple to run**: PostgreSQL only (no Redis), Docker Compose included, a built-in scheduler and an import dashboard

@@ -70,6 +70,10 @@ Their OSV data only lists fixed vulnerabilities, so unfixed ones are not reporte
 
 The Ivanti fetcher takes the articles of the hub.ivanti.com sitemap whose name contains `Security-Advisory` (about 90). An advisory published under another name is not found, except for the older ones that are kept as data (see [Ivanti](data-sources.md#ivanti)). The Pulse Secure bulletins from 2018 and earlier (`SA40xxx` to `SA43xxx`, about 46) are not imported. The January 2024 patches only cover the release trains Ivanti patched; an older, unpatched train is not reported. Ivanti has no feed or API for its advisories, so a change to the site's layout can break the fetch; the job then fails rather than importing nothing.
 
+### NetScaler bulletins are read for the ADC and Gateway line only
+
+The NetScaler source reads the ADC / Gateway / Console bulletins of 2022 and later, found by the name of the article. Older ones (the 2019-2021 Citrix ADC and SD-WAN WANOP bulletins) and the other Citrix products are not read, so a NetScaler CVE from before 2022, or one whose bulletin is not published yet, has no NetScaler advisory. The CVE-record ranges that would cover it are not stored for NetScaler, because they read the branch and the build as one version (see [NetScaler](data-sources.md#netscaler)).
+
 ### Sophos advisories have no version ranges
 
 Sophos detail pages expose no structured version data, so only CVE IDs and severity are imported. Version searches do not return Sophos results; look up the CVE by ID instead.

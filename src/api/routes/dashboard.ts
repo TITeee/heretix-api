@@ -64,6 +64,7 @@ const ADVISORY_SOURCE_MAP: Record<string, string> = {
   'advisory-nginx':      'advisory-nginx',
   'advisory-checkpoint': 'advisory-checkpoint',
   'advisory-ivanti':     'advisory-ivanti',
+  'advisory-citrix':     'advisory-citrix',
 };
 
 export default async function dashboardRoute(fastify: FastifyInstance) {

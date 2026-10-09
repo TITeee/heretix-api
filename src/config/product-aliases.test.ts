@@ -167,6 +167,37 @@ describe('Ivanti aliases', () => {
   });
 });
 
+describe('NetScaler aliases', () => {
+  it('reaches the bulletins and the NVD rows by any spelling of the ADC and the Gateway', () => {
+    for (const q of ['NetScaler ADC', 'Citrix ADC', 'netscaler_application_delivery_controller']) {
+      expect(expandProductAliases(q), q).toEqual(['netscaler_application_delivery_controller', 'netscaler_application_delivery_controller_firmware', 'NetScaler ADC']);
+    }
+    for (const q of ['NetScaler Gateway', 'Citrix Gateway', 'netscaler_gateway']) {
+      expect(expandProductAliases(q), q).toEqual(['netscaler_gateway', 'netscaler_gateway_firmware', 'NetScaler Gateway']);
+    }
+  });
+
+  it('keeps the NVD token in every list whose key is one, so an NVD search by that token loses nothing', () => {
+    for (const key of ['netscaler_application_delivery_controller', 'netscaler_gateway', 'netscaler_console', 'netscaler_agent']) {
+      expect(expandProductAliases(key), key).toContain(key);
+    }
+  });
+
+  it('does not pull in the generic tokens other vendors use, or the FIPS builds', () => {
+    for (const q of ['NetScaler Gateway', 'NetScaler ADC']) {
+      const names = expandProductAliases(q);
+      expect(names).not.toContain('gateway');
+      expect(names).not.toContain('application_delivery_controller');
+      expect(names).not.toContain('NetScaler ADC FIPS and NDcPP');
+    }
+    expect(expandProductAliases('NetScaler ADC FIPS and NDcPP')).toEqual(['NetScaler ADC FIPS and NDcPP']);
+  });
+
+  it('leaves a plain "gateway" search as it was', () => {
+    expect(expandProductAliases('gateway')).toEqual(['gateway']);
+  });
+});
+
 describe('PRODUCT_ALIASES data integrity', () => {
   it('uses lowercase keys throughout (lookup is case-insensitive, so uppercase keys would be unreachable)', () => {
     for (const key of Object.keys(PRODUCT_ALIASES)) {
