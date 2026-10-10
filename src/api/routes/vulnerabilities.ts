@@ -6,6 +6,8 @@ import { VENDORS_WITH_OWN_VERSION_ORDER, encodeAdvisoryVersion } from '../../uti
 import { type FixStatus, type FixStatusInfo, debianTrackerStatus } from '../../utils/fix-status.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
+import { findCatalogEntry } from '../../config/product-catalog.js';
+import { catalogCnaWhere, catalogNvdWhere } from '../../utils/catalog-search.js';
 import {
   type VulnerabilityResult,
   dedup,
@@ -293,9 +295,13 @@ async function searchNVD(
     ? { OR: [{ exactVersion: null, ...versionRangeWhere(versionInt) }, { exactVersion: version }] }
     : {};
 
-  const packageNames = expandProductAliases(packageName);
+  // A catalog name stands for exact (vendor, product) pairs; any other name is searched
+  // as the plain product name, widened by PRODUCT_ALIASES.
+  const catalogEntry = findCatalogEntry(packageName);
   const rows = await prisma.nVDAffectedPackage.findMany({
-    where: { ...ecosystemFilter, packageName: { in: packageNames }, ...versionFilter },
+    where: catalogEntry
+      ? { ...ecosystemFilter, ...versionFilter, AND: [catalogNvdWhere(catalogEntry)] }
+      : { ...ecosystemFilter, packageName: { in: expandProductAliases(packageName) }, ...versionFilter },
     include: {
       vulnerability: {
         select: {
@@ -539,9 +545,12 @@ async function searchCna(
   const versionInt = version ? normalizeVersion(version) : null;
   const approximate = version !== undefined && versionInt === null;
 
+  const catalogEntry = findCatalogEntry(product);
+  if (catalogEntry && catalogEntry.cna.length === 0) return [];
+
   const rows = await prisma.cnaAffectedProduct.findMany({
     where: {
-      product: { in: expandProductAliases(product) },
+      ...(catalogEntry ? catalogCnaWhere(catalogEntry) : { product: { in: expandProductAliases(product) } }),
       AND: [cnaVersionWhere(versionInt, version)],
     },
     include: {
@@ -851,11 +860,14 @@ async function searchVulnerabilities(
     const isAdvisoryOnly = normalizedEcosystem ? isAdvisoryOnlyEcosystem(normalizedEcosystem) : false;
 
     const rpmVendor = normalizedEcosystem ? rpmAdvisoryVendor(normalizedEcosystem) : null;
+    // A catalog entry names the NVD and CNA rows it stands for (see product-catalog.ts), so
+    // OSV and the vendor advisories, which match by name alone, are not asked about it.
+    const isCatalog = findCatalogEntry(packageName) !== undefined;
 
     const [osvResults, nvdResults, advisoryResults, cnaResults] = await Promise.all([
-      searchOSV(packageName, version, versionInt, normalizedEcosystem),
+      isCatalog ? Promise.resolve([]) : searchOSV(packageName, version, versionInt, normalizedEcosystem),
       isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, normalizedEcosystem),
-      rpmVendor
+      isCatalog ? Promise.resolve([]) : rpmVendor
         ? searchAdvisoryRpm(packageName, version, rpmVendor)
         : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),
       isDistro || isLanguage || isAdvisoryOnly ? Promise.resolve([]) : searchCna(packageName, version),
