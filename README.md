@@ -169,6 +169,7 @@ The `ecosystem` parameter changes which sources are queried and how versions are
 | `POST /api/v1/vulnerabilities/search/batch` | The same for up to 1,000 packages |
 | `GET /api/v1/vulnerabilities/search/cpe` | Search by CPE 2.3 string (NVD) |
 | `GET /api/v1/vulnerabilities/suggest` | Package name autocomplete |
+| `GET /api/v1/catalog` | Product catalog for a picker |
 | `GET /api/v1/vulnerabilities/:id` | Detail by CVE, OSV or vendor advisory ID |
 | `GET /api/v1/vulnerabilities/stats` | Record counts |
 | `POST /api/v1/jobs/:source/run`, `PATCH /api/v1/jobs/:source` | Run or enable/disable an import job |

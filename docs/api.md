@@ -232,6 +232,36 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sugg
 | `ecosystems` | Ecosystem families of the OSV packages with this name (`Debian`, `npm`), without the version |
 | `matchedBy` | `name` (the prefix matched the name) or `vendor` (the prefix matched the vendor) |
 
+## Product catalog
+
+The hand-registered products the [catalog](data-sources.md#product-catalog) lists, for a picker. It is in memory, so it is cheap enough to call on every keystroke.
+
+```
+GET /api/v1/catalog
+```
+
+| Parameter | Required | Description |
+|---|---|---|
+| `q` | | Text to find: matched against the name, aliases, vendor and product, ignoring case and treating space, `-`, `_`, `.` and `/` alike. The exact name or alias comes first, then names starting with it, then vendors and products starting with it, then names containing it |
+| `category` | | `network`, `middleware`, `database`, `devops` or `application` |
+| `limit` | | Max entries (default 50, max 200) |
+
+Without `q`, every entry, by category and name.
+
+```bash
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/catalog?q=ivanti"
+# → { "total": 1, "entries": [{ "name": "Ivanti Automation", "vendor": "Ivanti", "product": "Automation",
+#       "category": "application", "aliases": [], "versionHint": "2024.4", "sources": ["nvd"],
+#       "nvd": [{ "vendor": "ivanti", "products": ["automation"] }], "cna": [] }] }
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | Pass it as `package` to search by this entry (see [Searching by a catalog name](#searching-by-a-catalog-name)); register it as the package name |
+| `sources` | Where a search by the name looks: `nvd`, `cna`. Vendor advisories and OSV are not asked |
+| `nvd`, `cna` | The exact (vendor, product) pairs it stands for |
+| `versionHint` | A version as the vendor writes it |
+
 ## Vulnerability detail
 
 By CVE ID, OSV ID or vendor advisory ID.
