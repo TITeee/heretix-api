@@ -450,3 +450,136 @@ describe('GET /api/v1/vulnerabilities/:id/cpe', () => {
     expect(status).toBe(404);
   });
 });
+
+describe('GET /api/v1/vulnerabilities/suggest', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  async function suggest(query: string) {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/vulnerabilities/suggest?${query}`,
+      headers: { 'x-api-key': API_KEY },
+    });
+    return res.json() as {
+      suggestions: string[];
+      details: { name: string; sources: string[]; vendors: string[]; ecosystems: string[]; matchedBy: string }[];
+    };
+  }
+
+  async function seedNvd(cveId: string, rows: { vendor: string; packageName: string; ecosystem?: string }[]) {
+    const nvd = await prisma.nVDVulnerability.create({ data: { cveId, source: 'nvd', rawData: {} } });
+    for (const r of rows) {
+      await prisma.nVDAffectedPackage.create({
+        data: { vulnerabilityId: nvd.id, cpe: `cpe:2.3:a:${r.vendor}:${r.packageName}:*:*:*:*:*:*:*:*`, ...r },
+      });
+    }
+  }
+
+  async function seedCna(cveId: string, products: { vendor: string; product: string }[]) {
+    const cna = await prisma.cnaVulnerability.create({ data: { cveId, cnaShortName: 'test', rawAffected: [] } });
+    for (const p of products) {
+      await prisma.cnaAffectedProduct.create({ data: { vulnerabilityId: cna.id, ...p } });
+    }
+  }
+
+  it('still completes a prefix typed the way the name is stored', async () => {
+    await seedNvd('CVE-2026-7001', [{ vendor: 'apache', packageName: 'http_server' }, { vendor: 'apache', packageName: 'tomcat' }]);
+    const body = await suggest('q=http_s');
+    expect(body.suggestions).toEqual(['http_server']);
+    expect(body.details[0]).toEqual({ name: 'http_server', sources: ['nvd'], vendors: ['apache'], ecosystems: [], matchedBy: 'name' });
+  });
+
+  it('ignores case and treats a space like the underscore or hyphen the name is stored with', async () => {
+    await seedNvd('CVE-2026-7002', [{ vendor: 'ivanti', packageName: 'connect_secure' }, { vendor: 'f5', packageName: 'big-ip_access_policy_manager' }]);
+    await seedCna('CVE-2026-7003', [{ vendor: 'brother', product: 'BR-6208AC' }, { vendor: 'x', product: 'Connect Secure Gateway' }]);
+
+    expect((await suggest('q=CONNECT_S')).suggestions).toEqual(['connect_secure']);
+    expect((await suggest('q=Connect%20secure')).suggestions).toEqual(['Connect Secure Gateway', 'connect_secure']);
+    expect((await suggest('q=big%20ip')).suggestions).toEqual(['big-ip_access_policy_manager']);
+    expect((await suggest('q=br-6208')).suggestions).toEqual(['BR-6208AC']);
+  });
+
+  it('lists a vendor\'s products after the names that match what was typed, saying which vendor they came from', async () => {
+    await seedNvd('CVE-2026-7004', [
+      { vendor: 'ivanti', packageName: 'connect_secure' },
+      { vendor: 'ivanti', packageName: 'endpoint_manager' },
+      { vendor: 'someone', packageName: 'ivanti_helper' },
+    ]);
+    const body = await suggest('q=ivanti');
+    expect(body.suggestions).toEqual(['ivanti_helper', 'connect_secure', 'endpoint_manager']);
+    expect(body.details.map((d) => [d.name, d.matchedBy, d.vendors])).toEqual([
+      ['ivanti_helper', 'name', ['someone']],
+      ['connect_secure', 'vendor', ['ivanti']],
+      ['endpoint_manager', 'vendor', ['ivanti']],
+    ]);
+  });
+
+  it('puts the exact name before longer names, and keeps one entry per name with every source it came from', async () => {
+    await seedNvd('CVE-2026-7005', [{ vendor: 'a', packageName: 'nginx' }, { vendor: 'a', packageName: 'nginx_agent' }]);
+    await seedCna('CVE-2026-7006', [{ vendor: 'f5', product: 'nginx' }]);
+    const body = await suggest('q=Nginx');
+    expect(body.suggestions).toEqual(['nginx', 'nginx_agent']);
+    expect(body.details[0].sources).toEqual(['nvd', 'cna']);
+    // The vendors of both sources, alphabetical.
+    expect(body.details[0].vendors).toEqual(['a', 'f5']);
+  });
+
+  it('says whose product every suggestion is, not only the ones matched through a vendor: all its vendors, and the ecosystem families of its OSV packages', async () => {
+    await seedNvd('CVE-2026-7010', [
+      { vendor: 'oracle', packageName: 'http_server' },
+      { vendor: 'apache', packageName: 'http_server' },
+      { vendor: 'ibm', packageName: 'http_server' },
+    ]);
+    await seedCna('CVE-2026-7011', [{ vendor: 'brother', product: 'BR-6208AC' }]);
+    const osv = await prisma.oSVVulnerability.create({ data: { osvId: 'GHSA-sugg-0001', source: 'osv', rawData: {} } });
+    for (const ecosystem of ['npm', 'Debian:12', 'Debian:11']) {
+      await prisma.oSVAffectedPackage.create({ data: { vulnerabilityId: osv.id, ecosystem, packageName: 'sugg-lib' } });
+    }
+
+    const nvd = await suggest('q=http_s');
+    expect(nvd.details[0].vendors).toEqual(['apache', 'ibm', 'oracle']);
+
+    const cna = await suggest('q=br-6208');
+    expect(cna.details[0]).toMatchObject({ name: 'BR-6208AC', sources: ['cna'], vendors: ['brother'], ecosystems: [] });
+
+    const lib = await suggest('q=sugg');
+    expect(lib.details[0]).toMatchObject({ name: 'sugg-lib', sources: ['osv'], vendors: [], ecosystems: ['Debian', 'npm'] });
+  });
+
+  it('keeps the vendor the typed text matched first, then the others alphabetically', async () => {
+    await seedNvd('CVE-2026-7012', [
+      { vendor: 'zeta', packageName: 'shared_product' },
+      { vendor: 'alpha', packageName: 'shared_product' },
+      { vendor: 'mid', packageName: 'shared_product' },
+    ]);
+    const body = await suggest('q=mid');
+    expect(body.details.find((d) => d.name === 'shared_product')).toMatchObject({ matchedBy: 'vendor', vendors: ['mid', 'alpha', 'zeta'] });
+  });
+
+  it('does not use the CPE vendor or CNA products when an ecosystem narrows the search', async () => {
+    await seedNvd('CVE-2026-7007', [{ vendor: 'ivanti', packageName: 'connect_secure', ecosystem: 'Debian:12' }]);
+    await seedCna('CVE-2026-7008', [{ vendor: 'x', product: 'Debian Thing' }]);
+    expect((await suggest('q=ivanti&ecosystem=Debian')).suggestions).toEqual([]);
+    expect((await suggest('q=debian&ecosystem=Debian')).suggestions).toEqual([]);
+    expect((await suggest('q=connect&ecosystem=Debian')).suggestions).toEqual(['connect_secure']);
+  });
+
+  it('treats a typed % or _ as itself', async () => {
+    await seedNvd('CVE-2026-7009', [{ vendor: 'ivanti', packageName: 'connect_secure' }, { vendor: 'ivanti2', packageName: 'other' }]);
+    expect((await suggest('q=iv%25')).suggestions).toEqual([]);
+    expect((await suggest('q=ivanti_')).suggestions).toEqual([]);
+  });
+});

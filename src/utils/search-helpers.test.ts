@@ -18,6 +18,9 @@ import {
   filterBySeverity,
   summaryBudgetChars,
   truncateSummaries,
+  suggestPrefixVariants,
+  suggestVendorVariants,
+  escapeLikePattern,
   type VulnerabilityResult,
 } from './search-helpers.js';
 
@@ -598,5 +601,36 @@ describe('filterBySeverity', () => {
   it('supports a scale outside NVD\'s own (e.g. GHSA\'s MODERATE)', () => {
     const moderate = makeResult({ severity: 'MODERATE' });
     expect(filterBySeverity([moderate], ['MODERATE'])).toEqual([moderate]);
+  });
+});
+
+describe('suggestPrefixVariants', () => {
+  it('tries the typed prefix as written, lowercase, with spaces joined, uppercase and Title Case', () => {
+    expect(suggestPrefixVariants('Connect secure')).toEqual([
+      'Connect secure', 'connect secure', 'connect_secure', 'connect-secure', 'CONNECT SECURE', 'Connect Secure',
+    ]);
+  });
+
+  it('does not repeat a spelling, and ignores surrounding whitespace', () => {
+    expect(suggestPrefixVariants('  nginx ')).toEqual(['nginx', 'NGINX', 'Nginx']);
+    expect(suggestPrefixVariants('   ')).toEqual([]);
+  });
+
+  it('turns a lowercase model number into its uppercase spelling', () => {
+    expect(suggestPrefixVariants('br-6208')).toContain('BR-6208');
+  });
+});
+
+describe('suggestVendorVariants', () => {
+  it('drops or joins the spaces of a typed vendor, in lowercase', () => {
+    expect(suggestVendorVariants('Palo Alto')).toEqual(['palo alto', 'paloalto', 'palo_alto', 'palo-alto']);
+    expect(suggestVendorVariants('Ivanti')).toEqual(['ivanti']);
+  });
+});
+
+describe('escapeLikePattern', () => {
+  it('escapes the wildcards and the escape character', () => {
+    expect(escapeLikePattern('big_ip%')).toBe('big\\_ip\\%');
+    expect(escapeLikePattern('a\\b')).toBe('a\\\\b');
   });
 });

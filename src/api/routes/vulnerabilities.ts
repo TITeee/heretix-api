@@ -27,6 +27,9 @@ import {
   truncateSummaries,
   DISTRO_ECOSYSTEM_PREFIXES,
   RPM_ADVISORY_VENDOR_PREFIXES,
+  suggestPrefixVariants,
+  suggestVendorVariants,
+  escapeLikePattern,
 } from '../../utils/search-helpers.js';
 
 const searchSchema = z.object({
@@ -890,7 +893,7 @@ const cpeForCveSchema = z.object({
 /**
  * Package-name autocomplete for the "Package" search mode. NVD's packageName
  * is the raw CPE <product> identifier ("http_server", not "Apache HTTP
- * Server"), which a user can't reasonably guess up front — this lets the UI
+ * Server"), which a user can't reasonably guess up front -- this lets the UI
  * suggest real names as they type instead of requiring that lookup elsewhere.
  * Covers NVD, OSV and CNA, but not AdvisoryAffectedProduct: those vendor
  * products already have their own curated dropdown in the "Advisory" search
@@ -898,16 +901,40 @@ const cpeForCveSchema = z.object({
  * as not ("BR-6208AC"), so without completion there is no way to reach them --
  * which matters most when registering an appliance as an asset, where the name
  * has to match exactly for searchCna() to find anything.
+ *
+ * A prefix is tried under the spellings people mean by it (suggestPrefixVariants:
+ * "connect secure" finds connect_secure, "br-6208" finds BR-6208AC) instead of
+ * being compared case-insensitively, so each match is still a plain prefix
+ * match the packageName index can serve. A prefix that is a CPE vendor ("ivanti")
+ * also lists that vendor's products, after the names it matches directly, and
+ * only when no ecosystem narrows the search (the CPE vendor belongs to NVD).
+ * Each suggestion says where it was found, so a name is never an unexplained
+ * guess.
  */
-async function suggestPackageNames(prefix: string, ecosystem: string | undefined, limit: number): Promise<string[]> {
+type SuggestionSource = 'nvd' | 'osv' | 'cna';
+type Suggestion = {
+  name: string;
+  sources: SuggestionSource[];
+  /** CPE / CNA vendors the name is found under (all of them; one the typed text matched comes first). */
+  vendors: string[];
+  /** Ecosystem families of the OSV packages with this name ("Debian", "npm"). */
+  ecosystems: string[];
+  matchedBy: 'name' | 'vendor';
+};
+
+async function suggestPackageNames(prefix: string, ecosystem: string | undefined, limit: number): Promise<Suggestion[]> {
+  // Prisma's startsWith leaves LIKE's wildcards alone, so a typed "_" or "%" would match any
+  // character; escaped, it matches itself.
+  const variants = suggestPrefixVariants(prefix).map(escapeLikePattern);
+  if (variants.length === 0) return [];
   const ecosystemFilter = ecosystem ? { ecosystem: { startsWith: ecosystem } } : {};
   // Case-sensitive startsWith (no `mode: 'insensitive'`), consistent with every
-  // other prefix filter in this file — Postgres can use the existing
+  // other prefix filter in this file -- Postgres can use the existing
   // packageName B-tree index for this; ILIKE could not without a separate
   // case-insensitive index.
-  const where = { packageName: { startsWith: prefix }, ...ecosystemFilter };
-
-  const [nvdRows, osvRows, cnaRows] = await Promise.all([
+  const where = { OR: variants.map((v) => ({ packageName: { startsWith: v } })), ...ecosystemFilter };
+  const vendorPatterns = ecosystem ? [] : suggestVendorVariants(prefix).map((v) => `${escapeLikePattern(v)}%`);
+  const [nvdRows, osvRows, cnaRows, vendorRows] = await Promise.all([
     prisma.nVDAffectedPackage.findMany({
       where, distinct: ['packageName'], select: { packageName: true }, take: limit, orderBy: { packageName: 'asc' },
     }),
@@ -920,16 +947,93 @@ async function suggestPackageNames(prefix: string, ecosystem: string | undefined
     ecosystem
       ? Promise.resolve([])
       : prisma.cnaAffectedProduct.findMany({
-          where: { product: { startsWith: prefix } },
+          where: { OR: variants.map((v) => ({ product: { startsWith: v } })) },
           distinct: ['product'], select: { product: true }, take: limit, orderBy: { product: 'asc' },
         }),
+    // Raw SQL so the DISTINCT and the LIMIT run inside Postgres, over the
+    // (vendor, packageName) index: a vendor can own tens of thousands of rows.
+    vendorPatterns.length === 0
+      ? Promise.resolve([] as { vendor: string; packageName: string }[])
+      : prisma.$queryRaw<{ vendor: string; packageName: string }[]>`
+          SELECT DISTINCT vendor, "packageName" FROM "NVDAffectedPackage"
+          WHERE vendor LIKE ANY(${vendorPatterns}::text[])
+          ORDER BY vendor, "packageName" LIMIT ${limit}`,
   ]);
 
-  const names = new Set<string>();
-  for (const r of nvdRows) names.add(r.packageName);
-  for (const r of osvRows) names.add(r.packageName);
-  for (const r of cnaRows) names.add(r.product);
-  return [...names].sort((a, b) => a.localeCompare(b)).slice(0, limit);
+  const typed = prefix.trim().toLowerCase();
+  const found = new Map<string, Suggestion & { tier: number }>();
+  const add = (name: string, source: SuggestionSource, matchedBy: 'name' | 'vendor', vendor?: string) => {
+    const tier = matchedBy === 'vendor' ? 2 : name.toLowerCase() === typed ? 0 : 1;
+    const entry = found.get(name) ?? { name, sources: [], vendors: [], ecosystems: [], matchedBy, tier };
+    if (!entry.sources.includes(source)) entry.sources.push(source);
+    if (vendor && !entry.vendors.includes(vendor)) entry.vendors.push(vendor);
+    if (tier < entry.tier) { entry.tier = tier; entry.matchedBy = matchedBy; }
+    found.set(name, entry);
+  };
+  for (const r of nvdRows) add(r.packageName, 'nvd', 'name');
+  for (const r of osvRows) add(r.packageName, 'osv', 'name');
+  for (const r of cnaRows) add(r.product, 'cna', 'name');
+  for (const r of vendorRows) add(r.packageName, 'nvd', 'vendor', r.vendor);
+
+  // The name typed exactly first, then names that start with it, then the
+  // products of a vendor of that name.
+  const top = [...found.values()]
+    .sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name))
+    .slice(0, limit);
+  await addSuggestionOrigins(top);
+  return top.map(({ tier: _tier, ...suggestion }) => suggestion);
+}
+
+/**
+ * Adds to each suggestion whose vendor or ecosystem the search did not already
+ * give: the CPE / CNA vendors its name is found under and the ecosystem
+ * families of the OSV packages with that name, so every suggestion says whose
+ * product it is, not only the ones matched through a vendor.
+ *
+ * Equality lookups on the few names being returned, run in Postgres: "linux_kernel"
+ * alone has tens of thousands of rows, which must not be pulled into Node.
+ */
+async function addSuggestionOrigins(list: Suggestion[]): Promise<void> {
+  const namesFrom = (source: SuggestionSource) => list.filter((s) => s.sources.includes(source)).map((s) => s.name);
+  const nvdNames = namesFrom('nvd');
+  const cnaNames = namesFrom('cna');
+  const osvNames = namesFrom('osv');
+  const [nvd, cna, osv] = await Promise.all([
+    nvdNames.length === 0
+      ? Promise.resolve([] as { name: string; vendor: string }[])
+      : prisma.$queryRaw<{ name: string; vendor: string }[]>`
+          SELECT DISTINCT "packageName" AS name, vendor FROM "NVDAffectedPackage"
+          WHERE "packageName" = ANY(${nvdNames}::text[]) AND vendor IS NOT NULL`,
+    cnaNames.length === 0
+      ? Promise.resolve([] as { name: string; vendor: string }[])
+      : prisma.$queryRaw<{ name: string; vendor: string }[]>`
+          SELECT DISTINCT product AS name, vendor FROM "CnaAffectedProduct"
+          WHERE product = ANY(${cnaNames}::text[])`,
+    osvNames.length === 0
+      ? Promise.resolve([] as { name: string; ecosystem: string }[])
+      : prisma.$queryRaw<{ name: string; ecosystem: string }[]>`
+          SELECT DISTINCT "packageName" AS name, ecosystem FROM "OSVAffectedPackage"
+          WHERE "packageName" = ANY(${osvNames}::text[])`,
+  ]);
+
+  const byName = new Map(list.map((s) => [s.name, s]));
+  // A vendor the typed text matched stays first; the others follow alphabetically.
+  const matched = new Map(list.map((s) => [s.name, [...s.vendors]]));
+  for (const r of [...nvd, ...cna]) {
+    const s = byName.get(r.name);
+    if (s && !s.vendors.includes(r.vendor)) s.vendors.push(r.vendor);
+  }
+  for (const s of list) {
+    const first = matched.get(s.name) ?? [];
+    s.vendors = [...first, ...s.vendors.filter((v) => !first.includes(v)).sort((a, b) => a.localeCompare(b))];
+  }
+  // "Debian:12" and "Debian:11" are one family for a badge.
+  for (const r of osv) {
+    const s = byName.get(r.name);
+    const family = r.ecosystem.split(':')[0];
+    if (s && !s.ecosystems.includes(family)) s.ecosystems.push(family);
+  }
+  for (const s of list) s.ecosystems.sort((a, b) => a.localeCompare(b));
 }
 
 // NVD's <product> CPE token is lowercase/underscore ("firepower_management_center"),
@@ -983,8 +1087,8 @@ async function findCpeForCve(cveId: string, product: string): Promise<{ cpe: str
 export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
   fastify.get('/vulnerabilities/suggest', async (request) => {
     const params = suggestSchema.parse(request.query);
-    const suggestions = await suggestPackageNames(params.q, params.ecosystem, params.limit);
-    return { suggestions };
+    const details = await suggestPackageNames(params.q, params.ecosystem, params.limit);
+    return { suggestions: details.map((d) => d.name), details };
   });
 
   fastify.get('/vulnerabilities/:id/cpe', async (request, reply) => {
