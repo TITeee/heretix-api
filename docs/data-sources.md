@@ -66,6 +66,23 @@ NVD sometimes uses several CPE product names for one product, e.g. after an acqu
 
 The file has the full list. Add an alias only after confirming that the target names exist in `NVDAffectedPackage`.
 
+### Product catalog
+
+[src/config/product-catalog.ts](../src/config/product-catalog.ts) lists the products people register by hand (network devices, middleware, tools), each with the vendor and product the data files it under. A client such as heretix-management can offer it as a picker, so a user does not have to know that BIG-IP is `f5` and some ninety `big-ip_…` names in NVD, or that `automation` is both ivanti's and nintex's product.
+
+An entry names its pairs exactly:
+
+| Field | Meaning |
+|---|---|
+| `name` | Shown, and stored as the package name. Matched case-sensitively; unique; never a `PRODUCT_ALIASES` key |
+| `nvd` | NVD CPE `vendor` with exact `products`, or `productPrefixes` (with `excludePrefixes`) for a family NVD splits into many names |
+| `cna` | The CVE records' `vendors` (they spell one vendor several ways) and `products` |
+| `aliases`, `versionHint` | Other names to find it by; a version as the vendor writes it |
+
+The catalog covers products NVD and the CVE records cover. A product with its own vendor-advisory fetcher is picked from the Advisory list, which searches those advisories only; the two are not merged so that where a result comes from stays visible.
+
+After changing the catalog, run `pnpm build && pnpm validate:catalog`. It checks the catalog's structure and that every listed NVD product, product prefix and CNA vendor or product has rows in the database, and warns about NVD products of a listed vendor that look like a listed one but are not covered (plugins, components and sibling products usually; add one if it is the same product).
+
 ## OSV
 
 Fetcher: [src/worker/osv-fetcher.ts](../src/worker/osv-fetcher.ts). Source: the OSV API and its per-ecosystem bulk exports.
