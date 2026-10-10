@@ -175,7 +175,14 @@ export function normalizeVersion(version: string): bigint | null {
   // Extract RPM release number if hyphen is followed by a pure integer (e.g. "6" in "2.9.13-6.el9")
   // Pre-release identifiers starting with a letter are excluded by hasPrerelease check above
   const releaseMatch = !hasPrerelease ? parts[1]?.match(/^(\d+)/) : null;
-  const release = releaseMatch ? parseInt(releaseMatch[1], 10) : 0;
+  // A 4th dotted component ("15.1.10.8", "138.53.6.158") takes the release slot when no
+  // RPM-style "-N" release is there. It is left out (as it always was) when the number
+  // above 999 would be clamped in a slot before it -- Chrome's "120.0.6099.109" and
+  // "120.0.6200.50" both clamp to 120.0.999, and ordering them by the 4th number
+  // alone would be wrong -- and above 999 itself ("2.0.0.20230101", a date or build stamp).
+  const dotted = versionOnly.match(/^[vV]?(\d+)\.(\d+)\.(\d+)\.(\d{1,3})$/);
+  const fourth = dotted && Number(dotted[2]) <= 999 && Number(dotted[3]) <= 999 ? dotted[4] : undefined;
+  const release = releaseMatch ? parseInt(releaseMatch[1], 10) : fourth ? parseInt(fourth, 10) : 0;
 
   // Check for abnormally large values (timestamps, Git hashes, etc.) -- beyond
   // this, treat as garbage and reject rather than clamp.

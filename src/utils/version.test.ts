@@ -226,3 +226,35 @@ describe('qualifyJunosVersion', () => {
     expect(qualifyJunosVersion('12.3x48', 'r1')).toBeNull();
   });
 });
+
+describe('normalizeVersion: a 4th dotted component', () => {
+  const ordered = (...versions: string[]) => {
+    const encoded = versions.map(v => normalizeVersion(v) as bigint);
+    for (let i = 1; i < encoded.length; i++) {
+      expect(encoded[i - 1], `${versions[i - 1]} < ${versions[i]}`).toBeLessThan(encoded[i]);
+    }
+  };
+
+  it('orders the builds of a release (F5 BIG-IP, Aruba, WSO2)', () => {
+    ordered('15.1.10', '15.1.10.1', '15.1.10.7', '15.1.10.8', '15.1.11');
+    expect(normalizeVersion('15.1.10.8')).toBe(15_001_010_008n);
+  });
+
+  it('puts the 4th component in the release slot, only when there is no hyphen release', () => {
+    expect(normalizeVersion('1.2.3.4')).toBe(normalizeVersion('1.2.3-4'));
+    expect(normalizeVersion('1.2.3.4-5')).toBe(normalizeVersion('1.2.3-5'));
+  });
+
+  it('keeps ignoring a 4th component that is a date or a build stamp', () => {
+    expect(normalizeVersion('2.0.0.20230101')).toBe(normalizeVersion('2.0.0'));
+    expect(normalizeVersion('2.0.0.1000')).toBe(normalizeVersion('2.0.0'));
+  });
+
+  it('keeps ignoring it where an earlier component is clamped (Chrome 120.0.6099.109 against 120.0.6200.50)', () => {
+    expect(normalizeVersion('120.0.6099.109')).toBe(normalizeVersion('120.0.6200.50'));
+  });
+
+  it('still ignores a 5th component', () => {
+    expect(normalizeVersion('1.2.3.4.5')).toBe(normalizeVersion('1.2.3'));
+  });
+});

@@ -23,7 +23,8 @@
  * candidate-row query is idempotent, per its own file).
  *
  * Usage:
- *   pnpm migrate:all
+ *   pnpm migrate:all               # the scripts the server waits for
+ *   pnpm migrate:all --background  # migrate-background-* scripts, run while the server is up
  */
 import 'dotenv/config';
 import { execFileSync } from 'node:child_process';
@@ -34,10 +35,18 @@ import { closeDb, prisma } from '../db/client.js';
 
 const SELF = 'migrate-all.js';
 
+// A script named migrate-background-*.js is slow enough (minutes on a full
+// database) that holding the server back for it is worse than a short stretch of
+// old and new values side by side. migrate-all runs the others before the server
+// starts; `migrate-all --background` runs these, from the entrypoint, while the
+// server is already up. Both record a script in DataMigration once it succeeds.
+const BACKGROUND_PREFIX = 'migrate-background-';
+const background = process.argv.includes('--background');
+
 async function main() {
   const here = dirname(fileURLToPath(import.meta.url));
   const scripts = readdirSync(here)
-    .filter((f) => f.startsWith('migrate-') && f.endsWith('.js') && f !== SELF)
+    .filter((f) => f.startsWith('migrate-') && f.endsWith('.js') && f !== SELF && f.startsWith(BACKGROUND_PREFIX) === background)
     .sort();
 
   const applied = new Set((await prisma.dataMigration.findMany({ select: { name: true } })).map(r => r.name));
