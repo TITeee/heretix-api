@@ -201,7 +201,24 @@ const NETSCALER_ALIASES: Record<string, string[]> = Object.fromEntries(
   NETSCALER_PRODUCTS.flatMap(({ keys, names }) => keys.map(key => [key, names])),
 );
 
+// Juniper. The CVE records name the products "Junos OS" / "Junos OS Evolved" /
+// "Junos Space", NVD's CPEs junos / junos_os_evolved / junos_space. A search by one
+// spelling has to reach the other: the NVD rows are where the older Junos CVEs
+// (J-Web, CVE-2023-36844 and the like) are, the CVE records are where the newer
+// ones are. Each list holds the NVD token as well, as for NetScaler.
+const JUNOS_PRODUCTS = ['junos', 'Junos OS'];
+const JUNOS_EVOLVED_PRODUCTS = ['junos_os_evolved', 'Junos OS Evolved'];
+const JUNOS_SPACE_PRODUCTS = ['junos_space', 'Junos Space'];
+
 export const PRODUCT_ALIASES: Record<string, string[]> = {
+  // ── Juniper ────────────────────────────────────────────────────────────────
+  'junos': JUNOS_PRODUCTS,
+  'junos os': JUNOS_PRODUCTS,
+  'junos_os_evolved': JUNOS_EVOLVED_PRODUCTS,
+  'junos os evolved': JUNOS_EVOLVED_PRODUCTS,
+  'junos_space': JUNOS_SPACE_PRODUCTS,
+  'junos space': JUNOS_SPACE_PRODUCTS,
+
   // ── VMware vCenter (Broadcom) ────────────────────────────────────────────────
   'vmware vcenter server': VCENTER_PRODUCTS,
   'vmware vcenter': VCENTER_PRODUCTS,

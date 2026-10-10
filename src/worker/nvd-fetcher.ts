@@ -2,7 +2,7 @@ import axios from 'axios';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
 import { createManyChunked } from '../db/bulk-insert.js';
-import { normalizeVersion } from '../utils/version.js';
+import { normalizeVersion, qualifyJunosVersion } from '../utils/version.js';
 import { computeExactVersion } from './nvd-helpers.js';
 import type { Prisma } from '@prisma/client';
 
@@ -642,9 +642,14 @@ export async function importNVDData(cveItem: NVDCveItem): Promise<'inserted' | '
           && match.versionStartIncluding !== undefined
           && match.versionEndIncluding !== undefined
           && match.versionStartIncluding === match.versionEndIncluding;
-        const qualifiedVersion = isQualifiablePointRange && updateQualifier
-          ? qualifyPointVersion(match.versionStartIncluding!, updateQualifier)
+        // Junos lists each affected release as its own CPE, the service release in the
+        // update field ("junos:21.2:r1-s1") and no range fields at all.
+        const junosVersion = updateQualifier !== null && cpeVersion && !hasRangeFields
+          ? qualifyJunosVersion(cpeVersion, updateQualifier)
           : null;
+        const qualifiedVersion = junosVersion ?? (isQualifiablePointRange && updateQualifier
+          ? qualifyPointVersion(match.versionStartIncluding!, updateQualifier)
+          : null);
 
         const vsi = qualifiedVersion ?? match.versionStartIncluding ?? pointVersion ?? null;
         const vei = qualifiedVersion ?? match.versionEndIncluding ?? pointVersion ?? null;

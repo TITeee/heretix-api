@@ -73,6 +73,24 @@ function labelledVersion(version: string):
  * git hashes) rather than clamped, since clamping those would treat obvious
  * garbage as a real, comparable version.
  */
+/**
+ * The Junos version a CPE spells as a version and an update field:
+ * `junos:21.2:r1-s1` is 21.2R1-S1 and `junos:12.3x48:d105` is 12.3X48-D105. NVD lists
+ * every affected Junos release as its own CPE this way. Null when the pair is not one.
+ */
+export function qualifyJunosVersion(base: string, update: string): string | null {
+  const b = base.trim();
+  const u = update.trim();
+  const release = u.match(/^r(\d{1,3})(?:-s(\d{1,3}))?$/i);
+  if (release && /^\d{1,3}\.\d{1,3}$/.test(b)) {
+    return `${b}R${release[1]}${release[2] ? `-S${release[2]}` : ''}`;
+  }
+  const build = u.match(/^d(\d{1,3})$/i);
+  const train = b.match(/^(\d{1,3}\.\d{1,3})x(\d{1,3})$/i);
+  if (build && train) return `${train[1]}X${train[2]}-D${build[1]}`;
+  return null;
+}
+
 export function normalizeVersion(version: string): bigint | null {
   // Strip epoch prefix ("1:0.1.15-..." -> "0.1.15-...")
   let withoutEpoch = version.replace(/^\d+:/, '');
@@ -110,6 +128,19 @@ export function normalizeVersion(version: string): bigint | null {
       const sub = letter ? `-${letter.charCodeAt(0) - 96}` : '';
       return `.${u}${sub}`;
     });
+  }
+
+  // Junos: "21.2R3-S9" is release 3 of 21.2 plus its ninth service release, and
+  // "12.3X48-D105" is the X48 train's D105 build. The release (or train) number goes
+  // into the patch slot and the service release (or D build) into the release slot:
+  // 21.2R3 < 21.2R3-S1 < 21.2R3-S9 < 21.2R4. The generic label rule below would drop
+  // the service release, and so read every S level of a release as the same version
+  // (a fix in R3-S9 would never be told apart from R3-S8). A "-EVO" suffix (Junos
+  // Evolved) takes no part in the order.
+  const junos = withoutEpoch.match(/^(\d{1,3})\.(\d{1,3})([RrXx])(\d{1,3})(?:-([SsDd])(\d{1,3}))?(?:-EVO)?$/);
+  if (junos) {
+    const [, maj, min, , train, , service] = junos;
+    return BigInt(maj) * 1_000_000_000n + BigInt(min) * 1_000_000n + BigInt(train) * 1_000n + BigInt(service ?? 0);
   }
 
   // A label attached straight to the number ("6.0.18rc1", "7.4p1", "17.3R3").
