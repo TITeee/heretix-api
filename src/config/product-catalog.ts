@@ -213,6 +213,178 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     nvd: [{ vendor: 'nintex', products: ['automation'] }],
     cna: [{ vendors: ['Nintex'], products: ['Automation'] }],
   },
+  // ── Added: network ──────────────────────────────────────────────────────
+  {
+    id: 'pfsense', name: 'pfSense', vendor: 'Netgate', product: 'pfSense', category: 'network',
+    aliases: ['netgate pfsense'], versionHint: '2.7.2',
+    // NVD files the same product under two vendors (the project's, then Netgate's) and names
+    // the Community Edition and Plus apart. Not the add-on packages (pfsense-pkg-*, pfsense_acme_package).
+    nvd: [
+      { vendor: 'netgate', products: ['pfsense', 'pfsense_ce', 'pfsense_plus'] },
+      { vendor: 'pfsense', products: ['pfsense', 'pfsense_plus'] },
+    ],
+    cna: [],
+  },
+  {
+    id: 'opnsense', name: 'OPNsense', vendor: 'OPNsense', product: 'OPNsense', category: 'network',
+    aliases: [], versionHint: '24.1',
+    nvd: [{ vendor: 'opnsense', products: ['opnsense'] }],
+    cna: [{ vendors: ['OPNsense'], products: ['OPNsense'] }],
+  },
+  {
+    id: 'openvpn', name: 'OpenVPN', vendor: 'OpenVPN', product: 'OpenVPN', category: 'network',
+    aliases: [], versionHint: '2.6.8',
+    // Not OpenVPN Connect (the client) nor Access Server: separate products.
+    nvd: [{ vendor: 'openvpn', products: ['openvpn'] }],
+    cna: [{ vendors: ['OpenVPN', 'Openvpn'], products: ['OpenVPN'] }],
+  },
+  {
+    id: 'strongswan', name: 'strongSwan', vendor: 'strongSwan', product: 'strongSwan', category: 'network',
+    aliases: [], versionHint: '5.9.13',
+    nvd: [{ vendor: 'strongswan', products: ['strongswan'] }],
+    cna: [{ vendors: ['strongSwan'], products: ['strongSwan'] }],
+  },
+  {
+    id: 'aruba-arubaos-cx', name: 'Aruba ArubaOS-CX', vendor: 'Aruba', product: 'ArubaOS-CX', category: 'network',
+    aliases: ['aos-cx', 'arubaos cx'], versionHint: '10.13.1000',
+    nvd: [{ vendor: 'hpe', products: ['arubaos-cx'] }],
+    cna: [],
+  },
+
+  // ── Added: middleware and platforms ─────────────────────────────────────
+  {
+    id: 'citrix-xenserver', name: 'Citrix XenServer', vendor: 'Citrix', product: 'XenServer', category: 'middleware',
+    aliases: ['xenserver', 'xen server'], versionHint: '8.2',
+    nvd: [{ vendor: 'citrix', products: ['xenserver'] }],
+    cna: [],
+  },
+  {
+    id: 'envoy-proxy', name: 'Envoy Proxy', vendor: 'Envoy', product: 'Envoy Proxy', category: 'middleware',
+    aliases: ['envoy'], versionHint: '1.29.2',
+    nvd: [{ vendor: 'envoyproxy', products: ['envoy'] }],
+    cna: [],
+  },
+  {
+    id: 'haproxy', name: 'HAProxy', vendor: 'HAProxy', product: 'HAProxy', category: 'middleware',
+    aliases: [], versionHint: '2.9.6',
+    // Not the Kubernetes Ingress Controller, a separate product.
+    nvd: [{ vendor: 'haproxy', products: ['haproxy'] }],
+    cna: [{ vendors: ['HAProxy', 'haproxy', 'HAProxy Technologies'], products: ['HAProxy', 'haproxy', 'HAProxy Community Edition'] }],
+  },
+  {
+    id: 'traefik', name: 'Traefik', vendor: 'Traefik', product: 'Traefik', category: 'middleware',
+    aliases: [], versionHint: '3.0.0',
+    nvd: [{ vendor: 'traefik', products: ['traefik'] }],
+    cna: [{ vendors: ['traefik'], products: ['traefik'] }],
+  },
+  {
+    id: 'eclipse-jetty', name: 'Eclipse Jetty', vendor: 'Eclipse', product: 'Jetty', category: 'middleware',
+    aliases: ['jetty'], versionHint: '12.0.8',
+    nvd: [{ vendor: 'eclipse', products: ['jetty'] }],
+    cna: [{ vendors: ['Eclipse Foundation'], products: ['Eclipse Jetty', 'Eclipse Jetty - EE8', 'Eclipse Jetty - EE9', 'Jetty'] }],
+  },
+  {
+    id: 'nodejs', name: 'Node.js', vendor: 'OpenJS Foundation', product: 'Node.js', category: 'middleware',
+    aliases: ['nodejs', 'node'], versionHint: '20.11.1',
+    nvd: [{ vendor: 'nodejs', products: ['node.js'] }],
+    cna: [{ vendors: ['The Node.js Project'], products: ['Node.js'] }],
+  },
+  {
+    id: 'kubernetes', name: 'Kubernetes', vendor: 'Kubernetes', product: 'Kubernetes', category: 'middleware',
+    aliases: [], versionHint: '1.29.2',
+    nvd: [{ vendor: 'kubernetes', products: ['kubernetes'] }],
+    cna: [],
+  },
+
+  // ── Added: database ─────────────────────────────────────────────────────
+  {
+    id: 'mariadb', name: 'MariaDB', vendor: 'MariaDB', product: 'MariaDB', category: 'database',
+    aliases: [], versionHint: '10.11.6',
+    nvd: [{ vendor: 'mariadb', products: ['mariadb'] }],
+    cna: [{ vendors: ['MariaDB'], products: ['MariaDB'] }],
+  },
+  {
+    id: 'redis', name: 'Redis', vendor: 'Redis', product: 'Redis', category: 'database',
+    aliases: [], versionHint: '7.2.4',
+    // Not Redis Software (Enterprise), the commercial product, nor the redis-parser library.
+    nvd: [{ vendor: 'redis', products: ['redis'] }],
+    cna: [{ vendors: ['Redis'], products: ['Redis'] }],
+  },
+  {
+    id: 'couchbase-server', name: 'Couchbase Server', vendor: 'Couchbase', product: 'Couchbase Server', category: 'database',
+    aliases: ['couchbase'], versionHint: '7.2.4',
+    nvd: [{ vendor: 'couchbase', products: ['couchbase_server'] }],
+    cna: [],
+  },
+
+  // ── Added: DevOps and monitoring ────────────────────────────────────────
+  {
+    id: 'jetbrains-teamcity', name: 'JetBrains TeamCity', vendor: 'JetBrains', product: 'TeamCity', category: 'devops',
+    aliases: ['teamcity'], versionHint: '2024.03',
+    nvd: [{ vendor: 'jetbrains', products: ['teamcity'] }],
+    cna: [{ vendors: ['JetBrains'], products: ['TeamCity'] }],
+  },
+  {
+    id: 'jfrog-artifactory', name: 'JFrog Artifactory', vendor: 'JFrog', product: 'Artifactory', category: 'devops',
+    aliases: ['artifactory'], versionHint: '7.77.8',
+    nvd: [{ vendor: 'jfrog', products: ['artifactory'] }],
+    cna: [{ vendors: ['jfrog'], products: ['artifactory'] }],
+  },
+  {
+    id: 'sonatype-nexus-repository', name: 'Sonatype Nexus Repository', vendor: 'Sonatype', product: 'Nexus Repository', category: 'devops',
+    aliases: ['nexus', 'nexus repository manager', 'nexus3'], versionHint: '3.66.0',
+    nvd: [{ vendor: 'sonatype', products: ['nexus_repository_manager'] }],
+    cna: [{ vendors: ['Sonatype'], products: ['Nexus Repository 3', 'Nexus Repository', 'Nexus Repository Manager'] }],
+  },
+  {
+    id: 'hashicorp-vault', name: 'HashiCorp Vault', vendor: 'HashiCorp', product: 'Vault', category: 'devops',
+    aliases: ['vault'], versionHint: '1.15.4',
+    nvd: [{ vendor: 'hashicorp', products: ['vault'] }],
+    cna: [{ vendors: ['HashiCorp'], products: ['Vault', 'Vault Enterprise'] }],
+  },
+  {
+    id: 'checkmk', name: 'Checkmk', vendor: 'Checkmk', product: 'Checkmk', category: 'devops',
+    aliases: ['check_mk'], versionHint: '2.2.0p23',
+    nvd: [{ vendor: 'checkmk', products: ['checkmk'] }],
+    cna: [{ vendors: ['Checkmk GmbH'], products: ['Checkmk'] }],
+  },
+  {
+    id: 'solarwinds-orion-platform', name: 'SolarWinds Orion Platform', vendor: 'SolarWinds', product: 'Orion Platform', category: 'devops',
+    aliases: ['orion'], versionHint: '2023.4.1',
+    nvd: [{ vendor: 'solarwinds', products: ['orion_platform'] }],
+    cna: [],
+  },
+
+  // ── Added: applications ─────────────────────────────────────────────────
+  {
+    id: 'atlassian-jira', name: 'Atlassian Jira', vendor: 'Atlassian', product: 'Jira', category: 'application',
+    aliases: ['jira', 'jira software'], versionHint: '9.12.4',
+    // NVD names the editions apart: Jira (the old name), Server, Data Center, and both together.
+    // The CVE records only name Data Center sub-products (Jira Service Management ...), so none is listed.
+    // Not Jira Align or the integrations and add-ons (jira_comment, jira_create, ...).
+    nvd: [{ vendor: 'atlassian', products: ['jira', 'jira_server', 'jira_data_center', 'jira_server_and_data_center'] }],
+    cna: [],
+  },
+  {
+    id: 'trendmicro-apex-one', name: 'Trend Micro Apex One', vendor: 'Trend Micro', product: 'Apex One', category: 'application',
+    aliases: ['apex one', 'apexone', 'officescan'], versionHint: '14.0.12',
+    // OfficeScan is the earlier name of the same product; NVD keeps both.
+    nvd: [{ vendor: 'trendmicro', products: ['apex_one', 'officescan'] }],
+    cna: [],
+  },
+  {
+    id: 'mcafee-epo', name: 'McAfee ePolicy Orchestrator', vendor: 'McAfee', product: 'ePolicy Orchestrator', category: 'application',
+    aliases: ['epo', 'mcafee epo', 'trellix epo'], versionHint: '5.10.0',
+    nvd: [{ vendor: 'mcafee', products: ['epolicy_orchestrator'] }],
+    cna: [],
+  },
+  {
+    id: 'veeam-backup-replication', name: 'Veeam Backup & Replication', vendor: 'Veeam', product: 'Backup & Replication', category: 'application',
+    aliases: ['veeam', 'vbr'], versionHint: '12.1.0.2131',
+    // NVD's CPE keeps the escaped ampersand: veeam_backup_\&_replication.
+    nvd: [{ vendor: 'veeam', products: ['veeam_backup_\\&_replication'] }],
+    cna: [{ vendors: ['Veeam'], products: ['Backup and Replication'] }],
+  },
 ];
 
 const BY_NAME = new Map(CATALOG_ENTRIES.map(e => [e.name, e]));
