@@ -98,6 +98,10 @@ pnpm db:migrate    # apply Prisma migrations
 pnpm db:studio     # browse the database at http://localhost:5555
 ```
 
+### Indexes Prisma does not manage
+
+The name suggestions (`/vulnerabilities/suggest`) match a prefix on `lower(name)`. Unless the database uses the `C` collation, a plain index cannot serve `LIKE 'x%'`, so migration `20261010150000_add_lowercase_prefix_indexes` adds `lower(...) text_pattern_ops` indexes on `NVDAffectedPackage` (`packageName`, `vendor`), `OSVAffectedPackage` (`packageName`) and `CnaAffectedProduct` (`product`). Prisma's schema cannot express an expression index and ignores one when it compares the database with `schema.prisma`, so they do not appear there and `prisma migrate dev` leaves them alone. They take a few seconds per million rows to build and hold a write lock on their table meanwhile, so the first start after the upgrade builds them before any import runs. A second migration, `20261010150100_analyze_prefix_search_tables`, analyzes the three tables: until a table is analyzed the planner ignores the new indexes. Without the indexes the suggestions still work, only slowly (two to five seconds on a database with millions of rows).
+
 ## Troubleshooting
 
 **`P1001: Can't reach database server`**: check `DATABASE_URL`, check that PostgreSQL is running, and check firewall / security group rules.

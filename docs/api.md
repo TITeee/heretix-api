@@ -211,7 +211,7 @@ GET /api/v1/vulnerabilities/suggest
 
 How `q` is matched:
 
-- The prefix is tried as typed, in lowercase, in uppercase and in Title Case, so `HTTP_S`, `Connect Secure` and `br-6208` find `http_server`, `Connect Secure` and `BR-6208AC`.
+- The prefix is matched on the lowercase name, so case does not matter: `HTTP_S`, `Connect Secure` and `br-6208` find `http_server`, `Connect Secure` and `BR-6208AC`.
 - A space also matches `_` and `-` (`connect secure` finds `connect_secure`, `big ip` finds `big-ip_…`). A typed `%` or `_` matches itself.
 - A prefix that is a CPE vendor (`ivanti`, `palo alto`) also lists that vendor's NVD products, after the names that match what was typed. Without an `ecosystem` only; the CPE vendor belongs to NVD.
 - Order: the name typed exactly, then names starting with it, then a vendor's products; alphabetical within each.

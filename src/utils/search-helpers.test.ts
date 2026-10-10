@@ -605,19 +605,17 @@ describe('filterBySeverity', () => {
 });
 
 describe('suggestPrefixVariants', () => {
-  it('tries the typed prefix as written, lowercase, with spaces joined, uppercase and Title Case', () => {
-    expect(suggestPrefixVariants('Connect secure')).toEqual([
-      'Connect secure', 'connect secure', 'connect_secure', 'connect-secure', 'CONNECT SECURE', 'Connect Secure',
-    ]);
+  it('matches in lowercase, with spaces as they are, as "_" and as "-"', () => {
+    expect(suggestPrefixVariants('Connect secure')).toEqual(['connect secure', 'connect_secure', 'connect-secure']);
   });
 
   it('does not repeat a spelling, and ignores surrounding whitespace', () => {
-    expect(suggestPrefixVariants('  nginx ')).toEqual(['nginx', 'NGINX', 'Nginx']);
+    expect(suggestPrefixVariants('  NGINX ')).toEqual(['nginx']);
     expect(suggestPrefixVariants('   ')).toEqual([]);
   });
 
-  it('turns a lowercase model number into its uppercase spelling', () => {
-    expect(suggestPrefixVariants('br-6208')).toContain('BR-6208');
+  it('leaves case to the lowercase match: a model number needs no uppercase variant', () => {
+    expect(suggestPrefixVariants('BR-6208')).toEqual(['br-6208']);
   });
 });
 
