@@ -201,14 +201,32 @@ GET /api/v1/vulnerabilities/suggest
 
 | Parameter | Required | Description |
 |---|---|---|
-| `q` | ✅ | Name prefix (case-sensitive) |
+| `q` | ✅ | Name prefix |
 | `ecosystem` | | Restrict to an ecosystem/vendor prefix |
 | `limit` | | Max suggestions (default 10, max 50) |
 
+How `q` is matched:
+
+- The prefix is tried as typed, in lowercase, in uppercase and in Title Case, so `HTTP_S`, `Connect Secure` and `br-6208` find `http_server`, `Connect Secure` and `BR-6208AC`.
+- A space also matches `_` and `-` (`connect secure` finds `connect_secure`, `big ip` finds `big-ip_…`). A typed `%` or `_` matches itself.
+- A prefix that is a CPE vendor (`ivanti`, `palo alto`) also lists that vendor's NVD products, after the names that match what was typed. Without an `ecosystem` only; the CPE vendor belongs to NVD.
+- Order: the name typed exactly, then names starting with it, then a vendor's products; alphabetical within each.
+
+`details` says where each suggestion was found; `suggestions` is the same names as plain strings.
+
 ```bash
-curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/suggest?q=lodash"
-# → { "suggestions": ["lodash", "lodash-amd", "lodash-es", ...] }
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/suggest?q=ivanti&limit=3"
+# → { "suggestions": ["connect_secure", "endpoint_manager", ...],
+#     "details": [{ "name": "connect_secure", "sources": ["nvd"], "vendors": ["ivanti"], "ecosystems": [], "matchedBy": "vendor" }, ...] }
 ```
+
+| `details` field | Meaning |
+|---|---|
+| `name` | The suggested name |
+| `sources` | Where the name was found: `nvd`, `osv` or `cna` |
+| `vendors` | CPE (NVD) and CNA vendors the name is found under, all of them; a vendor the prefix matched comes first |
+| `ecosystems` | Ecosystem families of the OSV packages with this name (`Debian`, `npm`), without the version |
+| `matchedBy` | `name` (the prefix matched the name) or `vendor` (the prefix matched the vendor) |
 
 ## Vulnerability detail
 

@@ -500,3 +500,45 @@ export function matchesRpmVersionRange(
   if (row.versionStart && compareRpmVersions(version, row.versionStart) < 0) return false;
   return true;
 }
+
+/**
+ * The spellings a typed prefix is tried under when suggesting product names.
+ *
+ * A name is stored in whatever case its source wrote it: NVD's CPE product is
+ * lowercase with underscores ("connect_secure"), a CNA product reads like
+ * "Connect Secure" or "BR-6208AC", and an OSV package keeps its registry's
+ * spelling. A prefix is matched case-sensitively so the packageName index
+ * stays usable, so one typed prefix is turned into the few spellings people
+ * actually mean instead of being compared case-insensitively: as typed, in
+ * lowercase, with spaces as "_" or "-", in uppercase, and in Title Case.
+ */
+export function suggestPrefixVariants(q: string): string[] {
+  const typed = q.trim();
+  if (!typed) return [];
+  const lower = typed.toLowerCase();
+  const titled = lower.replace(/(^|[\s_-])([a-z])/g, (_m, sep: string, c: string) => sep + c.toUpperCase());
+  return [...new Set([
+    typed,
+    lower,
+    lower.replace(/\s+/g, '_'),
+    lower.replace(/\s+/g, '-'),
+    typed.toUpperCase(),
+    titled,
+  ])];
+}
+
+/**
+ * The spellings a typed prefix is tried under against a CPE vendor ("ivanti",
+ * "paloaltonetworks", "palo_alto_networks"), which is always lowercase: a
+ * space is dropped, or becomes "_" or "-".
+ */
+export function suggestVendorVariants(q: string): string[] {
+  const lower = q.trim().toLowerCase();
+  if (!lower) return [];
+  return [...new Set([lower, lower.replace(/\s+/g, ''), lower.replace(/\s+/g, '_'), lower.replace(/\s+/g, '-')])];
+}
+
+/** Escapes LIKE's wildcards so a typed "_" or "%" matches itself. */
+export function escapeLikePattern(s: string): string {
+  return s.replace(/[\\%_]/g, '\\$&');
+}
