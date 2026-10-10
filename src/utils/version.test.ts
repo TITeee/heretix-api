@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeVersion, isValidVersion, isVersionInRange } from './version.js';
+import { normalizeVersion, isValidVersion, isVersionInRange, qualifyJunosVersion } from './version.js';
 
 describe('normalizeVersion', () => {
   it('normalizes a standard semver', () => {
@@ -148,7 +148,20 @@ describe('normalizeVersion', () => {
     });
 
     it('ignores what follows the first hyphen once a label is found', () => {
-      expect(normalizeVersion('17.3R3-S2')).toBe(normalizeVersion('17.3R3'));
+      expect(normalizeVersion('7.4p1-rc2')).toBe(normalizeVersion('7.4p1'));
+    });
+
+    it('orders Junos releases and their service releases', () => {
+      ordered('21.2R3', '21.2R3-S1', '21.2R3-S8', '21.2R3-S9', '21.2R3-S10', '21.2R4', '21.4R1');
+      ordered('17.3R3', '17.3R3-S2', '17.3R10', '17.4R1');
+      // The fix boundary of a service release is told apart from the level before it.
+      expect(normalizeVersion('21.2R3-S9')).not.toBe(normalizeVersion('21.2R3-S8'));
+      expect(normalizeVersion('21.2R3-S9')).toBe(21_002_003_009n);
+    });
+
+    it('orders the Junos X train builds, and ignores the Evolved suffix', () => {
+      ordered('12.3X48', '12.3X48-D20', '12.3X48-D105', '12.3X50');
+      expect(normalizeVersion('22.4R3-S2-EVO')).toBe(normalizeVersion('22.4R3-S2'));
     });
 
     it('leaves opaque identifiers with the encoding they had', () => {
@@ -197,5 +210,19 @@ describe('isVersionInRange', () => {
 
   it('returns false when the target version fails to normalize', () => {
     expect(isVersionInRange('9999999.0.0', '1.0.0', '2.0.0')).toBe(false);
+  });
+});
+
+describe('qualifyJunosVersion', () => {
+  it('joins a Junos CPE version and its update field', () => {
+    expect(qualifyJunosVersion('21.2', 'r1-s1')).toBe('21.2R1-S1');
+    expect(qualifyJunosVersion('20.4', 'r3')).toBe('20.4R3');
+    expect(qualifyJunosVersion('12.3x48', 'd105')).toBe('12.3X48-D105');
+  });
+
+  it('leaves other pairs alone', () => {
+    expect(qualifyJunosVersion('1.5.0', 'update21')).toBeNull();
+    expect(qualifyJunosVersion('21.2', 'beta')).toBeNull();
+    expect(qualifyJunosVersion('12.3x48', 'r1')).toBeNull();
   });
 });

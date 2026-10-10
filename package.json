@@ -53,6 +53,7 @@
     "migrate:remove-withdrawn-osv-packages": "node dist/scripts/migrate-remove-withdrawn-osv-packages.js",
     "migrate:remove-netscaler-cna-build-ranges": "node dist/scripts/migrate-remove-netscaler-cna-build-ranges.js",
     "migrate:recompute-sophos-product-names": "node dist/scripts/migrate-recompute-sophos-product-names.js",
+    "migrate:recompute-junos-versions": "node dist/scripts/migrate-recompute-junos-versions.js",
     "migrate:recompute-osv-pseudo-versions": "node dist/scripts/migrate-recompute-osv-pseudo-versions.js",
     "migrate:backfill-distro-priority": "node dist/scripts/migrate-backfill-distro-priority.js",
     "migrate:normalize-osv-severity": "node dist/scripts/migrate-normalize-osv-severity.js",

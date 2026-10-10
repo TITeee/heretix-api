@@ -217,3 +217,15 @@ describe('PRODUCT_ALIASES data integrity', () => {
     }
   });
 });
+
+describe('Juniper aliases', () => {
+  it('reaches the CVE records and the NVD rows by either spelling', () => {
+    for (const q of ['Junos OS', 'junos']) expect(expandProductAliases(q), q).toEqual(['junos', 'Junos OS']);
+    for (const q of ['Junos OS Evolved', 'junos_os_evolved']) expect(expandProductAliases(q), q).toEqual(['junos_os_evolved', 'Junos OS Evolved']);
+    for (const q of ['Junos Space', 'junos_space']) expect(expandProductAliases(q), q).toEqual(['junos_space', 'Junos Space']);
+  });
+
+  it('keeps Junos OS and Junos OS Evolved apart', () => {
+    expect(expandProductAliases('Junos OS')).not.toContain('junos_os_evolved');
+  });
+});
