@@ -169,6 +169,7 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-
 | `POST /api/v1/vulnerabilities/search/batch` | 最大 1,000 パッケージの一括検索 |
 | `GET /api/v1/vulnerabilities/search/cpe` | CPE 2.3 による検索（NVD） |
 | `GET /api/v1/vulnerabilities/suggest` | パッケージ名の候補 |
+| `GET /api/v1/catalog` | 製品カタログ(選択画面用) |
 | `GET /api/v1/vulnerabilities/:id` | CVE、OSV、ベンダーアドバイザリの ID による詳細の取得 |
 | `GET /api/v1/vulnerabilities/stats` | 件数の統計 |
 | `POST /api/v1/jobs/:source/run`、`PATCH /api/v1/jobs/:source` | 取り込みジョブの手動実行、有効・無効の切り替え |

@@ -686,3 +686,50 @@ describe('GET /api/v1/vulnerabilities/search with a product catalog name', () =>
     expect(found).toEqual(['CVE-2026-8015']);
   });
 });
+
+describe('GET /api/v1/catalog', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  async function catalog(query = '', headers: Record<string, string> = { 'x-api-key': API_KEY }) {
+    const res = await app.inject({ method: 'GET', url: `/api/v1/catalog${query ? `?${query}` : ''}`, headers });
+    return { status: res.statusCode, body: res.json() };
+  }
+
+  it('requires the API key', async () => {
+    expect((await catalog('', {})).status).toBe(401);
+  });
+
+  it('lists the entries, each saying where a search by its name looks', async () => {
+    const { status, body } = await catalog();
+    expect(status).toBe(200);
+    expect(body.total).toBe(body.entries.length);
+    const nintex = body.entries.find((e: { name: string }) => e.name === 'Nintex Automation');
+    expect(nintex).toMatchObject({
+      vendor: 'Nintex', product: 'Automation', category: 'application', sources: ['nvd', 'cna'],
+      nvd: [{ vendor: 'nintex', products: ['automation'] }],
+    });
+  });
+
+  it('finds an entry by a vendor, an alias or text with the separators changed, ignoring case', async () => {
+    expect((await catalog('q=Ivanti')).body.entries.map((e: { name: string }) => e.name)).toEqual(['Ivanti Automation']);
+    expect((await catalog('q=big%20ip')).body.entries.map((e: { name: string }) => e.name)).toEqual(['F5 BIG-IP']);
+    expect((await catalog('q=postgres')).body.entries.map((e: { name: string }) => e.name)).toEqual(['PostgreSQL']);
+  });
+
+  it('filters by category, and limits how many entries come back while still saying how many matched', async () => {
+    const db = await catalog('category=database');
+    expect(db.body.entries.every((e: { category: string }) => e.category === 'database')).toBe(true);
+    const one = await catalog('category=database&limit=1');
+    expect(one.body.entries).toHaveLength(1);
+    expect(one.body.total).toBe(db.body.total);
+  });
+});
