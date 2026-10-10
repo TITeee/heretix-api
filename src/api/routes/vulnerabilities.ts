@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { VENDORS_WITH_OWN_VERSION_ORDER, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
@@ -914,10 +915,10 @@ const cpeForCveSchema = z.object({
  * which matters most when registering an appliance as an asset, where the name
  * has to match exactly for searchCna() to find anything.
  *
- * A prefix is tried under the spellings people mean by it (suggestPrefixVariants:
- * "connect secure" finds connect_secure, "br-6208" finds BR-6208AC) instead of
- * being compared case-insensitively, so each match is still a plain prefix
- * match the packageName index can serve. A prefix that is a CPE vendor ("ivanti")
+ * A prefix is matched on lower(name), so case does not matter, and a space also
+ * matches "_" and "-" (suggestPrefixVariants: "connect secure" finds connect_secure,
+ * "br-6208" finds BR-6208AC). Each match is a plain prefix match that the
+ * lower(name) indexes serve. A prefix that is a CPE vendor ("ivanti")
  * also lists that vendor's products, after the names it matches directly, and
  * only when no ecosystem narrows the search (the CPE vendor belongs to NVD).
  * Each suggestion says where it was found, so a name is never an unexplained
@@ -935,41 +936,58 @@ type Suggestion = {
 };
 
 async function suggestPackageNames(prefix: string, ecosystem: string | undefined, limit: number): Promise<Suggestion[]> {
-  // Prisma's startsWith leaves LIKE's wildcards alone, so a typed "_" or "%" would match any
-  // character; escaped, it matches itself.
-  const variants = suggestPrefixVariants(prefix).map(escapeLikePattern);
-  if (variants.length === 0) return [];
-  const ecosystemFilter = ecosystem ? { ecosystem: { startsWith: ecosystem } } : {};
-  // Case-sensitive startsWith (no `mode: 'insensitive'`), consistent with every
-  // other prefix filter in this file -- Postgres can use the existing
-  // packageName B-tree index for this; ILIKE could not without a separate
-  // case-insensitive index.
-  const where = { OR: variants.map((v) => ({ packageName: { startsWith: v } })), ...ecosystemFilter };
+  // The prefix is matched on lower(name), so case does not matter, and each pattern is
+  // escaped so that a typed "_" or "%" matches itself.
+  const patterns = suggestPrefixVariants(prefix).map((v) => `${escapeLikePattern(v)}%`);
+  if (patterns.length === 0) return [];
+  // One LIKE per pattern, joined by OR, on lower(column): the shape the expression
+  // indexes of migration 20261010150000_add_lowercase_prefix_indexes serve. Under any
+  // collation but "C" a plain index cannot serve LIKE 'x%', and a LIKE ANY(array) cannot
+  // use these either, so a suggestion would read a whole index of millions of rows.
+  const anyOf = (column: string, likes: string[]) =>
+    Prisma.join(likes.map((p) => Prisma.sql`lower(${Prisma.raw(column)}) LIKE ${p}`), ' OR ');
+  const ecosystemCondition = ecosystem
+    ? Prisma.sql`AND ecosystem LIKE ${`${escapeLikePattern(ecosystem)}%`}`
+    : Prisma.empty;
   const vendorPatterns = ecosystem ? [] : suggestVendorVariants(prefix).map((v) => `${escapeLikePattern(v)}%`);
+  // Raw SQL so the DISTINCT and the LIMIT run inside Postgres.
   const [nvdRows, osvRows, cnaRows, vendorRows] = await Promise.all([
-    prisma.nVDAffectedPackage.findMany({
-      where, distinct: ['packageName'], select: { packageName: true }, take: limit, orderBy: { packageName: 'asc' },
-    }),
-    prisma.oSVAffectedPackage.findMany({
-      where, distinct: ['packageName'], select: { packageName: true }, take: limit, orderBy: { packageName: 'asc' },
-    }),
+    prisma.$queryRaw<{ name: string }[]>`
+      SELECT DISTINCT "packageName" AS name FROM "NVDAffectedPackage"
+      WHERE (${anyOf('"packageName"', patterns)}) ${ecosystemCondition}
+      ORDER BY name LIMIT ${limit}`,
+    prisma.$queryRaw<{ name: string }[]>`
+      SELECT DISTINCT "packageName" AS name FROM "OSVAffectedPackage"
+      WHERE (${anyOf('"packageName"', patterns)}) ${ecosystemCondition}
+      ORDER BY name LIMIT ${limit}`,
     // CnaAffectedProduct has no ecosystem column: its rows are products rather
     // than ecosystem packages. An ecosystem-filtered request is asking for that
     // ecosystem's packages, so CNA has nothing to contribute to it.
     ecosystem
-      ? Promise.resolve([])
-      : prisma.cnaAffectedProduct.findMany({
-          where: { OR: variants.map((v) => ({ product: { startsWith: v } })) },
-          distinct: ['product'], select: { product: true }, take: limit, orderBy: { product: 'asc' },
-        }),
-    // Raw SQL so the DISTINCT and the LIMIT run inside Postgres, over the
-    // (vendor, packageName) index: a vendor can own tens of thousands of rows.
+      ? Promise.resolve([] as { name: string }[])
+      : prisma.$queryRaw<{ name: string }[]>`
+          SELECT DISTINCT product AS name FROM "CnaAffectedProduct"
+          WHERE (${anyOf('product', patterns)})
+          ORDER BY name LIMIT ${limit}`,
+    // A vendor can own tens of thousands of rows. The matching vendors are collected first
+    // and cut to `limit`, then each one's products are read in turn. Asking for the first
+    // `limit` (vendor, product) pairs in one go makes Postgres walk the whole
+    // (vendor, packageName) index in vendor order, filtering as it goes: a second and more.
     vendorPatterns.length === 0
       ? Promise.resolve([] as { vendor: string; packageName: string }[])
       : prisma.$queryRaw<{ vendor: string; packageName: string }[]>`
-          SELECT DISTINCT vendor, "packageName" FROM "NVDAffectedPackage"
-          WHERE vendor LIKE ANY(${vendorPatterns}::text[])
-          ORDER BY vendor, "packageName" LIMIT ${limit}`,
+          WITH matched AS MATERIALIZED (
+            SELECT DISTINCT vendor FROM "NVDAffectedPackage"
+            WHERE (${anyOf('vendor', vendorPatterns)}) AND vendor IS NOT NULL
+          ), v AS MATERIALIZED (
+            SELECT vendor FROM matched ORDER BY vendor LIMIT ${limit}
+          )
+          SELECT p.vendor, p."packageName"
+          FROM v CROSS JOIN LATERAL (
+            SELECT DISTINCT vendor, "packageName" FROM "NVDAffectedPackage"
+            WHERE vendor = v.vendor ORDER BY vendor, "packageName" LIMIT ${limit}
+          ) p
+          ORDER BY p.vendor, p."packageName" LIMIT ${limit}`,
   ]);
 
   const typed = prefix.trim().toLowerCase();
@@ -982,9 +1000,9 @@ async function suggestPackageNames(prefix: string, ecosystem: string | undefined
     if (tier < entry.tier) { entry.tier = tier; entry.matchedBy = matchedBy; }
     found.set(name, entry);
   };
-  for (const r of nvdRows) add(r.packageName, 'nvd', 'name');
-  for (const r of osvRows) add(r.packageName, 'osv', 'name');
-  for (const r of cnaRows) add(r.product, 'cna', 'name');
+  for (const r of nvdRows) add(r.name, 'nvd', 'name');
+  for (const r of osvRows) add(r.name, 'osv', 'name');
+  for (const r of cnaRows) add(r.name, 'cna', 'name');
   for (const r of vendorRows) add(r.packageName, 'nvd', 'vendor', r.vendor);
 
   // The name typed exactly first, then names that start with it, then the

@@ -502,29 +502,16 @@ export function matchesRpmVersionRange(
 }
 
 /**
- * The spellings a typed prefix is tried under when suggesting product names.
- *
- * A name is stored in whatever case its source wrote it: NVD's CPE product is
- * lowercase with underscores ("connect_secure"), a CNA product reads like
- * "Connect Secure" or "BR-6208AC", and an OSV package keeps its registry's
- * spelling. A prefix is matched case-sensitively so the packageName index
- * stays usable, so one typed prefix is turned into the few spellings people
- * actually mean instead of being compared case-insensitively: as typed, in
- * lowercase, with spaces as "_" or "-", in uppercase, and in Title Case.
+ * The lowercase patterns a typed prefix is matched under when suggesting product
+ * names, against lower(name): as typed, and with its spaces as "_" or "-" (NVD's
+ * CPE products are lowercase with underscores, "connect_secure"; a CNA product
+ * reads "Connect Secure"; "big-ip_..." mixes both). Case is not a variant: the
+ * match is on lower(name), which the suggestions' expression indexes serve.
  */
 export function suggestPrefixVariants(q: string): string[] {
-  const typed = q.trim();
-  if (!typed) return [];
-  const lower = typed.toLowerCase();
-  const titled = lower.replace(/(^|[\s_-])([a-z])/g, (_m, sep: string, c: string) => sep + c.toUpperCase());
-  return [...new Set([
-    typed,
-    lower,
-    lower.replace(/\s+/g, '_'),
-    lower.replace(/\s+/g, '-'),
-    typed.toUpperCase(),
-    titled,
-  ])];
+  const lower = q.trim().toLowerCase();
+  if (!lower) return [];
+  return [...new Set([lower, lower.replace(/\s+/g, '_'), lower.replace(/\s+/g, '-')])];
 }
 
 /**
