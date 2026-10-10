@@ -82,11 +82,14 @@ Each job run is recorded in `CollectionJob`: status, counts, error message, and 
 When a fix needs to correct rows that were written before it existed, it ships as a `src/scripts/migrate-*.ts` script. Each script is idempotent.
 
 ```bash
-pnpm migrate:all        # run every pending backfill
+pnpm migrate:all        # run every pending backfill the server waits for
+pnpm migrate:all --background  # run the pending migrate-background-* ones
 pnpm migrate:<name>     # run one, e.g. after investigating a failure
 ```
 
-`migrate:all` runs every `dist/scripts/migrate-*.js` that is not yet recorded in `DataMigration`. The Docker entrypoint runs it on every start, after `prisma migrate deploy` and before the server starts. The API therefore does not answer until pending backfills finish. Most take seconds, but some scan every OSV record and take several minutes on a full database (e.g. `migrate-backfill-distro-priority` ~8.5 minutes on ~430k records). Allow for this in orchestrator start-up timeouts and health checks.
+`migrate:all` runs every `dist/scripts/migrate-*.js` (except `migrate-background-*`) that is not yet recorded in `DataMigration`. The Docker entrypoint runs it on every start, after `prisma migrate deploy` and before the server starts. The API therefore does not answer until pending backfills finish. Most take seconds, but some scan every OSV record and take several minutes on a full database (e.g. `migrate-backfill-distro-priority` ~8.5 minutes on ~430k records). Allow for this in orchestrator start-up timeouts and health checks.
+
+A backfill that takes longer than that is named `migrate-background-*`. The entrypoint starts the server first and runs those beside it (`migrate-all --background`), so the API is up while they run. Until one finishes, rows it has not reached still carry the old values and the matching searches give the old answers; a failure is logged and the script runs again on the next start. Add such a script by naming it `migrate-background-<name>.ts`.
 
 ## Database
 

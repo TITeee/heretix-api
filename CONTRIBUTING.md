@@ -32,7 +32,7 @@ Accuracy against official advisories is measured with the `pnpm validate:*` scri
 ## Changing the schema or stored data
 
 - Schema changes go through Prisma migrations (`prisma/migrations/`).
-- To correct rows that are already stored, add an idempotent `src/scripts/migrate-<name>.ts` and a `migrate:<name>` script in `package.json`. `migrate:all` picks it up automatically on the next deploy (see [operations.md](docs/operations.md#one-time-backfills)). If it scans a large table, give a measured run time in the PR.
+- To correct rows that are already stored, add an idempotent `src/scripts/migrate-<name>.ts` and a `migrate:<name>` script in `package.json`. `migrate:all` picks it up automatically on the next deploy (see [operations.md](docs/operations.md#one-time-backfills)). If it scans a large table, give a measured run time in the PR. If it takes more than a few minutes, name it `migrate-background-<name>.ts` so the entrypoint runs it beside the server instead of before it.
 
 ## Adding a vendor advisory source
 

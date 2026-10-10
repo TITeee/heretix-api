@@ -41,9 +41,10 @@ describe('ivantiVersionToInt', () => {
   };
 
   it('tells apart versions that differ only in the 4th component (EPMM)', () => {
-    // normalizeVersion() drops the 4th component, so 12.7.0.0 (affected) and
-    // 12.7.0.1 (fixed) came out equal and the affected one read as fixed.
-    expect(normalizeVersion('12.7.0.0')).toBe(normalizeVersion('12.7.0.1'));
+    // normalizeVersion() used to drop the 4th component, so 12.7.0.0 (affected) and
+    // 12.7.0.1 (fixed) came out equal and the affected one read as fixed. It keeps
+    // it now; the Ivanti order stays separate for the R-train builds around it.
+    expect(normalizeVersion('12.7.0.0')).not.toBe(normalizeVersion('12.7.0.1'));
     ordered('12.7.0.0', '12.7.0.1', '12.8.0.1');
   });
 
