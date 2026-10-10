@@ -583,3 +583,106 @@ describe('GET /api/v1/vulnerabilities/suggest', () => {
     expect((await suggest('q=ivanti_')).suggestions).toEqual([]);
   });
 });
+
+describe('GET /api/v1/vulnerabilities/search with a product catalog name', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  async function ids(query: string): Promise<string[]> {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/vulnerabilities/search?${query}`,
+      headers: { 'x-api-key': API_KEY },
+    });
+    return (res.json().results as { externalId: string }[]).map((r) => r.externalId).sort();
+  }
+
+  async function seedNvd(cveId: string, rows: { vendor: string; packageName: string }[]) {
+    const master = await prisma.vulnerability.create({ data: { cveId, severity: 'HIGH', cvssScore: 7.5 } });
+    const nvd = await prisma.nVDVulnerability.create({ data: { cveId, source: 'nvd', rawData: {}, masterVulnId: master.id } });
+    for (const r of rows) {
+      await prisma.nVDAffectedPackage.create({
+        data: { vulnerabilityId: nvd.id, cpe: `cpe:2.3:a:${r.vendor}:${r.packageName}:*:*:*:*:*:*:*:*`, ...r },
+      });
+    }
+  }
+
+  async function seedCna(cveId: string, vendor: string, product: string) {
+    const master = await prisma.vulnerability.create({ data: { cveId, severity: 'HIGH', cvssScore: 7.5 } });
+    const cna = await prisma.cnaVulnerability.create({
+      data: { cveId, cnaShortName: 'test', rawAffected: [], masterVulnId: master.id },
+    });
+    await prisma.cnaAffectedProduct.create({ data: { vulnerabilityId: cna.id, vendor, product } });
+  }
+
+  it('keeps one vendor\'s product apart from another vendor\'s of the same name', async () => {
+    await seedNvd('CVE-2026-8001', [{ vendor: 'ivanti', packageName: 'automation' }]);
+    await seedNvd('CVE-2026-8002', [{ vendor: 'nintex', packageName: 'automation' }]);
+
+    expect(await ids('package=Ivanti%20Automation')).toEqual(['CVE-2026-8001']);
+    expect(await ids('package=Nintex%20Automation')).toEqual(['CVE-2026-8002']);
+  });
+
+  it('leaves a plain product name searched as before, so existing registrations keep their results', async () => {
+    await seedNvd('CVE-2026-8003', [{ vendor: 'ivanti', packageName: 'automation' }]);
+    await seedNvd('CVE-2026-8004', [{ vendor: 'nintex', packageName: 'automation' }]);
+
+    expect(await ids('package=automation')).toEqual(['CVE-2026-8003', 'CVE-2026-8004']);
+    // The catalog name is matched exactly: another case is just a product name nobody has.
+    expect(await ids('package=ivanti%20automation')).toEqual([]);
+  });
+
+  it('reaches a product family by prefix, but not the excluded next-generation line', async () => {
+    await seedNvd('CVE-2026-8005', [{ vendor: 'f5', packageName: 'big-ip_local_traffic_manager' }]);
+    await seedNvd('CVE-2026-8006', [{ vendor: 'f5', packageName: 'big-ip_i5600_firmware' }]);
+    await seedNvd('CVE-2026-8007', [{ vendor: 'f5', packageName: 'big-ip_next_central_manager' }]);
+    await seedNvd('CVE-2026-8008', [{ vendor: 'f5', packageName: 'nginx' }]);
+    await seedNvd('CVE-2026-8009', [{ vendor: 'someone_else', packageName: 'big-ip_local_traffic_manager' }]);
+
+    expect(await ids('package=F5%20BIG-IP')).toEqual(['CVE-2026-8005', 'CVE-2026-8006']);
+  });
+
+  it('searches the CVE records by the vendor spellings and products the entry lists', async () => {
+    await seedCna('CVE-2026-8010', 'MongoDB, Inc.', 'MongoDB Server');
+    await seedCna('CVE-2026-8011', 'MongoDB Inc', 'MongoDB Server');
+    await seedCna('CVE-2026-8012', 'MongoDB', 'MongoDB Compass');
+    await seedCna('CVE-2026-8013', 'Other Vendor', 'MongoDB Server');
+
+    expect(await ids('package=MongoDB%20Server')).toEqual(['CVE-2026-8010', 'CVE-2026-8011']);
+  });
+
+  it('asks neither OSV nor the vendor advisories about a catalog name', async () => {
+    const master = await prisma.vulnerability.create({ data: { cveId: 'CVE-2026-8014', severity: 'HIGH', cvssScore: 7.5 } });
+    const advisory = await prisma.advisoryVulnerability.create({
+      data: { source: 'fortinet', externalId: 'FG-IR-cat-0001', cveId: 'CVE-2026-8014', rawData: {}, masterVulnId: master.id },
+    });
+    await prisma.advisoryAffectedProduct.create({ data: { advisoryId: advisory.id, vendor: 'fortinet', product: 'Jenkins' } });
+
+    expect(await ids('package=Jenkins')).toEqual([]);
+  });
+
+  it('is used by the batch search too', async () => {
+    await seedNvd('CVE-2026-8015', [{ vendor: 'ivanti', packageName: 'automation' }]);
+    await seedNvd('CVE-2026-8016', [{ vendor: 'nintex', packageName: 'automation' }]);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/vulnerabilities/search/batch',
+      headers: { 'x-api-key': API_KEY },
+      payload: { packages: [{ package: 'Ivanti Automation', version: '2023.1' }] },
+    });
+    const found = (res.json().results[0].vulnerabilities as { externalId: string }[]).map((v) => v.externalId);
+    expect(found).toEqual(['CVE-2026-8015']);
+  });
+});

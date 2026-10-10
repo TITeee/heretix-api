@@ -79,6 +79,8 @@ An entry names its pairs exactly:
 | `cna` | The CVE records' `vendors` (they spell one vendor several ways) and `products` |
 | `aliases`, `versionHint` | Other names to find it by; a version as the vendor writes it |
 
+A search whose `package` is an entry's exact name asks only NVD and the CVE records, for exactly those pairs (see [Searching by a catalog name](api.md#searching-by-a-catalog-name)). Any other name is searched as before.
+
 The catalog covers products NVD and the CVE records cover. A product with its own vendor-advisory fetcher is picked from the Advisory list, which searches those advisories only; the two are not merged so that where a result comes from stays visible.
 
 After changing the catalog, run `pnpm build && pnpm validate:catalog`. It checks the catalog's structure and that every listed NVD product, product prefix and CNA vendor or product has rows in the database, and warns about NVD products of a listed vendor that look like a listed one but are not covered (plugins, components and sibling products usually; add one if it is the same product).

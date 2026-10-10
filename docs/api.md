@@ -74,6 +74,10 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 
 Go vulnerabilities are recorded per sub-module, so search with the exact module path (see [known-issues.md](known-issues.md#go-sub-modules-need-the-exact-module-path)).
 
+### Searching by a catalog name
+
+When `package` is the exact name of a [product catalog](data-sources.md#product-catalog) entry (`Ivanti Automation`, `F5 BIG-IP`, case-sensitive) and no `ecosystem` is given, the search asks only NVD and the CVE records (CNA), for exactly the (vendor, product) pairs the entry lists: `Ivanti Automation` finds ivanti's `automation` and not nintex's, and `F5 BIG-IP` finds every BIG-IP module and model but not BIG-IP Next. OSV and the vendor advisories, which match by name alone, are not consulted. Any other name is searched as before, so `automation` still finds both vendors'.
+
 ### Response
 
 ```json
