@@ -385,6 +385,248 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     nvd: [{ vendor: 'veeam', products: ['veeam_backup_\\&_replication'] }],
     cna: [{ vendors: ['Veeam'], products: ['Backup and Replication'] }],
   },
+  // ── Added: batch 3 ──────────────────────────────────────────────────────
+  {
+    id: 'dell-powerscale-onefs', name: 'Dell PowerScale OneFS', vendor: 'Dell', product: 'PowerScale OneFS', category: 'application',
+    aliases: ['onefs', 'powerscale', 'isilon', 'isilon onefs'], versionHint: '9.5.0.0',
+    // Isilon is the earlier name of the same OS. The node firmware, InsightIQ and
+    // IsilonSD Management Server are separate products.
+    nvd: [{ vendor: 'dell', products: ['powerscale_onefs', 'emc_powerscale_onefs', 'emc_isilon_onefs'] }],
+    cna: [{ vendors: ['Dell'], products: ['PowerScale OneFS'] }],
+  },
+  {
+    id: 'dell-powerprotect-data-domain', name: 'Dell PowerProtect Data Domain', vendor: 'Dell', product: 'PowerProtect Data Domain', category: 'application',
+    aliases: ['data domain', 'dd os', 'ddos', 'powerprotect dd'], versionHint: '7.10.1.0',
+    // The operating system (DD OS) under its three names. The CNA records name a
+    // release train (LTS2023, Feature Release) and spell it several ways; BoostFS
+    // clients and the Management Center are separate products.
+    nvd: [{ vendor: 'dell', products: ['data_domain_operating_system', 'emc_data_domain_os', 'powerprotect_data_domain'] }],
+    cna: [{
+      vendors: ['Dell'],
+      products: [
+        'PowerProtect Data Domain with Data Domain Operating System (DD OS) LTS2023',
+        'PowerProtect Data Domain with Data Domain Operating System (DD OS) LTS2024',
+        'PowerProtect Data Domain with Data Domain Operating System (DD OS) LTS2025',
+        'PowerProtect Data Domain with Data Domain Operating System (DD OS) LTS 2024',
+        'PowerProtect Data Domain with Data Domain Operating System (DD OS) LTS 2025',
+        'PowerProtect Data Domain with Data Domain Operating System (DD OS) of Feature Release',
+        'PowerProtect Data Domain with Data Domain Operating System (DD OS) Feature Release',
+        'Dell PowerProtect Data Domain with Data Domain Operating System (DD OS) LTS2023',
+        'Dell PowerProtect Data Domain with Data Domain Operating System (DD OS) LTS2024',
+        'Dell PowerProtect Data Domain with Data Domain Operating System (DD OS) LTS2025',
+        'Dell PowerProtect Data Domain with Data Domain Operating System (DD OS) of Feature Release',
+        'PowerProtect Data Domain LTS 2023',
+        'PowerProtect Data Domain LTS2024',
+        'PowerProtect Data Domain Feature Release',
+        'DD OS 7.10',
+        'DD OS 7.13',
+        'DD OS 8.3',
+      ],
+    }],
+  },
+  {
+    id: 'hpe-imc', name: 'HPE Intelligent Management Center', vendor: 'HPE', product: 'Intelligent Management Center', category: 'network',
+    aliases: ['imc', 'hp imc', 'hpe imc'], versionHint: '7.3',
+    // NVD files it under the old HP vendor, as the platform and a name per module.
+    nvd: [{ vendor: 'hp', productPrefixes: ['intelligent_management_center', 'imc_'] }],
+    cna: [],
+  },
+  {
+    id: 'docker-engine', name: 'Docker Engine', vendor: 'Docker', product: 'Engine', category: 'middleware',
+    aliases: ['dockerd', 'moby'], versionHint: '24.0.7',
+    // Not the commercially supported cs_engine, nor Desktop (its own entry).
+    nvd: [{ vendor: 'docker', products: ['docker', 'engine'] }],
+    cna: [{ vendors: ['Docker'], products: ['Docker Engine'] }],
+  },
+  {
+    id: 'docker-desktop', name: 'Docker Desktop', vendor: 'Docker', product: 'Desktop', category: 'application',
+    aliases: [], versionHint: '4.28.0',
+    nvd: [{ vendor: 'docker', products: ['docker_desktop', 'desktop'] }],
+    cna: [{ vendors: ['Docker'], products: ['Docker Desktop'] }],
+  },
+  {
+    id: 'mattermost-server', name: 'Mattermost Server', vendor: 'Mattermost', product: 'Server', category: 'application',
+    aliases: ['mattermost'], versionHint: '9.5.2',
+    // Not the desktop or mobile apps, nor the plugins (Confluence, Google Drive, ...).
+    nvd: [{ vendor: 'mattermost', products: ['mattermost_server', 'mattermost'] }],
+    cna: [{ vendors: ['Mattermost'], products: ['Mattermost'] }],
+  },
+  {
+    id: 'wordpress', name: 'WordPress', vendor: 'WordPress', product: 'WordPress', category: 'application',
+    aliases: ['wp'], versionHint: '6.4.2',
+    // Core only; plugins and themes are filed under their own vendors.
+    nvd: [{ vendor: 'wordpress', products: ['wordpress'] }],
+    cna: [{ vendors: ['WordPress'], products: ['WordPress'] }],
+  },
+  {
+    id: 'drupal', name: 'Drupal', vendor: 'Drupal', product: 'Drupal', category: 'application',
+    aliases: [], versionHint: '10.2.2',
+    nvd: [{ vendor: 'drupal', products: ['drupal'] }],
+    cna: [{ vendors: ['Drupal'], products: ['Drupal'] }],
+  },
+  // ── Added: batch 3, edge infrastructure and remote access (often on CISA KEV) ──
+  {
+    id: 'cisco-asa', name: 'Cisco ASA', vendor: 'Cisco', product: 'Adaptive Security Appliance (ASA) Software', category: 'network',
+    aliases: ['asa', 'adaptive security appliance', 'cisco secure firewall asa'], versionHint: '9.18.4',
+    // The software (its version is what advisories name), not the 55xx hardware or firmware CPEs.
+    nvd: [{ vendor: 'cisco', products: ['adaptive_security_appliance_software'] }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco Adaptive Security Appliance (ASA) Software', 'Cisco Secure Firewall Adaptive Security Appliance (ASA) Software'] }],
+  },
+  {
+    id: 'cisco-ftd', name: 'Cisco Secure Firewall Threat Defense', vendor: 'Cisco', product: 'Secure Firewall Threat Defense (FTD)', category: 'network',
+    aliases: ['ftd', 'firepower threat defense', 'firepower', 'cisco ftd'], versionHint: '7.4.1',
+    // Firepower Threat Defense is the earlier name.
+    nvd: [{ vendor: 'cisco', products: ['secure_firewall_threat_defense', 'firepower_threat_defense'] }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco Secure Firewall Threat Defense (FTD) Software', 'Cisco Firepower Threat Defense Software'] }],
+  },
+  {
+    id: 'cisco-fmc', name: 'Cisco Secure Firewall Management Center', vendor: 'Cisco', product: 'Secure Firewall Management Center (FMC)', category: 'network',
+    aliases: ['fmc', 'firepower management center', 'cisco fmc'], versionHint: '7.4.1',
+    nvd: [{ vendor: 'cisco', products: ['secure_firewall_management_center', 'firepower_management_center'] }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco Secure Firewall Management Center (FMC)', 'Cisco Firepower Management Center'] }],
+  },
+  {
+    id: 'cisco-ios-xe', name: 'Cisco IOS XE', vendor: 'Cisco', product: 'IOS XE Software', category: 'network',
+    aliases: ['ios xe', 'iosxe'], versionHint: '17.9.4',
+    // Not the per-release "ios_xe_3.4sg" names NVD kept for old trains, nor the SD-WAN variant (Cisco Catalyst SD-WAN).
+    nvd: [{ vendor: 'cisco', products: ['ios_xe'] }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco IOS XE Software'] }],
+  },
+  {
+    id: 'cisco-ios', name: 'Cisco IOS', vendor: 'Cisco', product: 'IOS Software', category: 'network',
+    aliases: ['cisco ios software'], versionHint: '15.2(4)M',
+    nvd: [{ vendor: 'cisco', products: ['ios'] }],
+    cna: [],
+  },
+  {
+    id: 'cisco-nx-os', name: 'Cisco NX-OS', vendor: 'Cisco', product: 'NX-OS Software', category: 'network',
+    aliases: ['nxos', 'nx os'], versionHint: '10.3(3)',
+    nvd: [{ vendor: 'cisco', products: ['nx-os'] }],
+    cna: [],
+  },
+  {
+    id: 'cisco-catalyst-sd-wan', name: 'Cisco Catalyst SD-WAN', vendor: 'Cisco', product: 'Catalyst SD-WAN (Manager, Controller)', category: 'network',
+    aliases: ['sd-wan', 'sdwan', 'viptela', 'vmanage', 'vsmart', 'vbond', 'catalyst sd-wan manager'], versionHint: '20.12.1',
+    // vManage, vSmart and vBond are the earlier names of the Manager, Controller and Validator.
+    nvd: [{
+      vendor: 'cisco',
+      products: [
+        'catalyst_sd-wan_manager', 'sd-wan_vmanage', 'vmanage_network_management', 'vmanage_network_management_system',
+        'sd-wan_vsmart_controller', 'sd-wan_vbond_orchestrator', 'sd-wan_manager', 'sd-wan',
+      ],
+    }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco Catalyst SD-WAN Manager', 'Cisco Catalyst SD-WAN Controller'] }],
+  },
+  {
+    id: 'cisco-ise', name: 'Cisco Identity Services Engine', vendor: 'Cisco', product: 'Identity Services Engine (ISE)', category: 'network',
+    aliases: ['ise', 'cisco ise'], versionHint: '3.2',
+    nvd: [{ vendor: 'cisco', products: ['identity_services_engine', 'identity_services_engine_software'] }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco Identity Services Engine Software'] }],
+  },
+  {
+    id: 'cisco-unified-cm', name: 'Cisco Unified Communications Manager', vendor: 'Cisco', product: 'Unified Communications Manager', category: 'application',
+    aliases: ['cucm', 'unified cm', 'callmanager'], versionHint: '14.0',
+    nvd: [{ vendor: 'cisco', products: ['unified_communications_manager'] }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco Unified Communications Manager'] }],
+  },
+  {
+    id: 'arista-eos', name: 'Arista EOS', vendor: 'Arista', product: 'Extensible Operating System (EOS)', category: 'network',
+    aliases: ['eos'], versionHint: '4.30.2F',
+    nvd: [{ vendor: 'arista', products: ['eos'] }],
+    cna: [{ vendors: ['Arista Networks'], products: ['EOS'] }],
+  },
+  {
+    id: 'progress-kemp-loadmaster', name: 'Progress Kemp LoadMaster', vendor: 'Progress', product: 'LoadMaster', category: 'network',
+    aliases: ['loadmaster', 'kemp', 'kemp loadmaster'], versionHint: '7.2.60.0',
+    nvd: [{ vendor: 'progress', products: ['loadmaster', 'multi-tenant_loadmaster'] }, { vendor: 'kemptechnologies', products: ['loadmaster', 'load_master', 'loadmaster_operating_system'] }],
+    cna: [{ vendors: ['Progress', 'Progress Software'], products: ['LoadMaster'] }],
+  },
+  {
+    id: 'ubiquiti-unifi-os-server', name: 'Ubiquiti UniFi OS Server', vendor: 'Ubiquiti', product: 'UniFi OS Server', category: 'network',
+    aliases: ['unifi os', 'unifi'], versionHint: '4.3.6',
+    // NVD files Ubiquiti's products under the vendor "ui"; the console hardware's firmware
+    // is a CPE per model and is not listed here.
+    nvd: [{ vendor: 'ui', products: ['unifi_os_server', 'unifi_os'] }],
+    cna: [{ vendors: ['Ubiquiti Inc'], products: ['UniFi OS Server'] }],
+  },
+  {
+    id: 'ubiquiti-unifi-network-application', name: 'Ubiquiti UniFi Network Application', vendor: 'Ubiquiti', product: 'UniFi Network Application', category: 'application',
+    aliases: ['unifi controller', 'unifi network', 'unifi network controller'], versionHint: '8.0.28',
+    nvd: [{ vendor: 'ui', products: ['unifi_network_application', 'unifi_network_controller'] }],
+    cna: [{ vendors: ['Ubiquiti Inc'], products: ['UniFi Network Application'] }],
+  },
+  {
+    id: 'zimbra-collaboration', name: 'Zimbra Collaboration Suite', vendor: 'Zimbra', product: 'Collaboration Suite (ZCS)', category: 'application',
+    aliases: ['zimbra', 'zcs', 'synacor zimbra'], versionHint: '10.0.6',
+    // Synacor sold it to Zimbra; NVD and the CNA records keep both vendors.
+    nvd: [
+      { vendor: 'synacor', products: ['zimbra_collaboration_suite', 'zimbra_collaboration_server'] },
+      { vendor: 'zimbra', products: ['collaboration', 'collaboration_server', 'collaboration_suite', 'zimbra', 'zimbra_collaboration_server', 'zimbra_collaboration_suite'] },
+    ],
+    cna: [{ vendors: ['Zimbra'], products: ['Collaboration', 'Zimbra Collaboration Suite (ZCS)', 'Zimbra Collaboration Suite'] }],
+  },
+  {
+    id: 'roundcube-webmail', name: 'Roundcube Webmail', vendor: 'Roundcube', product: 'Webmail', category: 'application',
+    aliases: ['roundcube'], versionHint: '1.6.6',
+    nvd: [{ vendor: 'roundcube', products: ['webmail', 'roundcube_webmail', 'roundcube'] }],
+    cna: [{ vendors: ['Roundcube'], products: ['Webmail'] }],
+  },
+  {
+    id: 'smartertools-smartermail', name: 'SmarterMail', vendor: 'SmarterTools', product: 'SmarterMail', category: 'application',
+    aliases: ['smarter mail'], versionHint: '100.0.8644',
+    nvd: [{ vendor: 'smartertools', products: ['smartermail'] }],
+    cna: [{ vendors: ['SmarterTools'], products: ['SmarterMail'] }],
+  },
+  {
+    id: 'connectwise-screenconnect', name: 'ConnectWise ScreenConnect', vendor: 'ConnectWise', product: 'ScreenConnect', category: 'application',
+    aliases: ['screenconnect', 'connectwise control'], versionHint: '23.9.7',
+    nvd: [{ vendor: 'connectwise', products: ['screenconnect'] }],
+    cna: [],
+  },
+  {
+    id: 'simplehelp', name: 'SimpleHelp', vendor: 'SimpleHelp', product: 'SimpleHelp', category: 'application',
+    aliases: ['simple-help', 'simple help'], versionHint: '5.5.7',
+    // NVD spells the vendor "simple-help"; the CNA records use two capitalisations.
+    nvd: [{ vendor: 'simple-help', products: ['simplehelp'] }],
+    cna: [{ vendors: ['Simplehelp', 'SimpleHelp'], products: ['Simplehelp', 'SimpleHelp'] }],
+  },
+  {
+    id: 'crushftp', name: 'CrushFTP', vendor: 'CrushFTP', product: 'CrushFTP', category: 'application',
+    aliases: ['crush ftp'], versionHint: '11.3.0',
+    nvd: [{ vendor: 'crushftp', products: ['crushftp'] }],
+    cna: [{ vendors: ['CrushFTP'], products: ['CrushFTP'] }],
+  },
+  {
+    id: 'gladinet-centrestack-triofox', name: 'Gladinet CentreStack and Triofox', vendor: 'Gladinet', product: 'CentreStack / Triofox', category: 'application',
+    aliases: ['centrestack', 'triofox', 'gladinet'], versionHint: '16.7.10368.56560',
+    nvd: [{ vendor: 'gladinet', products: ['centrestack', 'triofox'] }],
+    cna: [{ vendors: ['Gladinet'], products: ['CentreStack', 'Triofox', 'CentreStack and TrioFox'] }],
+  },
+  {
+    id: 'nable-n-central', name: 'N-able N-central', vendor: 'N-able', product: 'N-central', category: 'application',
+    aliases: ['ncentral', 'n central'], versionHint: '2024.1',
+    nvd: [{ vendor: 'n-able', products: ['n-central'] }],
+    cna: [],
+  },
+  {
+    id: 'solarwinds-web-help-desk', name: 'SolarWinds Web Help Desk', vendor: 'SolarWinds', product: 'Web Help Desk', category: 'application',
+    aliases: ['whd', 'web help desk'], versionHint: '12.8.3',
+    nvd: [{ vendor: 'solarwinds', products: ['web_help_desk'] }],
+    cna: [],
+  },
+  {
+    id: 'mitel-micollab', name: 'Mitel MiCollab', vendor: 'Mitel', product: 'MiCollab', category: 'application',
+    aliases: ['micollab'], versionHint: '9.8.0.33',
+    nvd: [{ vendor: 'mitel', products: ['micollab', 'micollab_audio\\,_web_\\&_video_conferencing'] }],
+    cna: [],
+  },
+  {
+    id: 'sangoma-freepbx', name: 'Sangoma FreePBX', vendor: 'Sangoma', product: 'FreePBX', category: 'application',
+    aliases: ['freepbx', 'free pbx'], versionHint: '16.0.40',
+    // Sangoma took over FreePBX; NVD keeps both vendors.
+    nvd: [{ vendor: 'sangoma', products: ['freepbx'] }, { vendor: 'freepbx', products: ['freepbx'] }],
+    cna: [],
+  },
 ];
 
 const BY_NAME = new Map(CATALOG_ENTRIES.map(e => [e.name, e]));

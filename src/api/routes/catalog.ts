@@ -6,7 +6,8 @@ import { catalogListing, searchCatalog } from '../../utils/catalog-search.js';
 const catalogSchema = z.object({
   q: z.string().optional(),
   category: z.enum(['network', 'middleware', 'database', 'devops', 'application']).optional(),
-  limit: z.coerce.number().int().positive().max(200).default(50),
+  // The picker asks for no limit and shows an empty box as the whole catalog, so the default is the most allowed.
+  limit: z.coerce.number().int().positive().max(200).default(200),
 });
 
 /**
