@@ -40,6 +40,9 @@ NODE_ENV=development        # "production" in production
 API_KEY=your-api-key-here   # Required. Requests without a matching x-api-key get 401
 ALLOWED_ORIGINS=            # Optional, comma-separated browser origins allowed to read responses (default: none)
 DATABASE_POOL_MAX=20        # Optional. Postgres connection pool size
+RATE_LIMIT_MAX=1200         # Optional. Requests per client address per minute, over 429 (0 = off). /health is never limited
+RATE_LIMIT_BATCH_MAX=30     # Optional. Batch searches per client address per minute (0 = only the limit above)
+BATCH_SEARCH_MAX_CONCURRENT=2  # Optional. Batch searches running at once; more get 429 (0 = no cap)
 NVD_API_KEY=                # Optional. NVD rate limit 10 → 50 requests/min
 CISCO_CLIENT_ID=            # Required for the Cisco import (openVuln API)
 CISCO_CLIENT_SECRET=
@@ -47,6 +50,8 @@ GITHUB_TOKEN=               # Optional. Only needed to run the malware import mo
 ```
 
 `ALLOWED_ORIGINS` only affects browsers. Server-to-server callers such as heretix-cli are unaffected.
+
+The limits are a backstop, not a way to tell callers apart: heretix-management reaches the API from one address with one shared key. A batch search keeps the server's one JS thread busy for seconds (about 12 s for 1,000 packages with many findings each), and a single search issued meanwhile waited 1.4 s instead of 2 ms, so the number of batches running at once is capped rather than queued. A batch whose caller has gone away is dropped at the next chunk of 20 packages.
 
 ## Scheduler
 

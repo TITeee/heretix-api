@@ -8,6 +8,8 @@ Every endpoint requires the `x-api-key` header to match the `API_KEY` environmen
 
 Browser cross-origin access is limited to `ALLOWED_ORIGINS` (see [operations.md](operations.md#environment-variables)).
 
+**Limits.** A client address is limited per minute (`RATE_LIMIT_MAX`, and `RATE_LIMIT_BATCH_MAX` for the batch search); past it the answer is `429` with a `Retry-After`. At most `BATCH_SEARCH_MAX_CONCURRENT` batch searches run at once; another one gets `429` with `Retry-After: 5`, and should be sent again after that. See [operations.md](operations.md#environment-variables).
+
 ## Health check
 
 ```

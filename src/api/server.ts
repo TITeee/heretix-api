@@ -1,5 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
+import { envInt } from './concurrency-gate.js';
 import vulnerabilitiesRoute from './routes/vulnerabilities.js';
 import dashboardRoute from './routes/dashboard.js';
 import jobsRoute from './routes/jobs.js';
@@ -50,8 +52,19 @@ export async function createServer() {
     origin: allowedOrigins.length > 0 ? allowedOrigins : false,
   });
 
-  // Health check
-  fastify.get('/health', async () => {
+  // Rate limit per client address, so a leaked key or a runaway client cannot keep
+  // the API busy. heretix-management reaches this API from one address with one
+  // shared key, so a limit cannot tell it from a misuser: the ceiling is set high
+  // enough for normal use (autocomplete, scans) and is a backstop. The heavier
+  // protection is the cap on concurrent batch searches (see routes/vulnerabilities.ts).
+  // RATE_LIMIT_MAX=0 turns it off.
+  const rateLimitMax = envInt('RATE_LIMIT_MAX', 1200);
+  if (rateLimitMax > 0) {
+    await fastify.register(rateLimit, { global: true, max: rateLimitMax, timeWindow: '1 minute' });
+  }
+
+  // Health check (monitoring polls it; never limited)
+  fastify.get('/health', { config: { rateLimit: false } }, async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
 

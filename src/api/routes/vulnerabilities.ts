@@ -7,6 +7,7 @@ import { VENDORS_WITH_OWN_VERSION_ORDER, encodeAdvisoryVersion } from '../../uti
 import { type FixStatus, type FixStatusInfo, debianTrackerStatus } from '../../utils/fix-status.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
+import { createConcurrencyGate, envInt } from '../concurrency-gate.js';
 import { findCatalogEntry } from '../../config/product-catalog.js';
 import { catalogCnaWhere, catalogNvdWhere } from '../../utils/catalog-search.js';
 import {
@@ -1151,51 +1152,85 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
     return { results };
   });
 
-  fastify.post('/vulnerabilities/search/batch', async (request) => {
+  // A batch keeps the single JS thread busy for seconds, so batches running side by
+  // side only make every other request wait: a search issued while two batches ran
+  // took 1.4 s instead of 2 ms. At most this many run at once; the rest are refused
+  // with 429 and a Retry-After, and the caller (heretix-management sends them one
+  // after another) tries again.
+  const batchGate = createConcurrencyGate(envInt('BATCH_SEARCH_MAX_CONCURRENT', 2));
+  const batchRateLimit = envInt('RATE_LIMIT_BATCH_MAX', 30);
+
+  fastify.post('/vulnerabilities/search/batch', {
+    // Per client address and minute, on top of the global limit. 0 leaves only the global one.
+    config: batchRateLimit > 0 ? { rateLimit: { max: batchRateLimit, timeWindow: '1 minute' } } : {},
+  }, async (request, reply) => {
     const { packages } = batchSearchSchema.parse(request.body);
 
-    // Promise.all over all packages would issue up to 1000×3=3,000 concurrent DB queries and exhaust the pool.
-    // Process in chunks of BATCH_CONCURRENCY to cap concurrency.
-    const BATCH_CONCURRENCY = 20;
-    const results = [];
-    for (let i = 0; i < packages.length; i += BATCH_CONCURRENCY) {
-      const chunk = packages.slice(i, i + BATCH_CONCURRENCY);
-      results.push(
-        ...await Promise.all(
-          chunk.map(async (pkg) => {
-            const vulnerabilities = await searchVulnerabilities(
-              pkg.package, pkg.version, pkg.ecosystem, 500,
-            );
-            return {
-              package: pkg.package,
-              version: pkg.version,
-              ecosystem: pkg.ecosystem,
-              vulnerabilities,
-            };
-          }),
-        ),
-      );
+    const release = batchGate.tryAcquire();
+    if (!release) {
+      return reply
+        .code(429)
+        .header('retry-after', '5')
+        .send({ error: 'Too many batch searches running; retry shortly' });
     }
 
-    // Serializing this response can exceed V8's maximum string length, which
-    // fails the whole request with `RangeError: Invalid string length`. The
-    // existing caps already multiply past it: 1,000 packages x 500 results
-    // measured 718MB against a 537MB ceiling, crashing at ~750 packages.
-    // Shorten `summary` -- 74.9% of the payload -- by only as much as the
-    // batch's own size requires; see summaryBudgetChars.
-    const totalResults = results.reduce((n, r) => n + r.vulnerabilities.length, 0);
-    const maxSummaryChars = summaryBudgetChars(totalResults);
-    if (maxSummaryChars !== null) {
-      const truncated = truncateSummaries(results, maxSummaryChars);
-      if (truncated > 0) {
-        request.log.warn(
-          { packages: packages.length, totalResults, maxSummaryChars, truncated },
-          'batch response too large to serialize in full; shortened summaries',
+    // A caller that gave up (heretix-management stops waiting after 60 s) leaves the
+    // work running unless it is told to stop. Checked between chunks below.
+    let clientGone = false;
+    reply.raw.once('close', () => {
+      if (!reply.raw.writableFinished) clientGone = true;
+    });
+
+    try {
+      // Promise.all over all packages would issue up to 1000×3=3,000 concurrent DB queries and exhaust the pool.
+      // Process in chunks of BATCH_CONCURRENCY to cap concurrency.
+      const BATCH_CONCURRENCY = 20;
+      const results = [];
+      for (let i = 0; i < packages.length; i += BATCH_CONCURRENCY) {
+        if (clientGone) {
+          request.log.info({ packages: packages.length, done: i }, 'batch search abandoned: client disconnected');
+          return reply.code(499).send({ error: 'Client closed request' });
+        }
+        const chunk = packages.slice(i, i + BATCH_CONCURRENCY);
+        results.push(
+          ...await Promise.all(
+            chunk.map(async (pkg) => {
+              const vulnerabilities = await searchVulnerabilities(
+                pkg.package, pkg.version, pkg.ecosystem, 500,
+              );
+              return {
+                package: pkg.package,
+                version: pkg.version,
+                ecosystem: pkg.ecosystem,
+                vulnerabilities,
+              };
+            }),
+          ),
         );
       }
-    }
 
-    return { results };
+      // Serializing this response can exceed V8's maximum string length, which
+      // fails the whole request with `RangeError: Invalid string length`. The
+      // existing caps already multiply past it: 1,000 packages x 500 results
+      // measured 718MB against a 537MB ceiling, crashing at ~750 packages.
+      // Shorten `summary` -- 74.9% of the payload -- by only as much as the
+      // batch's own size requires; see summaryBudgetChars.
+      const totalResults = results.reduce((n, r) => n + r.vulnerabilities.length, 0);
+      const maxSummaryChars = summaryBudgetChars(totalResults);
+      if (maxSummaryChars !== null) {
+        const truncated = truncateSummaries(results, maxSummaryChars);
+        if (truncated > 0) {
+          request.log.warn(
+            { packages: packages.length, totalResults, maxSummaryChars, truncated },
+            'batch response too large to serialize in full; shortened summaries',
+          );
+        }
+      }
+
+      return { results };
+    } finally {
+      release();
+    }
   });
 
   const masterInclude = {
