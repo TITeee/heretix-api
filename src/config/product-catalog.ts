@@ -462,8 +462,9 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
   {
     id: 'drupal', name: 'Drupal', vendor: 'Drupal', product: 'Drupal', category: 'application',
     aliases: [], versionHint: '10.2.2',
+    // Drupal's own CNA names the core "Drupal core" (20 CVEs), not "Drupal"; its modules are other products.
     nvd: [{ vendor: 'drupal', products: ['drupal'] }],
-    cna: [{ vendors: ['Drupal'], products: ['Drupal'] }],
+    cna: [{ vendors: ['Drupal'], products: ['Drupal', 'Drupal core'] }],
   },
   // ── Added: batch 3, edge infrastructure and remote access (often on CISA KEV) ──
   {
@@ -607,7 +608,7 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     id: 'nable-n-central', name: 'N-able N-central', vendor: 'N-able', product: 'N-central', category: 'application',
     aliases: ['ncentral', 'n central'], versionHint: '2024.1',
     nvd: [{ vendor: 'n-able', products: ['n-central'] }],
-    cna: [],
+    cna: [{ vendors: ['N-able'], products: ['N-central'] }],
   },
   {
     id: 'solarwinds-web-help-desk', name: 'SolarWinds Web Help Desk', vendor: 'SolarWinds', product: 'Web Help Desk', category: 'application',
