@@ -148,6 +148,20 @@ describe('normalizeVersion', () => {
       expect(normalizeVersion('6_update_4')).toBe(normalizeVersion('6.4'));
     });
 
+    it('puts a hyphen-joined update, service pack or interim fix after its release, not before it (Liferay "7.4.13-u92")', () => {
+      expect(normalizeVersion('7.4.13-u92')).toBe(normalizeVersion('7.4.13-92'));
+      ordered('7.4.13', '7.4.13-u1', '7.4.13-u92', '7.4.14');
+      ordered('24.0.0', '24.0.0-IF001', '24.0.0-IF006', '24.0.1');
+      ordered('7.2.10', '7.2.10-sp2', '7.3.0');
+      expect(normalizeVersion('7.4.13-update5')).toBe(normalizeVersion('7.4.13-5'));
+    });
+
+    it('still reads other hyphenated letters as pre-releases and leaves RPM releases alone', () => {
+      expect(normalizeVersion('1.0.0-beta')).toBe((normalizeVersion('1.0.0') as bigint) - 1n);
+      expect(normalizeVersion('2.9.13-6.el9')).toBe(normalizeVersion('2.9.13-6'));
+      expect(normalizeVersion('1.2.3-usb')).toBe((normalizeVersion('1.2.3') as bigint) - 1n);
+    });
+
     it('keeps a hyphenated pre-release at release - 1, above every attached one', () => {
       expect(normalizeVersion('1.0.0-rc1')).toBe((normalizeVersion('1.0.0') as bigint) - 1n);
       ordered('1.0.0rc1', '1.0.0-rc1', '1.0.0');

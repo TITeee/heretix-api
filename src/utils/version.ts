@@ -159,6 +159,14 @@ export function normalizeVersion(version: string): bigint | null {
     return value > 0n ? value : 0n;
   }
 
+  // An update, service pack or interim fix joined by a hyphen ("7.4.13-u92", Liferay's DXP
+  // updates; "24.0.0-IF006", an IBM interim fix) comes after its release, like the "-N"
+  // release it stands in for. The pre-release check below would read the letter as
+  // "1.0.0-beta" and put it one below the release, so a range from 7.4.13 to 7.4.13-u92
+  // ended before it began.
+  const hyphenPost = withoutEpoch.match(/^(.*\d)-(?:u|update|sp|if|ifix)(\d{1,3})$/i);
+  if (hyphenPost) return normalizeVersion(`${hyphenPost[1]}-${Number(hyphenPost[2])}`);
+
   // Detect pre-release (only when character after hyphen is a letter)
   // "1.0.0-beta" -> true, "0.1.15-2.git..." -> false (RPM revision excluded)
   const hasPrerelease = /\d-[a-zA-Z]/.test(withoutEpoch);
