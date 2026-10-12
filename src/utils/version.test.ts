@@ -132,6 +132,22 @@ describe('normalizeVersion', () => {
       ordered('2.1.0.dev2', '2.1.0b3.dev13', '2.1.0');
     });
 
+    it('reads a label joined by an underscore like one attached directly (OpenVPN "2.7_alpha1", "2.1_rc10")', () => {
+      // Read as digits only, "2.7_alpha1" was 2.71 and "2.1_rc10" 2.110: above 2.7.6 and 2.6.22,
+      // so a range "2.7_alpha1" to "2.7.6" ended before it began and matched nothing.
+      expect(normalizeVersion('2.7_alpha1')).toBe(normalizeVersion('2.7alpha1'));
+      expect(normalizeVersion('2.1_rc10')).toBe(normalizeVersion('2.1rc10'));
+      ordered('2.6.22', '2.7_alpha1', '2.7_alpha2', '2.7_beta1', '2.7_rc1', '2.7_rc2', '2.7.0', '2.7.6');
+      expect(normalizeVersion('2.1_rc10') as bigint).toBeLessThan(normalizeVersion('2.6.22') as bigint);
+      expect(normalizeVersion('2.7_alpha1') as bigint).toBeLessThan(normalizeVersion('2.7.6') as bigint);
+      expect(normalizeVersion('7.4_p1')).toBe(normalizeVersion('7.4p1'));
+    });
+
+    it('leaves an underscore that does not join a label and a short number alone', () => {
+      expect(normalizeVersion('2.7_alpha')).toBe(normalizeVersion('2.7'));
+      expect(normalizeVersion('6_update_4')).toBe(normalizeVersion('6.4'));
+    });
+
     it('keeps a hyphenated pre-release at release - 1, above every attached one', () => {
       expect(normalizeVersion('1.0.0-rc1')).toBe((normalizeVersion('1.0.0') as bigint) - 1n);
       ordered('1.0.0rc1', '1.0.0-rc1', '1.0.0');
