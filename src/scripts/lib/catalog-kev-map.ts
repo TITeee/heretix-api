@@ -63,13 +63,12 @@ export const KEV_MATCHES: KevMatch[] = [
 ];
 
 /**
- * KEV CVEs a catalog entry cannot reach on purpose, with why. Each is filed by NVD
- * under a CPE with no version at all (a wildcard), so listing its pair would make
- * the CVE match every version of the product, which is a false positive for nearly
- * everyone who searches. A CVE belongs here only with a reason that says so.
+ * KEV CVEs a catalog entry cannot reach on purpose, with why. Listing the pair a CVE
+ * is filed under would make the entry match something that is not its product (a
+ * shared pair, or a module's own versions), so the CVE stays unreachable. A CVE
+ * belongs here only with a reason that says so.
  */
 export const ACCEPTED_MISSES: Record<string, string> = {
-  'CVE-2020-10199': 'NVD files it (and 6 of the 8 CVEs there) under the older name sonatype:nexus with no version; listing the pair would flag every Nexus version',
-  'CVE-2019-15752': 'NVD files it under docker:docker, edition community, with no version; that pair is shared with the Engine entry, so it cannot be split by product',
-  'CVE-2025-64328': 'a FreePBX module (sangoma:filestore) with module versions, not FreePBX versions, and no version in the CPE',
+  'CVE-2019-15752': 'NVD files it under docker:docker, edition community (Docker Desktop < 2.1.0.1); that pair is shared with the Engine entry and its ranges are Engine versions (1.x to 17.x), so listing it under Desktop would flag every Desktop 4.x',
+  'CVE-2025-64328': 'a FreePBX module (sangoma:filestore, 17.0.2.36 to 17.0.3): module versions are not FreePBX versions, so listing the pair would flag the wrong FreePBX releases',
 };

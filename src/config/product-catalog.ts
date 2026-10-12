@@ -333,7 +333,8 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
   {
     id: 'sonatype-nexus-repository', name: 'Sonatype Nexus Repository', vendor: 'Sonatype', product: 'Nexus Repository', category: 'devops',
     aliases: ['nexus', 'nexus repository manager', 'nexus3'], versionHint: '3.66.0',
-    nvd: [{ vendor: 'sonatype', products: ['nexus_repository_manager'] }],
+    // NVD kept the earlier name "nexus" for Nexus 1.x/2.x and some 2020 Nexus 3 CVEs; its rows carry versions.
+    nvd: [{ vendor: 'sonatype', products: ['nexus_repository_manager', 'nexus'] }],
     cna: [{ vendors: ['Sonatype'], products: ['Nexus Repository 3', 'Nexus Repository', 'Nexus Repository Manager'] }],
   },
   {
