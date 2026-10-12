@@ -183,9 +183,12 @@ const junos: Scheme = {
 
     const text = exact ? e.version! : `${e.version} to ${e.lessThan !== undefined ? `< ${e.lessThan}` : `<= ${e.lessThanOrEqual}`}`;
     const real = fixes.filter(f => f[0] < 1e9 && !/\*$/.test(text));
+    // A bare train ("23.4") only labels where a range begins; the first release is 23.4R1, so
+    // nobody runs it and searching at it tests nothing. It still bounds the ranges above.
+    const release = (v: V) => v[2] > 0 || v[3] > 0;
     const points: Range['points'] = [
-      { v: start, why: `start of ${text}` },
-      ...(this.below(start) ? [{ v: this.below(start)!, why: `just below the start of ${text}` }] : []),
+      ...(release(start) ? [{ v: start, why: `start of ${text}` }] : []),
+      ...(this.below(start) && release(this.below(start)!) ? [{ v: this.below(start)!, why: `just below the start of ${text}` }] : []),
       ...real.flatMap(f => [
         { v: f, why: `fix of ${text}` },
         ...(this.below(f) ? [{ v: this.below(f)!, why: `just below the fix of ${text}` }] : []),
