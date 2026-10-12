@@ -1,6 +1,6 @@
 /**
- * One-time migration: store the CNA ranges written "lessThan: *", as a whole train
- * ("lessThan: 22.2*"), or as Juniper's list of fixed releases ("lessThan: 23.4R1-S2,
+ * One-time migration: store the CNA ranges written "lessThan: *", as a whole line
+ * ("lessThan: 22.2*", "lessThan: 11.2.*", "lessThanOrEqual: 8.1.*"), or as Juniper's list of fixed releases ("lessThan: 23.4R1-S2,
  * 23.4R2") that extractCnaRows() used to drop (cna-fetcher.ts, nextBranchStart(),
  * junosFixListRanges()).
  *
@@ -29,7 +29,8 @@ const dryRun = process.argv.includes('--dry-run');
 async function main() {
   const records = await prisma.$queryRaw<{ id: string; cveId: string; rawAffected: unknown }[]>`
     SELECT id, "cveId", "rawAffected" FROM "CnaVulnerability"
-    WHERE "rawAffected"::text ~ '"lessThan": "([0-9]+[.][0-9]+)?[*]"'
+    WHERE "rawAffected"::text ~ '"lessThan": "([0-9]+([.][0-9]+)*[.]?)?[*]"'
+       OR "rawAffected"::text ~ '"lessThanOrEqual": "[0-9]+([.][0-9]+)*[.]?[*]"'
        OR "rawAffected"::text ~ '"lessThan": "[^"]*,[^"]*"'
   `;
   console.log(`${records.length} CVE record(s) declare a "lessThan: *", whole-train or list-of-fixes range.`);
@@ -37,12 +38,21 @@ async function main() {
   let before = 0;
   let after = 0;
   let changed = 0;
+  // A row's identity for comparing what is stored with what the extractor makes now: a range can
+  // change its end alone, so the count is not enough; and a record whose rows are already right
+  // (the Linux kernel's, nearly ten thousand of them, match the pattern and never change) is not
+  // rewritten, which keeps the run short on a start-up.
+  const keyOf = (row: { vendor: string; product: string; packageName?: string | null; versionType?: string | null; versionStart?: string | null; versionEnd?: string | null; lastAffected?: string | null; affectedVersions?: string[] | null }) =>
+    JSON.stringify([row.vendor, row.product, row.packageName ?? null, row.versionType ?? null, row.versionStart ?? null, row.versionEnd ?? null, row.lastAffected ?? null, [...(row.affectedVersions ?? [])].sort()]);
+
   for (const rec of records) {
     const { rows } = extractCnaRows(rec.rawAffected);
-    const current = await prisma.cnaAffectedProduct.count({ where: { vulnerabilityId: rec.id } });
-    before += current;
+    const stored = await prisma.cnaAffectedProduct.findMany({ where: { vulnerabilityId: rec.id } });
+    before += stored.length;
     after += rows.length;
-    // Always rebuilt, not only when the count differs: a range can change its end alone.
+    const storedKeys = stored.map(keyOf).sort();
+    const nextKeys = rows.map(keyOf).sort();
+    if (storedKeys.length === nextKeys.length && storedKeys.every((k, i) => k === nextKeys[i])) continue;
     changed++;
     if (dryRun) continue;
 
