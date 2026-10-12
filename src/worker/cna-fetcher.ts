@@ -165,6 +165,45 @@ function isNetScalerBuildRange(vendor: string, versionType: string | undefined, 
   return hasUpperBound && versionType?.toLowerCase() === 'patch' && /netscaler/i.test(vendor);
 }
 
+/**
+ * `lessThan: "*"` with a real starting version: "this release and every later one in
+ * its branch, no fix yet". F5 writes the branches it has not fixed (end-of-life ones
+ * above all) this way, one entry per branch, e.g. BIG-IP "16.1.0" to "*" next to
+ * "17.1.0" to "17.1.3.1" in the same record. A bound is not a version, so the row is
+ * stored with a start and no end, which the search reads as "from this version on".
+ *
+ * Read alone that would run on into later branches that ARE fixed (16.1.0 and up
+ * takes in 17.1.3.1), so it ends where the next branch of the same record begins: the
+ * smallest starting version above it that is in a different major.minor, looking
+ * at every entry the record has for the same product (WatchGuard puts a branch in
+ * an entry of its own, so one entry alone would not see its neighbours). With no
+ * later branch it has no end. Measured on real data this is F5 (118 ranges), EEF (36),
+ * WatchGuard (6), hackerone (3) and Juniper (1); a placeholder start ("0", "*") with a
+ * "*" end still means every version and is still dropped.
+ */
+function branchOf(version: string): string {
+  const parts = version.split(/[^0-9]+/).filter(Boolean);
+  return `${parts[0] ?? ''}.${parts[1] ?? '0'}`;
+}
+
+function compareVersions(a: string, b: string): number {
+  const x = a.split(/[^0-9]+/).filter(Boolean).map(Number);
+  const y = b.split(/[^0-9]+/).filter(Boolean).map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+function nextBranchStart(start: string, versions: CveRecordVersion[]): string | undefined {
+  return versions
+    .map(v => asString(v?.version))
+    .filter((s): s is string => s !== undefined && isUsableVersion(s) && !isPlaceholderVersion(s))
+    .filter(s => branchOf(s) !== branchOf(start) && compareVersions(s, start) > 0)
+    .sort(compareVersions)[0];
+}
+
 function bump(dropped: Partial<Record<DropReason, number>>, reason: DropReason): void {
   dropped[reason] = (dropped[reason] ?? 0) + 1;
 }
@@ -180,6 +219,17 @@ export function extractCnaRows(affected: unknown): ExtractResult {
   const rows: CnaAffectedRow[] = [];
   const dropped: Partial<Record<DropReason, number>> = {};
   if (!Array.isArray(affected)) return { rows, dropped };
+
+  // Every version a record lists per product, whatever entry it sits in: what a
+  // "lessThan: *" branch is cut off by (nextBranchStart).
+  const versionsByProduct = new Map<string, CveRecordVersion[]>();
+  const productKey = (r: CveRecordAffected) =>
+    `${asString(r.vendor)?.toLowerCase()}\u0000${(asString(r.product) ?? asString(r.packageName))?.toLowerCase()}`;
+  for (const raw of affected as CveRecordAffected[]) {
+    if (typeof raw !== 'object' || raw === null || !Array.isArray(raw.versions)) continue;
+    const key = productKey(raw);
+    versionsByProduct.set(key, [...(versionsByProduct.get(key) ?? []), ...(raw.versions as CveRecordVersion[])]);
+  }
 
   for (const raw of affected as CveRecordAffected[]) {
     if (typeof raw !== 'object' || raw === null) continue;
@@ -218,12 +268,30 @@ export function extractCnaRows(affected: unknown): ExtractResult {
       }
 
       const lower = asString(v.version);
-      const lessThan = asString(v.lessThan);
+      const lessThanRaw = asString(v.lessThan);
       const lessThanOrEqual = asString(v.lessThanOrEqual);
+      // "22.2*" is every release of that train (Juniper writes its unfixed trains so): below the
+      // start of the next one, "22.3". The "*" would otherwise make the bound unusable.
+      const train = lessThanRaw?.match(/^(\d+)\.(\d+)\*$/);
+      const lessThan = train ? `${train[1]}.${Number(train[2]) + 1}` : lessThanRaw;
       const upperRaw = lessThan ?? lessThanOrEqual;
 
       if (isNetScalerBuildRange(vendor, versionType, upperRaw !== undefined)) {
         bump(dropped, 'netscalerBuildBound');
+        continue;
+      }
+
+      if (lessThanRaw === '*' && lower !== undefined && !isPlaceholderVersion(lower)
+          && isUsableVersion(lower) && isEncodableBound(lower)) {
+        const cap = nextBranchStart(lower, versionsByProduct.get(productKey(raw)) ?? versions);
+        rows.push({
+          vendor,
+          product,
+          packageName,
+          versionType,
+          versionStart: lower,
+          versionEnd: cap !== undefined && isEncodableBound(cap) ? cap : undefined,
+        });
         continue;
       }
 
