@@ -299,11 +299,23 @@ export function extractCnaRows(affected: unknown): ExtractResult {
 
       const lower = asString(v.version);
       const lessThanRaw = asString(v.lessThan);
-      const lessThanOrEqual = asString(v.lessThanOrEqual);
-      // "22.2*" is every release of that train (Juniper writes its unfixed trains so): below the
-      // start of the next one, "22.3". The "*" would otherwise make the bound unusable.
-      const train = lessThanRaw?.match(/^(\d+)\.(\d+)\*$/);
-      const lessThan = train ? `${train[1]}.${Number(train[2]) + 1}` : lessThanRaw;
+      const lessThanOrEqualRaw = asString(v.lessThanOrEqual);
+      // A bound with a wildcard names a whole line: "22.2*" (Juniper), "11.2.*" (Drupal, whose
+      // unsupported 11.0 to 11.2 lines are \"0.0.0 to 11.2.*\"), "8.1.*" as an inclusive bound
+      // (MongoDB). Whichever of lessThan or lessThanOrEqual carries it, the line is covered up
+      // to the start of the next one: below "22.3", "11.3", "8.2". The "*" would otherwise make
+      // the bound unusable and the whole range be dropped.
+      const wildLine = (s: string | undefined) => {
+        const m = s?.match(/^(\d+(?:\.\d+)*)\.?\*$/);
+        if (!m) return undefined;
+        const parts = m[1].split('.');
+        parts[parts.length - 1] = String(Number(parts[parts.length - 1]) + 1);
+        return parts.join('.');
+      };
+      const wildLessThan = wildLine(lessThanRaw);
+      const wildLessThanOrEqual = wildLine(lessThanOrEqualRaw);
+      const lessThan = wildLessThan ?? wildLessThanOrEqual ?? lessThanRaw;
+      const lessThanOrEqual = wildLessThanOrEqual !== undefined ? undefined : lessThanOrEqualRaw;
       const upperRaw = lessThan ?? lessThanOrEqual;
 
       if (isNetScalerBuildRange(vendor, versionType, upperRaw !== undefined)) {

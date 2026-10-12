@@ -286,6 +286,33 @@ describe('extractCnaRows', () => {
       });
     });
 
+    it('reads a dotted wildcard as the whole line, in lessThan or lessThanOrEqual (Drupal "11.2.*", MongoDB "8.1.*")', () => {
+      const { rows, dropped } = extractCnaRows([{
+        vendor: 'Drupal', product: 'Drupal core',
+        versions: [
+          { version: '0.0.0', lessThan: '11.0.*', status: 'affected', versionType: 'semver' },
+          { version: '0.0.0', lessThan: '11.2.*', status: 'affected', versionType: 'semver' },
+          { version: '8.1.0', lessThanOrEqual: '8.1.*', status: 'affected', versionType: 'semver' },
+          { version: '2.0.0', lessThan: '2.4.1.*', status: 'affected', versionType: 'semver' },
+        ],
+      }]);
+      expect(dropped.unusableVersionString).toBeUndefined();
+      expect(rows.map(r => [r.versionStart, r.versionEnd, r.lastAffected])).toEqual([
+        ['0.0.0', '11.1', undefined],
+        ['0.0.0', '11.3', undefined],
+        ['8.1.0', '8.2', undefined],
+        ['2.0.0', '2.4.2', undefined],
+      ]);
+    });
+
+    it('still drops a bare "*" bound, which is every version', () => {
+      const { rows } = extractCnaRows([{
+        vendor: 'Acme', product: 'Widget',
+        versions: [{ version: '1.0', lessThanOrEqual: '*', status: 'affected' }],
+      }]);
+      expect(rows).toEqual([]);
+    });
+
     it('still drops a placeholder start with "*", which is every version', () => {
       for (const version of ['0', '*', 'unspecified']) {
         const { rows, dropped } = f5([{ version, lessThan: '*' }]);

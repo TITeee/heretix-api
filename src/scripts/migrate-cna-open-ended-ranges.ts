@@ -15,59 +15,29 @@
  * Idempotent: running it again rebuilds the same rows. The CnaVulnerability rows
  * stay as they are (their rawAffected is the input).
  *
+ * The dotted wildcards ("11.2.*", "8.1.*") came later and have their own migration,
+ * migrate-cna-dotted-wildcard-ranges, so that a database that has already run this one
+ * runs that one too.
+ *
  * Usage:
  *   pnpm migrate:cna-open-ended-ranges             # rewrite
  *   pnpm migrate:cna-open-ended-ranges --dry-run   # count only
  */
 import 'dotenv/config';
 import { closeDb, prisma } from '../db/client.js';
-import { extractCnaRows } from '../worker/cna-fetcher.js';
-import { normalizeVersion } from '../utils/version.js';
+import { rebuildCnaRows, type CnaRecord } from './lib/rebuild-cna-rows.js';
 
 const dryRun = process.argv.includes('--dry-run');
 
 async function main() {
-  const records = await prisma.$queryRaw<{ id: string; cveId: string; rawAffected: unknown }[]>`
+  const records = await prisma.$queryRaw<CnaRecord[]>`
     SELECT id, "cveId", "rawAffected" FROM "CnaVulnerability"
     WHERE "rawAffected"::text ~ '"lessThan": "([0-9]+[.][0-9]+)?[*]"'
        OR "rawAffected"::text ~ '"lessThan": "[^"]*,[^"]*"'
   `;
   console.log(`${records.length} CVE record(s) declare a "lessThan: *", whole-train or list-of-fixes range.`);
 
-  let before = 0;
-  let after = 0;
-  let changed = 0;
-  for (const rec of records) {
-    const { rows } = extractCnaRows(rec.rawAffected);
-    const current = await prisma.cnaAffectedProduct.count({ where: { vulnerabilityId: rec.id } });
-    before += current;
-    after += rows.length;
-    // Always rebuilt, not only when the count differs: a range can change its end alone.
-    changed++;
-    if (dryRun) continue;
-
-    await prisma.$transaction(async (tx) => {
-      await tx.cnaAffectedProduct.deleteMany({ where: { vulnerabilityId: rec.id } });
-      if (rows.length === 0) return;
-      await tx.cnaAffectedProduct.createMany({
-        data: rows.map(row => ({
-          vulnerabilityId: rec.id,
-          vendor: row.vendor,
-          product: row.product,
-          packageName: row.packageName ?? null,
-          versionType: row.versionType ?? null,
-          versionStart: row.versionStart ?? null,
-          versionEnd: row.versionEnd ?? null,
-          lastAffected: row.lastAffected ?? null,
-          versionStartInt: row.versionStart ? (normalizeVersion(row.versionStart) ?? null) : null,
-          versionEndInt: row.versionEnd ? (normalizeVersion(row.versionEnd) ?? null) : null,
-          lastAffectedInt: row.lastAffected ? (normalizeVersion(row.lastAffected) ?? null) : null,
-          affectedVersions: row.affectedVersions ?? [],
-        })),
-      });
-    });
-  }
-
+  const { before, after, changed } = await rebuildCnaRows(records, dryRun);
   console.log(`${dryRun ? 'Would rewrite' : 'Rewrote'} ${changed} CVE(s); rows ${before} -> ${after} (${after >= before ? '+' : ''}${after - before}).`);
 }
 
