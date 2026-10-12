@@ -24,7 +24,8 @@ const POST_RELEASE_LABELS = new Set([
 
 /**
  * Split a version whose first hyphen-separated part is a dotted number with a
- * label and a 1-3 digit number attached ("6.0.18rc1", "2.1.0.dev2", "7.4p1").
+ * label and a 1-3 digit number attached ("6.0.18rc1", "2.1.0.dev2", "7.4p1"), the label
+ * joined by nothing, a dot or an underscore ("2.7_alpha1", "2.1_rc10", OpenVPN's way).
  *
  * Deliberately narrow, so opaque identifiers keep the encoding they had
  * (usually null, and so exact-string matching): the base must be dotted with
@@ -39,7 +40,7 @@ function labelledVersion(version: string):
   | { kind: 'post'; base: string; num: number }
   | null {
   const first = version.split('-')[0];
-  const m = first.match(/^[vV]?(\d+(?:\.\d+){1,2})\.?([A-Za-z]+)(\d{1,3})(.*)$/);
+  const m = first.match(/^[vV]?(\d+(?:\.\d+){1,2})[._]?([A-Za-z]+)(\d{1,3})(.*)$/);
   if (!m) return null;
   const [, base, rawLabel, num, rest] = m;
   const label = rawLabel.toLowerCase();
