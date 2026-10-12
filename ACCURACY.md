@@ -207,8 +207,9 @@ Two sibling checks need no API: `pnpm validate:catalog-kev` (does each entry rea
 
 - F5 writes an unfixed branch `version: 16.1.0, lessThan: *` and Juniper writes a whole train `lessThan: 22.2*` or a list of fixed releases `23.4R1-S2, 23.4R2`; the CNA import dropped all three. Fixed in #100 and #101: recall F5 93.57% to 100%, Junos 97.55% to 100%.
 - A label joined by an underscore (`2.7_alpha1`, `2.1_rc10`) was read as 2.71 and 2.110, so OpenVPN's ranges starting there ended before they began and matched nothing. Fixed in #103: OpenVPN recall 63.94% to 100%.
+- A hyphen-joined update or interim fix (`7.4.13-u92`, `24.0.0-IF006`) was read as a pre-release, one below its release, so Liferay's ranges `7.4.13` to `7.4.13-u92` ended before they began. Fixed in #105: inverted CNA ranges, which match nothing, went from 417 to 279.
 
-**Still open.** About 460 CNA rows have a start above their end and so match nothing (Microsoft 173, Liferay 149, IBM 22, Brocade 20, Go 13, Checkmk 6 and others); the causes differ per vendor and are not looked into yet. Cisco is not covered (its advisory source needs credentials).
+**Still open.** 279 CNA rows still have a start above their end and so match nothing. About 220 are errors in the CNA's own data (Microsoft 172, with starts such as `19.0.0` for Office 2019 beside a build-number end; IBM 19; Liferay 14; Spotfire, OpenAI, Hiawatha, Payara, Citrix), which no reading of the version string repairs. Brocade's 20 (`10.0.0a1`) use a trailing letter for a patch, which depends on the vendor. About 25 are a branch's first release against a pre-release of it (Go `1.27.0-0` to `1.27.0-rc.3`, Checkmk `2.4.0` to `2.4.0b2`, Unity, VyOS). Cisco is not covered (its advisory source needs credentials).
 
 ## Known limitations
 
