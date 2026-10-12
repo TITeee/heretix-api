@@ -204,6 +204,36 @@ function nextBranchStart(start: string, versions: CveRecordVersion[]): string | 
     .sort(compareVersions)[0];
 }
 
+/**
+ * Juniper writes a train that was fixed in several releases as a list:
+ * "version: 23.4, lessThan: 23.4R1-S2, 23.4R2". Each release line has its own fix, so
+ * the affected releases are those below the fix of their own line: here 23.4 up to
+ * 23.4R1-S2 (R1 is fixed at S2) and nothing in R2 (R2 itself is fixed). In general:
+ *   - from the start up to the first fix;
+ *   - from the release after one fix's line up to the next fix, which is empty when the
+ *     next fix is a plain release ("23.4R3" starts at 23.4R3) and is dropped then.
+ * Returns the [start, end) pairs, or null when the list is not the shape this reads
+ * (a version that is not a Junos release, or fixes in more than one train), so the
+ * caller drops it as it always did. Palo Alto and Microsoft also write lists with
+ * commas and mean something else by them, so the caller only asks for Juniper.
+ */
+function junosFixListRanges(start: string | undefined, list: string): { start?: string; end: string }[] | null {
+  const fixes = list.split(',').map(s => s.trim());
+  const parsed = fixes.map(f => f.match(/^(\d+)\.(\d+)R(\d+)(?:-S(\d+))?$/));
+  if (parsed.some(m => m === null) || fixes.length < 2) return null;
+  const sorted = fixes.map((f, i) => ({ f, m: parsed[i]! })).sort((a, b) => compareVersions(a.f, b.f));
+  const train = `${sorted[0].m[1]}.${sorted[0].m[2]}`;
+  if (sorted.some(x => `${x.m[1]}.${x.m[2]}` !== train)) return null;
+
+  const ranges: { start?: string; end: string }[] = [{ start, end: sorted[0].f }];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1].m;
+    const from = `${prev[1]}.${prev[2]}R${Number(prev[3]) + 1}`;
+    if (compareVersions(from, sorted[i].f) < 0) ranges.push({ start: from, end: sorted[i].f });
+  }
+  return ranges;
+}
+
 function bump(dropped: Partial<Record<DropReason, number>>, reason: DropReason): void {
   dropped[reason] = (dropped[reason] ?? 0) + 1;
 }
@@ -279,6 +309,17 @@ export function extractCnaRows(affected: unknown): ExtractResult {
       if (isNetScalerBuildRange(vendor, versionType, upperRaw !== undefined)) {
         bump(dropped, 'netscalerBuildBound');
         continue;
+      }
+
+      if (lessThan !== undefined && lessThan.includes(',') && /^juniper/i.test(vendor)) {
+        const startOk = isPlaceholderVersion(lower) || (isUsableVersion(lower) && isEncodableBound(lower));
+        const ranges = startOk ? junosFixListRanges(isPlaceholderVersion(lower) ? undefined : lower, lessThan) : null;
+        if (ranges && ranges.every(r => isEncodableBound(r.end) && (r.start === undefined || isEncodableBound(r.start)))) {
+          for (const r of ranges) {
+            rows.push({ vendor, product, packageName, versionType, versionStart: r.start, versionEnd: r.end });
+          }
+          continue;
+        }
       }
 
       if (lessThanRaw === '*' && lower !== undefined && !isPlaceholderVersion(lower)

@@ -1,7 +1,8 @@
 /**
- * One-time migration: store the CNA ranges written "lessThan: *" (or a whole train,
- * "lessThan: 22.2*") that extractCnaRows() used to drop (cna-fetcher.ts,
- * nextBranchStart()).
+ * One-time migration: store the CNA ranges written "lessThan: *", as a whole train
+ * ("lessThan: 22.2*"), or as Juniper's list of fixed releases ("lessThan: 23.4R1-S2,
+ * 23.4R2") that extractCnaRows() used to drop (cna-fetcher.ts, nextBranchStart(),
+ * junosFixListRanges()).
  *
  * A CNA that has not fixed a branch writes it "version: 16.1.0, lessThan: *":
  * that release and every later one in its branch. F5 does this for each
@@ -29,8 +30,9 @@ async function main() {
   const records = await prisma.$queryRaw<{ id: string; cveId: string; rawAffected: unknown }[]>`
     SELECT id, "cveId", "rawAffected" FROM "CnaVulnerability"
     WHERE "rawAffected"::text ~ '"lessThan": "([0-9]+[.][0-9]+)?[*]"'
+       OR "rawAffected"::text ~ '"lessThan": "[^"]*,[^"]*"'
   `;
-  console.log(`${records.length} CVE record(s) declare a "lessThan: *" or whole-train range.`);
+  console.log(`${records.length} CVE record(s) declare a "lessThan: *", whole-train or list-of-fixes range.`);
 
   let before = 0;
   let after = 0;

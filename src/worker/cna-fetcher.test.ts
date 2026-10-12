@@ -254,6 +254,38 @@ describe('extractCnaRows', () => {
       expect(rows.map(r => [r.versionStart, r.versionEnd])).toEqual([['22.2', '22.3'], ['21.4R1', '21.5'], ['22.4', '22.4R3-S5']]);
     });
 
+    describe('a list of fixed releases (Juniper)', () => {
+      const junos = (version: string, lessThan: string, vendor = 'Juniper') => extractCnaRows([{
+        vendor, product: 'Junos OS', versions: [{ version, lessThan, status: 'affected', versionType: 'semver' }],
+      }]);
+
+      it('reads "23.4R1-S2, 23.4R2" as 23.4 up to 23.4R1-S2: R1 is fixed at S2 and R2 is fixed outright', () => {
+        const { rows, dropped } = junos('23.4', '23.4R1-S2, 23.4R2');
+        expect(dropped.unusableVersionString).toBeUndefined();
+        expect(rows.map(r => [r.versionStart, r.versionEnd])).toEqual([['23.4', '23.4R1-S2']]);
+      });
+
+      it('adds the range of a later line that has its own service-release fix', () => {
+        const { rows } = junos('22.4', '22.4R1-S3, 22.4R2-S2, 22.4R3');
+        expect(rows.map(r => [r.versionStart, r.versionEnd])).toEqual([['22.4', '22.4R1-S3'], ['22.4R2', '22.4R2-S2']]);
+      });
+
+      it('sorts the fixes and takes a "0" start as no lower bound', () => {
+        const { rows } = junos('0', '24.2R2, 24.2R1-S2');
+        expect(rows.map(r => [r.versionStart, r.versionEnd])).toEqual([[undefined, '24.2R1-S2']]);
+      });
+
+      it('drops a list with fixes in more than one train, or that is not Junos releases', () => {
+        expect(junos('23.2', '23.2R2-S3, 23.4R1').rows).toEqual([]);
+        expect(junos('23.4', '23.4R1-S2, soon').rows).toEqual([]);
+      });
+
+      it('leaves other vendors\' lists alone: Palo Alto and Microsoft mean something else by them', () => {
+        expect(junos('10.2', '10.2.10-h29, 10.2.4-h43', 'Palo Alto Networks').rows).toEqual([]);
+        expect(junos('23.4', '23.4R1-S2, 23.4R2', 'Microsoft').rows).toEqual([]);
+      });
+    });
+
     it('still drops a placeholder start with "*", which is every version', () => {
       for (const version of ['0', '*', 'unspecified']) {
         const { rows, dropped } = f5([{ version, lessThan: '*' }]);
