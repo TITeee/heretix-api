@@ -75,41 +75,91 @@ interface Scheme {
   makeRange(cve: string, entry: CnaVersion, productStarts: V[]): Range | null;
 }
 
-// ─── dotted: 17.1.2.1 ───────────────────────────────────────────────────────
+// ─── dotted: 17.1.2.1, and releases with a suffix ─────────────────────────────
+//
+// A version is its numeric components (padded to PAD) followed by [rank, n]:
+//   rank 0, n 0     a plain release, or one with a release-type letter only
+//                   (Arista 4.36.0F, 4.35.5M): the letter is ignored
+//   rank < 0        a pre-release, sorted before the release (2.5.0b2, 2.7_rc1)
+//   rank 1, n       a post-release, after it (Checkmk 2.4.0p16, BIND 9.20.9-S1,
+//                   Grafana 11.6.14+security-04)
+// "N/A", "unspecified", "All Previous Versions" and "0" as a START mean no lower bound.
+
+const PAD = 6;
+const written = new Map<string, { len: number; label: string }>();
+const keyOf = (v: V) => v.join(',');
+const PLACEHOLDER = /^(?:|n\/a|unspecified|unknown|-|\*|0|all( previous)? versions?)$/i;
+const PRE = new Map([['alpha', -3], ['a', -3], ['beta', -2], ['b', -2], ['rc', -1], ['pre', -1]]);
+const POST = new Set(['p', 'patch', 's', 'sp', 'security', 'hf', 'hotfix', 'u', 'update']);
+const IGNORED = new Set(['f', 'm', 'ga', 'lts', 'r']);
+
+function make(nums: number[], rank: number, n: number, label: string): V {
+  const v = [...nums, ...Array<number>(PAD - nums.length).fill(0), rank, n];
+  const key = keyOf(v);
+  if (!written.has(key)) written.set(key, { len: nums.length, label });
+  return v;
+}
+
+function parseDotted(raw: string, asStart: boolean): V | null {
+  const s = raw.trim().replace(/^v/i, '');
+  if (PLACEHOLDER.test(s)) return asStart ? make([0], 0, 0, '0') : null;
+  const m = s.replace(/\.$/, '').match(/^(\d+(?:\.\d+)*)(?:\+security-(\d+)|[_-]?([A-Za-z]+)[-_]?(\d*))?$/);
+  if (!m) return null;
+  const nums = m[1].split('.').map(Number);
+  if (nums.length > PAD) return null;
+  const label = raw.trim();
+  if (m[2] !== undefined) return make(nums, 1, Number(m[2]), label);
+  if (m[3] === undefined) return make(nums, 0, 0, label);
+  const word = m[3].toLowerCase();
+  if (PRE.has(word)) return make(nums, PRE.get(word)!, Number(m[4] || 0), label);
+  if (POST.has(word)) return make(nums, 1, Number(m[4] || 0), label);
+  if (IGNORED.has(word) && !m[4]) return make(nums, 0, 0, label);
+  return null;
+}
 
 /** The branch of a dotted version: its first two components ("17.1" for 17.1.2.1). */
-const branch = (p: V) => `${p[0]}.${p[1] ?? 0}`;
+const branch = (p: V) => `${p[0]}.${p[1]}`;
 
 const dotted: Scheme = {
   name: 'dotted',
-  parse: (s) => (/^\d+(\.\d+)*$/.test(s) ? s.split('.').map(Number) : null),
-  format: (v) => v.join('.'),
-  below(p) {
-    const out = [...p];
-    if (out[out.length - 1] === 0) return null;
-    out[out.length - 1]--;
-    return out;
+  parse: (s) => parseDotted(s, true),
+  format: (v) => written.get(keyOf(v))?.label ?? v.slice(0, PAD).join('.'),
+  below(v) {
+    // Only a plain release has a "just below" worth naming: its last written component, less one.
+    if (v[PAD] !== 0 || v[PAD + 1] !== 0) return null;
+    const len = written.get(keyOf(v))?.len ?? 0;
+    if (len === 0 || v[len - 1] === 0) return null;
+    const nums = v.slice(0, len);
+    nums[len - 1]--;
+    return make(nums, 0, 0, nums.join('.'));
   },
   makeRange(cve, e, productStarts) {
-    const start = e.version ? this.parse(e.version) : null;
+    const start = e.version ? parseDotted(e.version, true) : null;
     if (!start) return null;
     const endText = e.lessThan ?? e.lessThanOrEqual;
     // F5 writes "lessThan: *" for "every release of this branch, no fix": it ends where
     // the next branch of the same product begins (16.1.0 * stops at 17.1.0), or never.
     const open = endText === '*';
+    // "8.1.*" is the whole 8.1 line: it ends, exclusively, at 8.2.
+    const wild = endText?.match(/^(\d+(?:\.\d+)*)\.\*$/);
     let end: V | null = null;
-    if (endText && !open) {
-      end = this.parse(endText);
+    if (wild) {
+      const nums = wild[1].split('.').map(Number);
+      nums[nums.length - 1]++;
+      end = make(nums, 0, 0, nums.join('.'));
+    } else if (endText && !open) {
+      end = parseDotted(endText, false);
       if (!end) return null;
     } else if (open) {
       end = productStarts.filter(x => branch(x) !== branch(start) && cmp(x, start) > 0).sort(cmp)[0] ?? null;
     }
     const exact = !endText;
-    const inclusive = e.lessThanOrEqual !== undefined;
+    const inclusive = e.lessThanOrEqual !== undefined && !wild;
     const text = exact ? e.version! : `${e.version} to ${open ? '*' : e.lessThan ? `< ${e.lessThan}` : `<= ${e.lessThanOrEqual}`}`;
+    const lowest = start.every(x => x === 0);
     const points: Range['points'] = [
-      { v: start, why: `start of ${text}` },
-      ...(this.below(start) ? [{ v: this.below(start)!, why: `just below the start of ${text}` }] : []),
+      ...(lowest ? [] : [{ v: start, why: `start of ${text}` }]),
+      ...(!lowest && this.below(start) ? [{ v: this.below(start)!, why: `just below the start of ${text}` }] : []),
       ...(end ? [{ v: end, why: `end of ${text}` }] : []),
       ...(end && this.below(end) ? [{ v: this.below(end)!, why: `just below the end of ${text}` }] : []),
     ];
@@ -209,6 +259,18 @@ const junos: Scheme = {
   },
 };
 
+/** The API rate-limits per client (RATE_LIMIT_MAX, 1200 a minute): wait out a 429 and ask again. */
+async function getWithRetry(url: string, config: Parameters<typeof axios.get>[1]) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await axios.get(url, config);
+    } catch (err) {
+      if (!axios.isAxiosError(err) || err.response?.status !== 429 || attempt >= 8) throw err;
+      await new Promise(resolve => setTimeout(resolve, 16_000));
+    }
+  }
+}
+
 function argValue(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
   return i >= 0 ? process.argv[i + 1] : undefined;
@@ -272,7 +334,7 @@ async function main(): Promise<void> {
   const results = await mapWithConcurrency([...points.values()], 4, async (pt): Promise<SweepEntry> => {
     const version = scheme.format(pt.v);
     const found = await queryAllPages(async (offset) => {
-      const { data } = await axios.get(`${API_BASE}/api/v1/vulnerabilities/search`, {
+      const { data } = await getWithRetry(`${API_BASE}/api/v1/vulnerabilities/search`, {
         params: { package: entry.name, version, limit: PAGE, offset },
         headers: key ? { 'x-api-key': key } : {},
         timeout: 120_000,
