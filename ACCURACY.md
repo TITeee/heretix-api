@@ -159,6 +159,57 @@ pnpm validate:postgresql 16.4
 
 *`php` uses the same dotted Module stream label (`"Module php:8.1 is enabled"`), already covered for free by the `extractModuleMajor()` fix above, plus an ancient bare `5.1`/`5.3` line (RHEL5/6, predating DNF modularity) confirmed via `package=php&version=5.1.6&ecosystem=oracle-linux`: 180 matches before the fix, 134 of them (74%) fixed only in the unrelated `5.3.x` line, down to 59 (0 cross-line) after. `mysql`/`mariadb`/`php` all ship many same-source-RPM subpackages (`mysql-server`, `mariadb-bench`, `php-cli`, ...) sharing the exact same version-release string as their base package — `inferBareVersionStart()` now covers those too, confirmed via `package=php-cli&version=5.3.3&ecosystem=oracle-linux` (76 results, 0 cross-line) and `package=mysql-server&version=5.1.60&ecosystem=oracle-linux` (70 results, 0 cross-line). A handful of subpackages carry their own independent version instead (`mysql-selinux`'s SELinux policy version, `mariadb-connector-c`'s client-library version, PHP's `php-pecl-*`/`php-pear`/`php-libguestfs`) and are deliberately excluded — see `inferBareVersionStart()`'s doc comment for the full verified membership list. RHEL6/7-era Software Collections packages (`php54-php-cli`, `mysql55-mysql-server`, ...) need no fix at all: the version is baked into the product name itself, so they're already isolated from this collision by construction.*
 
+## Catalog entries vs the vendor's own CVE records
+
+When a vendor is its own CNA, the CVE record it published says, per CVE, which versions are affected and where each branch is fixed. `validate:catalog-cna` takes that as the reference for a catalog entry: it derives boundary versions from every affected range (each range's start, the version just below it, the fix, and the version just below the fix), searches by the entry's **name** at each, and compares the CVEs that come back with the ones the vendor's record says are affected there. Only the CVEs that CNA published for the product are judged; any other result is unknown, neither a hit nor a false positive. Its version comparison is written apart from the search's own `normalizeVersion`, so it can disagree.
+
+```bash
+pnpm validate:catalog-cna f5-big-ip --cna f5
+pnpm validate:catalog-cna juniper-junos-os --cna juniper   # Junos releases (23.4R2-S5) are read as such
+```
+
+It needs the API running. The API rate-limits per client (`RATE_LIMIT_MAX`, 1,200 a minute); the script waits out a 429, but a sweep of a large entry is faster with `RATE_LIMIT_MAX=0` on a local API.
+
+Two sibling checks need no API: `pnpm validate:catalog-kev` (does each entry reach the CISA KEV CVEs of its product: 148 of 150) and `pnpm validate:catalog-unbounded` (CVEs reached only through NVD rows with no version bound; at most 10.7% of an entry, Kubernetes, and mostly under 5%).
+
+| Entry | CVEs | Versions tested | Precision | Recall |
+|---|---:|---:|---:|---:|
+| Elasticsearch | 48 | 73 | 100.00% | 100.00% |
+| Eclipse Jetty | 12 | 48 | 100.00% | 100.00% |
+| JFrog Artifactory | 43 | 58 | 100.00% | 100.00% |
+| Docker Desktop / Engine | 16 / 3 | 21 / 6 | 100.00% | 100.00% |
+| Ubiquiti UniFi OS Server | 7 | 2 | 100.00% | 100.00% |
+| GitLab | 342 | 316 | 99.93% | 100.00% |
+| JetBrains TeamCity | 65 | 22 | 99.86% | 100.00% |
+| Sonatype Nexus Repository | 32 | 33 | 99.84% | 100.00% |
+| F5 BIG-IP | 109 | 44 | 99.70% | 100.00% |
+| Dell PowerProtect Data Domain | 29 | 34 | 99.41% | 100.00% |
+| HashiCorp Vault | 26 | 45 | 99.16% | 100.00% |
+| ISC BIND | 40 | 79 | 99.12% | 100.00% |
+| OpenVPN | 25 | 30 | 99.05% | 100.00% |
+| Juniper Junos OS | 111 | 116 | 98.95% | 100.00% |
+| Elastic Kibana | 129 | 112 | 98.22% | 100.00% |
+| Mattermost Server | 256 | 241 | 97.68% | 100.00% |
+| WatchGuard Fireware | 72 | 57 | 96.93% | 100.00% |
+| Apache Traffic Server | 44 | 21 | 96.53% | 100.00% |
+| Arista EOS | 54 | 74 | 96.45% | 99.86% |
+| Dell PowerScale OneFS | 22 | 35 | 94.59% | 100.00% |
+| Checkmk | 47 | 62 | 92.59% | 100.00% |
+| MongoDB Server | 134 | 113 | 91.85% | 100.00% |
+| Grafana | 48 | 130 | 87.21% | 100.00% |
+| Progress Kemp LoadMaster | 6 | 17 | 65.22% | 98.36% |
+
+*Measured 2026-10-12. Not measurable: IBM WebSphere (IBM's CNA writes ranges such as `7.0.2 Interim Fix 035` that cannot be ordered, so most of its ranges are unreadable) and Node.js (its CNA names whole lines, `4.x`).*
+
+**What the numbers mean.** They are agreement with the vendor's record, not truth: the vendor's record can be incomplete or wrong (MongoDB's CVE-2026-18692 lists one branch where NVD lists four) and NVD can be wrong where it differs (Grafana's NVD ranges start at the fixed version). Search returns the union of NVD and the CNA, so where NVD is broader than the vendor, its extra versions show up as false positives; that is most of the precision below 99%. Whether the vendor's record should win is an open design question.
+
+**What the sweeps found and fixed.**
+
+- F5 writes an unfixed branch `version: 16.1.0, lessThan: *` and Juniper writes a whole train `lessThan: 22.2*` or a list of fixed releases `23.4R1-S2, 23.4R2`; the CNA import dropped all three. Fixed in #100 and #101: recall F5 93.57% to 100%, Junos 97.55% to 100%.
+- A label joined by an underscore (`2.7_alpha1`, `2.1_rc10`) was read as 2.71 and 2.110, so OpenVPN's ranges starting there ended before they began and matched nothing. Fixed in #103: OpenVPN recall 63.94% to 100%.
+
+**Still open.** About 460 CNA rows have a start above their end and so match nothing (Microsoft 173, Liferay 149, IBM 22, Brocade 20, Go 13, Checkmk 6 and others); the causes differ per vendor and are not looked into yet. Cisco is not covered (its advisory source needs credentials).
+
 ## Known limitations
 
 ### Cross-source version-namespace collisions (package=openssl etc.)
