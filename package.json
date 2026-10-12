@@ -74,6 +74,7 @@
     "validate:catalog": "node dist/scripts/validate-catalog.js",
     "validate:catalog-kev": "node dist/scripts/validate-catalog-kev.js",
     "validate:catalog-unbounded": "node dist/scripts/validate-catalog-unbounded.js",
+    "validate:catalog-cna": "node dist/scripts/validate-catalog-cna.js",
     "validate:osv-coverage": "node dist/scripts/validate-osv-coverage.js",
     "validate:version-encoding": "node dist/scripts/validate-version-encoding.js",
     "validate:nodejs": "node dist/scripts/validate-nodejs.js",
