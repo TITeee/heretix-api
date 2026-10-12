@@ -172,6 +172,102 @@ describe('extractCnaRows', () => {
     expect(dropped.unusableVersionString).toBe(1);
   });
 
+  describe('"lessThan: *" with a real starting version (no fix yet)', () => {
+    // CVE-2025-48500's shape: one entry per branch, none fixed.
+    const f5 = (versions: object[]) => extractCnaRows([{
+      vendor: 'F5', product: 'BIG-IP', defaultStatus: 'unaffected',
+      versions: versions.map(v => ({ status: 'affected', versionType: 'custom', ...v })),
+    }]);
+
+    it('stores the range from its start and ends it where the next branch of the record begins', () => {
+      const { rows, dropped } = f5([
+        { version: '17.5.0', lessThan: '*' },
+        { version: '17.1.0', lessThan: '*' },
+        { version: '16.1.0', lessThan: '*' },
+        { version: '15.1.0', lessThan: '*' },
+      ]);
+      expect(dropped.unusableVersionString).toBeUndefined();
+      expect(rows.map(r => [r.versionStart, r.versionEnd, r.lastAffected])).toEqual([
+        ['17.5.0', undefined, undefined],
+        ['17.1.0', '17.5.0', undefined],
+        ['16.1.0', '17.1.0', undefined],
+        ['15.1.0', '16.1.0', undefined],
+      ]);
+    });
+
+    it('is capped by a fixed branch as well, so it does not run on into a branch that has its fix', () => {
+      const { rows } = f5([
+        { version: '17.1.0', lessThan: '17.1.3.1' },
+        { version: '16.1.0', lessThan: '*' },
+      ]);
+      expect(rows.map(r => [r.versionStart, r.versionEnd])).toEqual([['17.1.0', '17.1.3.1'], ['16.1.0', '17.1.0']]);
+    });
+
+    it('is capped by an unaffected branch too (21.1.0 and up are not affected)', () => {
+      const { rows } = extractCnaRows([{
+        vendor: 'F5', product: 'BIG-IP',
+        versions: [
+          { version: '21.1.0', lessThan: '*', status: 'unaffected' },
+          { version: '17.1.0', lessThan: '*', status: 'affected' },
+        ],
+      }]);
+      expect(rows.map(r => [r.versionStart, r.versionEnd])).toEqual([['17.1.0', '21.1.0']]);
+    });
+
+    it('does not cap by another release of its own branch', () => {
+      const { rows } = f5([
+        { version: '16.1.0', lessThan: '*' },
+        { version: '16.1.5', lessThan: '16.1.6' },
+      ]);
+      expect(rows.map(r => [r.versionStart, r.versionEnd])).toEqual([['16.1.0', undefined], ['16.1.5', '16.1.6']]);
+    });
+
+    it('is cut off by a branch the record lists in another entry of the same product (WatchGuard)', () => {
+      const { rows } = extractCnaRows([
+        { vendor: 'WatchGuard', product: 'Fireware OS', versions: [
+          { version: '2025.1', lessThan: '2026.2.1', status: 'affected' },
+          { version: '12.0', lessThan: '12.12.1', status: 'affected' },
+        ] },
+        { vendor: 'WatchGuard', product: 'Fireware OS', versions: [{ version: '12.0', lessThan: '*', status: 'affected' }] },
+      ]);
+      expect(rows.map(r => [r.versionStart, r.versionEnd])).toEqual([['2025.1', '2026.2.1'], ['12.0', '12.12.1'], ['12.0', '2025.1']]);
+    });
+
+    it('is not cut off by the branches of another product', () => {
+      const { rows } = extractCnaRows([
+        { vendor: 'Acme', product: 'Alpha', versions: [{ version: '1.0', lessThan: '*', status: 'affected' }] },
+        { vendor: 'Acme', product: 'Beta', versions: [{ version: '2.0', lessThan: '2.3', status: 'affected' }] },
+      ]);
+      expect(rows.map(r => [r.product, r.versionStart, r.versionEnd])).toEqual([['Alpha', '1.0', undefined], ['Beta', '2.0', '2.3']]);
+    });
+
+    it('reads "22.2*" as the whole train, ending where the next one starts (Juniper)', () => {
+      const { rows, dropped } = extractCnaRows([{
+        vendor: 'Juniper', product: 'Junos OS',
+        versions: [
+          { version: '22.2', lessThan: '22.2*', status: 'affected', versionType: 'semver' },
+          { version: '21.4R1', lessThan: '21.4*', status: 'affected', versionType: 'semver' },
+          { version: '22.4', lessThan: '22.4R3-S5', status: 'affected', versionType: 'semver' },
+        ],
+      }]);
+      expect(dropped.unusableVersionString).toBeUndefined();
+      expect(rows.map(r => [r.versionStart, r.versionEnd])).toEqual([['22.2', '22.3'], ['21.4R1', '21.5'], ['22.4', '22.4R3-S5']]);
+    });
+
+    it('still drops a placeholder start with "*", which is every version', () => {
+      for (const version of ['0', '*', 'unspecified']) {
+        const { rows, dropped } = f5([{ version, lessThan: '*' }]);
+        expect(rows).toEqual([]);
+        expect(dropped.unusableVersionString).toBe(1);
+      }
+    });
+
+    it('leaves "lessThanOrEqual: *" alone', () => {
+      const { rows } = f5([{ version: '16.1.0', lessThanOrEqual: '*' }]);
+      expect(rows).toEqual([]);
+    });
+  });
+
   describe('NetScaler build ranges', () => {
     // CVE-2025-12101 as the CNA wrote it: the branch is the version, the build the bound.
     const netscaler = (versions: unknown[], vendor = 'NetScaler', product = 'ADC') =>
