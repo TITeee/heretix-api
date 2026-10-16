@@ -437,6 +437,7 @@ async function searchAdvisory(
           cvssVector: true,
           summary: true,
           publishedAt: true,
+          distroPriority: true,
           masterVuln: { select: masterSelect },
         },
       },
@@ -449,7 +450,7 @@ async function searchAdvisory(
     const approximateMatch = version === undefined
       || (ownOrderInts.has(r.vendor) ? ownOrderInts.get(r.vendor) === null : approximate);
     if (adv.masterVuln) {
-      return { ...masterToResult(adv.masterVuln, approximateMatch, adv.source, fixedVersion, adv.externalId), ...rowFixStatus(r) };
+      return { ...masterToResult(adv.masterVuln, approximateMatch, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority, ...rowFixStatus(r) };
     }
     return {
       id: adv.id,
@@ -466,7 +467,7 @@ async function searchAdvisory(
       epssScore: null,
       epssPercentile: null,
       fixedVersion,
-      distroPriority: null,
+      distroPriority: adv.distroPriority,
       ...rowFixStatus(r),
       aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
     };

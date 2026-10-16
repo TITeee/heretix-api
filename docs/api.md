@@ -72,7 +72,12 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/sear
 
 # Vendor advisories only
 curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=httpd&version=2.4.60&ecosystem=advisory"
+
+# Windows Server: the product as MSRC names it, and the full OS build including the update revision
+curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/search?package=Windows%20Server%202022&version=10.0.20348.5622&ecosystem=advisory"
 ```
+
+Windows Server data is in beta (see [Microsoft (Windows Server)](data-sources.md#microsoft-windows-server)). A Windows Server is searched by its product and its full OS build (`10.0.20348.5622`, the last number being the update build revision that each cumulative update raises). A Server Core installation is a product of its own: `Windows Server 2022 (Server Core installation)`. See [Microsoft (Windows Server)](data-sources.md#microsoft-windows-server).
 
 Go vulnerabilities are recorded per sub-module, so search with the exact module path (see [known-issues.md](known-issues.md#go-sub-modules-need-the-exact-module-path)).
 
@@ -131,6 +136,7 @@ The distribution's own rating of this CVE for the matched package, verbatim. Unl
 | Ubuntu | `negligible` / `low` / `medium` / `high` / `critical` | Ubuntu priority (OSV) |
 | Debian | `unimportant` / `low` / `medium` / `high` / `end-of-life` / `not yet assigned`, per release | Debian security tracker urgency (OSV) |
 | RHEL | `low` / `moderate` / `important` / `critical` | Red Hat's per-CVE impact (OVAL / VEX) |
+| Windows Server | `Low` / `Moderate` / `Important` / `Critical` | Microsoft's severity rating (MSRC), the highest it gives an imported Windows Server product |
 
 Alpine, AlmaLinux, Rocky Linux and Oracle Linux return `null`: their sources have no rating, or only one per advisory rather than per CVE.
 

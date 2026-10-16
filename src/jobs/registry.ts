@@ -32,6 +32,7 @@ import { NginxFetcher } from '../worker/nginx-fetcher.js';
 import { CheckpointFetcher } from '../worker/checkpoint-fetcher.js';
 import { IvantiFetcher } from '../worker/ivanti-fetcher.js';
 import { CitrixFetcher } from '../worker/citrix-fetcher.js';
+import { MsrcFetcher } from '../worker/msrc-fetcher.js';
 import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { importCnaDelta } from '../worker/cna-importer.js';
 import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
@@ -102,6 +103,10 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-checkpoint',   label: 'Check Point',        cron: '0 16 * * *',  run: () => runAdvisory('advisory-checkpoint', new CheckpointFetcher()) },
   { source: 'advisory-ivanti',       label: 'Ivanti',             cron: '30 16 * * *', run: () => runAdvisory('advisory-ivanti', new IvantiFetcher()) },
   { source: 'advisory-citrix',       label: 'NetScaler',          cron: '45 16 * * *', run: () => runAdvisory('advisory-citrix', new CitrixFetcher()) },
+  // Recently revised MSRC documents only; the history from March 2021 is
+  // imported by hand (`pnpm import:msrc`). Patch Tuesday updates are released
+  // around 17:00 UTC.
+  { source: 'advisory-microsoft',    label: 'Microsoft (Windows Server)', cron: '30 18 * * *', run: () => runAdvisory('advisory-microsoft', new MsrcFetcher()) },
   {
     // Delta bundles only. The one-time bootstrap of historical years is run by
     // hand (`pnpm import:cna --bootstrap`) since it downloads a ~600MB archive.

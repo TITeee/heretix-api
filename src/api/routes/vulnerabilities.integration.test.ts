@@ -221,6 +221,42 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     expect(await hits('package=example-product&version=2.0.0-beta')).toEqual(['CVE-2026-7002']);
     expect(await hits('package=example-product&version=2.0.0')).toEqual([]);
   });
+
+  it('compares Windows Server builds by build and UBR, and returns Microsoft\'s rating', async () => {
+    // Shape MsrcFetcher writes: affected below the October 2026 update's build.
+    await importAdvisoryData({
+      externalId: 'CVE-2026-7003',
+      cveId: 'CVE-2026-7003',
+      severity: 'HIGH',
+      distroPriority: 'Important',
+      rawData: {},
+      affectedProducts: [
+        { vendor: 'microsoft', product: 'Windows Server 2022', versionEnd: '10.0.20348.5761', versionFixed: '10.0.20348.5761', patchAvailable: true },
+      ],
+    }, 'advisory-microsoft');
+
+    const hits = async (query: string) => (await search(app, query)).body.results.map((r: { externalId: string }) => r.externalId);
+
+    // normalizeVersion() clamps every component to 999, so all of these used
+    // to compare equal to the bound.
+    for (const affected of ['10.0.20348.1', '10.0.20348.999', '10.0.20348.5622', '10.0.20348.5760']) {
+      expect(await hits(`package=Windows%20Server%202022&version=${affected}&ecosystem=advisory`), affected).toEqual(['CVE-2026-7003']);
+    }
+    for (const unaffected of ['10.0.20348.5761', '10.0.20348.10000']) {
+      expect(await hits(`package=Windows%20Server%202022&version=${unaffected}&ecosystem=advisory`), unaffected).toEqual([]);
+    }
+    // Server Core is its own MSRC product name.
+    expect(await hits('package=Windows%20Server%202022%20(Server%20Core%20installation)&version=10.0.20348.1&ecosystem=advisory')).toEqual([]);
+
+    const res = await search(app, 'package=Windows%20Server%202022&version=10.0.20348.5622&ecosystem=advisory');
+    expect(res.body.results[0]).toMatchObject({
+      sources: ['advisory-microsoft'],
+      severity: 'HIGH',
+      distroPriority: 'Important',
+      fixedVersion: '10.0.20348.5761',
+      approximateMatch: false,
+    });
+  });
 });
 
 describe('GET /api/v1/vulnerabilities/search — distroPriority', () => {

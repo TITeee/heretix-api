@@ -73,6 +73,7 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 | `advisory-redhat-vex` | Daily 15:00 | |
 | `cna` (CVE Records and CISA SSVC) | Daily 15:30 | |
 | `advisory-checkpoint` / `-ivanti` / `-citrix` | Daily 16:00 / 16:30 / 16:45 | `advisory-ivanti` renders about 90 pages in a headless browser and takes 10 to 15 minutes; `advisory-citrix` reads about 20 pages over plain HTTP in under a minute |
+| `advisory-microsoft` | Daily 18:30 | Reads only the MSRC documents revised in the last 7 days and the latest month. Run `pnpm import:msrc` once after enabling it: it reads all of them since March 2021 (about 68) in about 3 minutes |
 
 Switch jobs on and off with the dashboard's On/Off toggle or `PATCH /api/v1/jobs/:source` (see [api.md](api.md#jobs)). On a fresh install only NVD, KEV and EPSS are enabled. The other jobs are high-volume scrapers, so switch on just the ones you need. Each OSV ecosystem job appears once that ecosystem has been imported.
 

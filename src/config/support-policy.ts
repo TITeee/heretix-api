@@ -50,3 +50,20 @@ export function isMaintainedOsvEcosystem(ecosystem: string): boolean {
   const release = distro === 'Ubuntu' ? rest.find((part) => /^\d+\.\d+$/.test(part)) : rest[0];
   return release !== undefined && releases.has(release);
 }
+
+/**
+ * Windows Server releases imported from MSRC (msrc-fetcher.ts), with the build
+ * every update of the release carries ("10.0.<build>.<UBR>"). Unlike the OSV
+ * releases above, releases outside this list are not imported at all.
+ *
+ * Kept: releases under Microsoft support (2016's extended support runs to
+ * 2027-01-12, then ESU to 2030-01-12). Left out: 2012 / 2012 R2 (ESU ended
+ * 2026-10-13), 2008 R2 and older, and the semi-annual and annual channel
+ * releases (1709 to 20H2, 23H2), all past end of support.
+ */
+export const WINDOWS_SERVER_BUILDS: Readonly<Record<string, number>> = {
+  '2016': 14393,
+  '2019': 17763,
+  '2022': 20348,
+  '2025': 26100,
+};
