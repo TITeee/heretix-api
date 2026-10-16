@@ -177,6 +177,16 @@ curl -X POST -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
   }'
 ```
 
+Each entry of `results` repeats `package`, `version` and `ecosystem`, and carries:
+
+| Field | Description |
+|---|---|
+| `vulnerabilities` | The matches, each as in the single search |
+| `total` | How many matched |
+| `truncated` | `true` when `vulnerabilities` holds fewer than `total` |
+
+A package returns up to 5,000 matches, and a batch up to 500,000 in all: when the packages together match more, the cap of the largest ones is lowered just enough to fit, never below 500. A package over its cap keeps its most severe matches (known exploited first, then by CVSS), so check `truncated` before treating the list as complete. A Windows Server many months behind on updates is the usual case. Very large batches may also have their `summary` text shortened to fit the response.
+
 ## CPE search
 
 Search NVD with a CPE 2.3 string. When the version component is `*` or omitted, results have `approximateMatch: true`.

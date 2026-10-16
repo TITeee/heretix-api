@@ -187,6 +187,54 @@ export function truncateSummaries(
   return truncated;
 }
 
+// How many results the batch endpoint returns per package, and in all.
+//
+// A package used to be cut at a flat 500 with nothing in the response to say
+// so. That was enough for library packages, but an OS keyed by its build
+// number is not: a Windows Server a few months behind on updates matches
+// thousands of CVEs, and the ones dropped could be the critical ones, since
+// clients sort after the cut.
+//
+// The total keeps the batch inside what summaryBudgetChars() can still
+// serialize: 500,000 results is the old worst case (1,000 x 500), which fits
+// with summaries shortened to 400 chars. A package is never cut below the old
+// 500, since 1,000 packages x 500 is within the total.
+export const BATCH_RESULTS_PER_PACKAGE = 5_000;
+export const BATCH_RESULTS_TOTAL = 500_000;
+const BATCH_RESULTS_FLOOR = 500;
+
+/**
+ * The per-package cap for a batch whose packages matched `counts` results:
+ * BATCH_RESULTS_PER_PACKAGE, lowered just enough that the capped counts add
+ * up to no more than BATCH_RESULTS_TOTAL. Lowering it cuts only the largest
+ * packages; the ones below the cap keep everything.
+ */
+export function batchResultCap(counts: number[]): number {
+  const total = (cap: number) => counts.reduce((n, c) => n + Math.min(c, cap), 0);
+  if (total(BATCH_RESULTS_PER_PACKAGE) <= BATCH_RESULTS_TOTAL) return BATCH_RESULTS_PER_PACKAGE;
+  let lo = BATCH_RESULTS_FLOOR;
+  let hi = BATCH_RESULTS_PER_PACKAGE;
+  // The largest cap whose total fits; total() only grows with the cap.
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (total(mid) <= BATCH_RESULTS_TOTAL) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * The `cap` results to keep out of `results`: all of them if they fit,
+ * otherwise those that matter most -- known exploited first, then by CVSS --
+ * so a cut never drops a critical finding to keep a low one.
+ */
+export function keepMostSevere(results: VulnerabilityResult[], cap: number): VulnerabilityResult[] {
+  if (results.length <= cap) return results;
+  return [...results]
+    .sort((a, b) => Number(b.isKev) - Number(a.isKev) || (b.cvssScore ?? -1) - (a.cvssScore ?? -1))
+    .slice(0, cap);
+}
+
 // ─── Version Range Filter Conditions ─────────────────────────
 
 export function versionRangeWhere(versionInt: bigint) {

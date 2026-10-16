@@ -720,6 +720,7 @@ describe('GET /api/v1/vulnerabilities/search with a product catalog name', () =>
     });
     const found = (res.json().results[0].vulnerabilities as { externalId: string }[]).map((v) => v.externalId);
     expect(found).toEqual(['CVE-2026-8015']);
+    expect(res.json().results[0]).toMatchObject({ total: 1, truncated: false });
   });
 });
 
