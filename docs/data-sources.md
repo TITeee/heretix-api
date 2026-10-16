@@ -9,7 +9,7 @@ Each source has an import job that the [scheduler](operations.md#scheduler) runs
 - [OSV](#osv)
 - [CISA KEV](#cisa-kev) · [EPSS](#epss) · [CVE Records (CNA) and CISA Vulnrichment](#cve-records-cna-and-cisa-vulnrichment)
 - Linux distributions: [Red Hat](#red-hat) · [Oracle Linux](#oracle-linux) · [Debian security tracker](#debian-security-tracker)
-- Vendor advisories ([common behavior](architecture.md#vendor-advisories)): [Fortinet](#fortinet) · [Palo Alto Networks](#palo-alto-networks) · [Cisco](#cisco) · [Sophos](#sophos) · [SonicWall](#sonicwall) · [Broadcom / VMware](#broadcom--vmware) · [Oracle Critical Patch Update](#oracle-critical-patch-update) · [Splunk](#splunk) · [Apache HTTP Server](#apache-http-server) · [Apache Tomcat](#apache-tomcat) · [nginx](#nginx) · [Zabbix](#zabbix) · [Check Point](#check-point) · [Ivanti](#ivanti) · [NetScaler](#netscaler)
+- Vendor advisories ([common behavior](architecture.md#vendor-advisories)): [Fortinet](#fortinet) · [Palo Alto Networks](#palo-alto-networks) · [Cisco](#cisco) · [Sophos](#sophos) · [SonicWall](#sonicwall) · [Broadcom / VMware](#broadcom--vmware) · [Oracle Critical Patch Update](#oracle-critical-patch-update) · [Splunk](#splunk) · [Apache HTTP Server](#apache-http-server) · [Apache Tomcat](#apache-tomcat) · [nginx](#nginx) · [Zabbix](#zabbix) · [Check Point](#check-point) · [Ivanti](#ivanti) · [NetScaler](#netscaler) · [Microsoft (Windows Server)](#microsoft-windows-server)
 
 ## Choosing what to import
 
@@ -313,3 +313,22 @@ Each line becomes a range from the branch (`14.1`) to the first fixed build, for
 A NetScaler version is a branch and a build (`14.1-73.32`); it is ordered with its own order ([citrix-version.ts](../src/utils/citrix-version.ts)), because the generic encoding keeps only the 73 of 73.32, and a bound written as a branch plus a bare build (`14.1` up to `56.73`, how the CVE record gives it) reads as 14.1.0 up to 56.73.0 and flags every later build. The CVE-record (CNA) ranges of NetScaler are therefore not stored.
 
 Other Citrix bulletins (Workspace app, StoreFront, XenServer, SD-WAN, Session Recording) word their versions differently and are not read.
+
+## Microsoft (Windows Server)
+
+[msrc-fetcher.ts](../src/worker/msrc-fetcher.ts) · `pnpm import:msrc` (history) · daily 18:30 UTC (recent revisions)
+
+> **Beta.** This source is new and has been checked against only a few real servers. The product names, the fields of its results and what it covers may change, and its results should be checked against Windows Update or the Security Update Guide before acting on them. Its known gaps are in [known-issues.md](known-issues.md#windows-server-what-a-build-number-cannot-tell).
+
+Security updates for Windows Server 2016, 2019, 2022 and 2025, each as installed with the desktop experience and as a Server Core installation, which MSRC treats as separate products. They are read from the CVRF API of the MSRC Security Update Guide (`api.msrc.microsoft.com/cvrf/v3.0`), which publishes one document per month listing every CVE released or revised in it.
+
+Windows is serviced by monthly cumulative updates that raise only the last number of the OS build, the update build revision (UBR): Windows Server 2022 stays at build 20348 for its whole life, and `10.0.20348.5761` is the October 2026 update. For each CVE and product, the document gives the update (KB) that fixes it and the OS build that update brings. Each CVE becomes one advisory (`externalId` is the CVE ID), and each product it fixes an affected product whose range ends (exclusive) at that build. A Windows Server is therefore searched by its full OS build: one at `10.0.20348.5622` is affected by a fix that came with `10.0.20348.5761`, and one at `10.0.20348.5761` or later is not. The KB of each product goes in the advisory's `solution`, Microsoft's severity rating (`Important`, `Critical`, ...) in `distroPriority`.
+
+- **Which build is the bound.** Only regular cumulative updates count. Hotpatch updates are a separate servicing track with lower build numbers (`10.0.20348.3745` next to the regular `10.0.20348.3807` in June 2025), so using one would mark every regular build between the two as fixed; they are kept in `rawData` but not used. When two regular updates fix a CVE on one product (an out-of-band update next to the monthly one), the lower build is the bound, since a server at either has the fix.
+- **What is left out.** ADV advisories (their updates, such as servicing stack updates, are not the fix of a CVE), and products affected without any build that fixes them, such as CVE-2013-3900, whose fix is an opt-in registry setting no update applies. Neither can be decided by a build number.
+- **Releases.** Windows Server 2012 / 2012 R2 (extended security updates ended 2026-10-13) and older releases are not imported, nor the semi-annual and annual channel releases, all past end of support. The list is `WINDOWS_SERVER_BUILDS` in [support-policy.ts](../src/config/support-policy.ts).
+- **History.** The documents carry fix builds from March 2021; earlier ones name the KB but not the build, so they are not read. `pnpm import:msrc` reads every document from March 2021. The daily job reads the documents revised in the last seven days, and always the latest month's: MSRC revises earlier months as well as the current one. A CVE listed in more than one document is taken from the entry revised most recently.
+
+A Windows build is ordered with its own order ([microsoft-version.ts](../src/utils/microsoft-version.ts)): the generic encoding caps a component at 999, so the build (20348) collapses and the update revision is dropped, and every Windows Server 2022 build would read as the same version.
+
+MSRC also publishes CSAF documents. The CVRF documents were chosen because they cover every Windows Server CVE: the CSAF advisories miss one or two a month and have almost nothing before 2021, and the CSAF VEX documents cover Windows only from September 2026 and carry no severity rating.

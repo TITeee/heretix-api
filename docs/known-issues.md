@@ -74,6 +74,16 @@ The Ivanti fetcher takes the articles of the hub.ivanti.com sitemap whose name c
 
 The NetScaler source reads the ADC / Gateway / Console bulletins of 2022 and later, found by the name of the article. Older ones (the 2019-2021 Citrix ADC and SD-WAN WANOP bulletins) and the other Citrix products are not read, so a NetScaler CVE from before 2022, or one whose bulletin is not published yet, has no NetScaler advisory. The CVE-record ranges that would cover it are not stored for NetScaler, because they read the branch and the build as one version (see [NetScaler](data-sources.md#netscaler)).
 
+### Windows Server: what a build number cannot tell
+
+Windows Server support is in beta. Its findings come from comparing a server's OS build with the build of the update that fixes each CVE (see [Microsoft (Windows Server)](data-sources.md#microsoft-windows-server)). Some things that comparison cannot see:
+
+- **CVEs fixed before March 2021.** MSRC's documents give fix builds only from March 2021, so earlier CVEs are not imported. A server that has missed them has also missed every later update, which are reported, so it is still flagged as behind; it is just the older CVEs, such as Zerologon (CVE-2020-1472), that are not listed by name.
+- **Hotpatch servers.** A server on the hotpatch track (Azure Edition, or Windows Server 2025 with hotpatch) runs lower build numbers between its quarterly baseline updates. The bounds come from the regular updates, so such a server is reported as missing the fixes of the hotpatch months until it takes the next baseline.
+- **Fixes that are not updates.** CVEs fixed only by a setting (such as the opt-in CVE-2013-3900) are not reported, and neither are ADV advisories.
+- **Other Microsoft software on the server.** .NET Framework, SQL Server, Exchange and the like are serviced by their own updates and are not imported; only the OS is.
+- **Releases out of support.** Windows Server 2012 / 2012 R2 and older are not imported at all, so they return nothing rather than every unpatched CVE.
+
 ### Sophos advisories have no version ranges
 
 Sophos detail pages expose no structured version data, so only CVE IDs and severity are imported. Version searches do not return Sophos results; look up the CVE by ID instead.
