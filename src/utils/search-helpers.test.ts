@@ -18,6 +18,10 @@ import {
   filterBySeverity,
   summaryBudgetChars,
   truncateSummaries,
+  batchResultCap,
+  keepMostSevere,
+  BATCH_RESULTS_PER_PACKAGE,
+  BATCH_RESULTS_TOTAL,
   suggestPrefixVariants,
   suggestVendorVariants,
   escapeLikePattern,
@@ -533,10 +537,9 @@ describe('summaryBudgetChars', () => {
   });
 
   it('keeps every reachable batch inside the V8 string limit', () => {
-    // 500,000 is the worst case the schema permits: batchSearchSchema caps
-    // `packages` at 1,000 and the handler asks for 500 results each. Beyond
-    // that even a zero-length summary would not fit, so raising either cap
-    // needs more than this helper.
+    // 500,000 is the most a batch returns (BATCH_RESULTS_TOTAL, see
+    // batchResultCap). Beyond that even a zero-length summary would not fit,
+    // so raising it needs more than this helper.
     const V8_MAX = 536_870_888;
     for (const total of [1, 5_000, 50_000, 90_000, 100_000, 250_000, 500_000]) {
       const allowed = summaryBudgetChars(total) ?? 4_000;
@@ -546,6 +549,50 @@ describe('summaryBudgetChars', () => {
 
   it('never returns a negative length', () => {
     expect(summaryBudgetChars(500_000_000)).toBe(0);
+  });
+});
+
+describe('batchResultCap', () => {
+  it('allows the full per-package cap while the batch total fits', () => {
+    expect(batchResultCap([])).toBe(BATCH_RESULTS_PER_PACKAGE);
+    expect(batchResultCap([5_157, 3, 0])).toBe(BATCH_RESULTS_PER_PACKAGE);
+    expect(batchResultCap(Array(100).fill(5_000))).toBe(BATCH_RESULTS_PER_PACKAGE);
+  });
+
+  it('lowers the cap just enough to bring the total within the budget', () => {
+    // 200 packages of 5,000 would be 1,000,000: 2,500 each brings it to 500,000.
+    expect(batchResultCap(Array(200).fill(5_000))).toBe(2_500);
+    // Small packages keep everything; only the large ones are cut.
+    const counts = [...Array(900).fill(10), ...Array(100).fill(9_000)];
+    const cap = batchResultCap(counts);
+    const total = counts.reduce((n, c) => n + Math.min(c, cap), 0);
+    expect(total).toBeLessThanOrEqual(BATCH_RESULTS_TOTAL);
+    expect(counts.reduce((n, c) => n + Math.min(c, cap + 1), 0)).toBeGreaterThan(BATCH_RESULTS_TOTAL);
+  });
+
+  it('never cuts a package below the old 500', () => {
+    // The schema's worst case: 1,000 packages, each matching far more than the cap.
+    expect(batchResultCap(Array(1_000).fill(20_000))).toBe(500);
+  });
+});
+
+describe('keepMostSevere', () => {
+  it('returns everything, in its order, when it fits', () => {
+    const items = [makeResult({ id: 'a', cvssScore: 3 }), makeResult({ id: 'b', cvssScore: 9 })];
+    expect(keepMostSevere(items, 2)).toBe(items);
+  });
+
+  it('keeps known exploited first, then the highest CVSS, unscored last', () => {
+    const items = [
+      makeResult({ id: 'low', cvssScore: 3.1 }),
+      makeResult({ id: 'none', cvssScore: null }),
+      makeResult({ id: 'kev', cvssScore: 5.5, isKev: true }),
+      makeResult({ id: 'crit', cvssScore: 9.8 }),
+      makeResult({ id: 'high', cvssScore: 7.5 }),
+    ];
+    expect(keepMostSevere(items, 3).map(r => r.id)).toEqual(['kev', 'crit', 'high']);
+    expect(keepMostSevere(items, 4).map(r => r.id)).toEqual(['kev', 'crit', 'high', 'low']);
+    expect(keepMostSevere(items, 5).map(r => r.id)).toEqual(['low', 'none', 'kev', 'crit', 'high']);
   });
 });
 

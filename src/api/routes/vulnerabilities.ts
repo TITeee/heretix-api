@@ -29,6 +29,9 @@ import {
   filterBySeverity,
   summaryBudgetChars,
   truncateSummaries,
+  batchResultCap,
+  keepMostSevere,
+  BATCH_RESULTS_PER_PACKAGE,
   DISTRO_ECOSYSTEM_PREFIXES,
   RPM_ADVISORY_VENDOR_PREFIXES,
   suggestPrefixVariants,
@@ -842,6 +845,17 @@ async function searchVulnerabilities(
   offset = 0,
   severity?: string[],
 ): Promise<VulnerabilityResult[]> {
+  const filtered = await searchAllVulnerabilities(packageName, version, ecosystem, severity);
+  return filtered.slice(offset, offset + limit);
+}
+
+/** searchVulnerabilities() before pagination: every match, severity-filtered. */
+async function searchAllVulnerabilities(
+  packageName: string,
+  version: string | undefined,
+  ecosystem: string | undefined,
+  severity?: string[],
+): Promise<VulnerabilityResult[]> {
   const cacheKey = searchResultCacheKey(packageName, version, ecosystem);
   const cached = searchResultCache.get(cacheKey);
 
@@ -880,12 +894,11 @@ async function searchVulnerabilities(
   }
 
   // Filtered fresh on every call, cached or not: cheap in-memory pass, and it
-  // must run before the slice below or pagination would undercount past a
-  // filtered-out result. The cache itself stays keyed without severity, same
-  // as it already excludes limit/offset -- it holds the one full pre-filter,
-  // pre-pagination set a search naturally reduces to.
-  const filtered = filterBySeverity(all, severity);
-  return filtered.slice(offset, offset + limit);
+  // must run before pagination or that would undercount past a filtered-out
+  // result. The cache itself stays keyed without severity, same as it already
+  // excludes limit/offset -- it holds the one full pre-filter, pre-pagination
+  // set a search naturally reduces to.
+  return filterBySeverity(all, severity);
 }
 
 const cpeSearchSchema = z.object({
@@ -1195,17 +1208,32 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
         results.push(
           ...await Promise.all(
             chunk.map(async (pkg) => {
-              const vulnerabilities = await searchVulnerabilities(
-                pkg.package, pkg.version, pkg.ecosystem, 500,
-              );
+              const all = await searchAllVulnerabilities(pkg.package, pkg.version, pkg.ecosystem);
               return {
                 package: pkg.package,
                 version: pkg.version,
                 ecosystem: pkg.ecosystem,
-                vulnerabilities,
+                vulnerabilities: keepMostSevere(all, BATCH_RESULTS_PER_PACKAGE),
+                total: all.length,
+                truncated: false,
               };
             }),
           ),
+        );
+      }
+
+      // A package with more matches than the cap keeps its most severe ones and
+      // says how many there were; see BATCH_RESULTS_PER_PACKAGE.
+      const cap = batchResultCap(results.map(r => r.total));
+      for (const r of results) {
+        r.vulnerabilities = keepMostSevere(r.vulnerabilities, cap);
+        r.truncated = r.vulnerabilities.length < r.total;
+      }
+      const cutPackages = results.filter(r => r.truncated);
+      if (cutPackages.length > 0) {
+        request.log.warn(
+          { packages: packages.length, cap, cut: cutPackages.map(r => ({ package: r.package, total: r.total })).slice(0, 10) },
+          'batch search returned only the most severe results for some packages',
         );
       }
 
