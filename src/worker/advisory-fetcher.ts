@@ -22,6 +22,9 @@ export interface NormalizedAdvisory {
   // The distro's own rating of this CVE, verbatim (Red Hat's per-CVE impact).
   // See VulnerabilityResult.distroPriority.
   distroPriority?: string;
+  // The vendor's name for the part of the product affected (MSRC's tag).
+  // See AdvisoryVulnerability.component.
+  component?: string;
   affectedProducts: Array<{
     vendor: string;                // "fortinet", "f5", "cisco", etc.
     product: string;               // "FortiOS", "BIG-IP", etc.
@@ -163,6 +166,7 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
         cvssScore: adv.cvssScore ?? null,
         cvssVector: adv.cvssVector ?? null,
         distroPriority: adv.distroPriority ?? null,
+        component: adv.component ?? null,
         summary: adv.summary ?? null,
         description: adv.description ?? null,
         url: adv.url ?? null,
@@ -178,6 +182,7 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
         cvssScore: adv.cvssScore ?? null,
         cvssVector: adv.cvssVector ?? null,
         distroPriority: adv.distroPriority ?? null,
+        component: adv.component ?? null,
         summary: adv.summary ?? null,
         description: adv.description ?? null,
         url: adv.url ?? null,

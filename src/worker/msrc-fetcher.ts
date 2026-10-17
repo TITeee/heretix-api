@@ -44,6 +44,8 @@ const THREAT_IMPACT = 0;
 const THREAT_EXPLOIT_STATUS = 1;
 const THREAT_SEVERITY = 3;
 const REMEDIATION_VENDOR_FIX = 2;
+// The CVRF Note type MSRC uses for the affected component ("Role: DNS Server").
+const NOTE_TAG = 7;
 // A regular cumulative update. Hotpatch updates ("SecurityHotpatchUpdate") are
 // a separate servicing track with lower build numbers (10.0.20348.3745 against
 // the regular 10.0.20348.3807 in June 2025); using one as the bound would
@@ -63,6 +65,7 @@ interface CvrfText { Value?: string }
 interface CvrfVulnerability {
   CVE?: string;
   Title?: CvrfText;
+  Notes?: Array<{ Type?: number; Value?: string }>;
   RevisionHistory?: Array<{ Date?: string }>;
   Threats?: Array<{ Type?: number; Description?: CvrfText; ProductID?: string[] }>;
   CVSSScoreSets?: Array<{ BaseScore?: number; Vector?: string; ProductID?: string[] }>;
@@ -261,6 +264,7 @@ export function buildMsrcAdvisories(doc: CvrfDocument, documentId: string): Norm
       cvssScore: cvss?.score,
       cvssVector: cvss?.vector,
       distroPriority: msrcSeverity,
+      component: v.Notes?.find(n => n.Type === NOTE_TAG)?.Value?.trim() || undefined,
       url: `https://msrc.microsoft.com/update-guide/vulnerability/${cve}`,
       solution: fixList.map(f => `${f.product}: ${f.kb ? `KB${f.kb}` : 'update'} (OS build ${f.fixedBuild})`).join('; ') +
         ', or any later cumulative update',

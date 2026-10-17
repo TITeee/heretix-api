@@ -9,6 +9,7 @@ import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
 import { createConcurrencyGate, envInt } from '../concurrency-gate.js';
 import { findCatalogEntry } from '../../config/product-catalog.js';
+import { requiredWindowsFeatures } from '../../config/windows-role-features.js';
 import { catalogCnaWhere, catalogNvdWhere } from '../../utils/catalog-search.js';
 import {
   type VulnerabilityResult,
@@ -441,6 +442,7 @@ async function searchAdvisory(
           summary: true,
           publishedAt: true,
           distroPriority: true,
+          component: true,
           masterVuln: { select: masterSelect },
         },
       },
@@ -452,10 +454,13 @@ async function searchAdvisory(
     const fixedVersion = r.versionFixed ?? null;
     const approximateMatch = version === undefined
       || (ownOrderInts.has(r.vendor) ? ownOrderInts.get(r.vendor) === null : approximate);
+    const requiresFeatures = requiredWindowsFeatures(adv.component);
+    const roleFields = requiresFeatures ? { requiresFeatures } : {};
     if (adv.masterVuln) {
-      return { ...masterToResult(adv.masterVuln, approximateMatch, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority, ...rowFixStatus(r) };
+      return { ...masterToResult(adv.masterVuln, approximateMatch, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority, ...rowFixStatus(r), ...roleFields };
     }
     return {
+      ...roleFields,
       id: adv.id,
       externalId: adv.externalId,
       source: adv.source,

@@ -63,6 +63,15 @@ export type VulnerabilityResult = {
    * as one finding.
    */
   aliases: string[];
+  /**
+   * The Windows optional features (DISM names) any one of which the finding
+   * needs on the server: set when the vendor files it under an optional
+   * server role ("Role: DNS Server" → ["DNS-Server-Full-Role"]; see
+   * config/windows-role-features.ts). A server with none of them installed
+   * does not have the vulnerable code, although it is reported, since the
+   * vendor lists the CVE under the OS product. Absent otherwise.
+   */
+  requiresFeatures?: string[];
 };
 
 /** Collect the distinct, non-null identifiers a finding can be recognised by. */
@@ -93,6 +102,9 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
       }
       if (!existing.distroPriority && item.distroPriority) {
         existing.distroPriority = item.distroPriority;
+      }
+      if (!existing.requiresFeatures && item.requiresFeatures) {
+        existing.requiresFeatures = item.requiresFeatures;
       }
       if (!existing.fixStatus && item.fixStatus) {
         existing.fixStatus = item.fixStatus;
