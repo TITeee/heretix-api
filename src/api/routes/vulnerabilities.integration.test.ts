@@ -256,8 +256,9 @@ describe('GET /api/v1/vulnerabilities/search', () => {
       fixedVersion: '10.0.20348.5761',
       approximateMatch: false,
     });
-    // MSRC tagged it with no role, so it applies to every server.
+    // MSRC tagged it with no role, so it applies to every server (this one has no tag at all).
     expect(res.body.results[0]).not.toHaveProperty('requiresFeatures');
+    expect(res.body.results[0]).not.toHaveProperty('component');
   });
 
   it('names the Windows features a finding in an optional server role needs, in the batch search too', async () => {
@@ -273,9 +274,10 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     await windows('CVE-2026-7004', 'Role: DNS Server');
     await windows('CVE-2026-7005', 'Windows Kernel');
 
-    const byId = (results: Array<{ externalId: string; requiresFeatures?: string[] }>) =>
-      Object.fromEntries(results.map(r => [r.externalId, r.requiresFeatures ?? null]));
-    const want = { 'CVE-2026-7004': ['DNS-Server-Full-Role'], 'CVE-2026-7005': null };
+    const byId = (results: Array<{ externalId: string; requiresFeatures?: string[]; component?: string }>) =>
+      Object.fromEntries(results.map(r => [r.externalId, [r.component ?? null, r.requiresFeatures ?? null]]));
+    // The component is returned for every finding that has one; the features only for a role.
+    const want = { 'CVE-2026-7004': ['Role: DNS Server', ['DNS-Server-Full-Role']], 'CVE-2026-7005': ['Windows Kernel', null] };
 
     // A version no other test searches: results are cached per (package, version, ecosystem) for 30 s.
     const single = await search(app, 'package=Windows%20Server%202022&version=10.0.20348.5000&ecosystem=advisory');
