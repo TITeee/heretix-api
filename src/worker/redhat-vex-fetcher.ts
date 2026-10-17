@@ -9,7 +9,21 @@ import { compareRpmVersions } from '../utils/rpm-version.js';
 
 // ─── Constants ────────────────────────────────────────────────
 
-const LATEST_URL = 'https://security.access.redhat.com/data/csaf/v2/vex/archive_latest.txt';
+const VEX_BASE_URL = 'https://security.access.redhat.com/data/csaf/v2/vex/';
+const LATEST_URL = VEX_BASE_URL + 'archive_latest.txt';
+// One line per VEX file, newest first: "2026/cve-2026-71556.json","2026-10-17T08:36:25+00:00".
+// Red Hat updates it as files change, while the archive above is rebuilt only
+// every few days (archive_latest.txt named the 2026-10-11 archive on 2026-10-17).
+const CHANGES_URL = VEX_BASE_URL + 'changes.csv';
+
+// The archive is named by its date but not by the hour it was built, so changes
+// are taken from a day before it to be sure none falls in the gap.
+const ARCHIVE_DATE_MARGIN_MS = 24 * 60 * 60 * 1000;
+// A week of Red Hat updates is a few thousand files. This bounds a run when the
+// archive has gone stale for much longer; the oldest changes are the ones left out.
+const MAX_CHANGED_DOCS = 20_000;
+const CHANGED_DOC_CONCURRENCY = 8;
+const CHANGED_DOC_ATTEMPTS = 3;
 
 const SEVERITY_MAP: Record<string, string> = {
   critical: 'CRITICAL',
@@ -362,6 +376,92 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
   };
 }
 
+// ─── Changes since the archive ────────────────────────────────
+
+/** The date in an archive's name ("csaf_vex_2026-10-11.tar.zst"), as midnight UTC; null if it has none. */
+export function parseArchiveDate(archiveName: string): Date | null {
+  const m = archiveName.match(/(\d{4}-\d{2}-\d{2})/);
+  if (!m) return null;
+  const date = new Date(`${m[1]}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * The CVE files changes.csv lists as changed after `since`, in its order
+ * (newest first). Lines that are not a quoted path and timestamp, or name
+ * something other than a CVE file, are ignored.
+ */
+export function parseChanges(csv: string, since: Date): string[] {
+  const paths: string[] = [];
+  for (const line of csv.split('\n')) {
+    const m = line.trim().match(/^"?(\d{4}\/cve-\d{4}-\d+\.json)"?\s*,\s*"?([^",]+)"?$/i);
+    if (!m) continue;
+    const changedAt = new Date(m[2]);
+    if (!Number.isNaN(changedAt.getTime()) && changedAt > since) paths.push(m[1]);
+  }
+  return paths;
+}
+
+/** The CVE a VEX document is about (its first vulnerability), upper case; undefined if it has none. */
+export function cveOfVexDoc(doc: unknown): string | undefined {
+  const vulns = (doc as { vulnerabilities?: unknown })?.vulnerabilities;
+  const cve = Array.isArray(vulns) ? (vulns[0] as { cve?: unknown } | undefined)?.cve : undefined;
+  return typeof cve === 'string' && /^CVE-\d{4}-\d+$/i.test(cve) ? cve.toUpperCase() : undefined;
+}
+
+/** What a newer VEX document says about its CVE: the advisory it still yields, or null when it yields none. */
+export interface VexChange {
+  cve: string;
+  advisory: NormalizedAdvisory | null;
+}
+
+/**
+ * Reduces a fetched VEX document to its change right away. A document is
+ * large (hundreds of products), and a few thousand held at once are what ran
+ * this fetcher out of memory before, so only this small result is kept.
+ */
+export function vexChangeOf(doc: unknown): VexChange | undefined {
+  const cve = cveOfVexDoc(doc);
+  return cve ? { cve, advisory: normalizeVexDoc(doc) } : undefined;
+}
+
+/**
+ * Lays newer VEX documents over the advisories read from the archive. A
+ * document that still qualifies replaces (or adds) its CVE; one that no
+ * longer does -- the CVE has been fixed everywhere, or never concerned RHEL --
+ * removes the CVE the archive still carries as unfixed, so the run no longer
+ * sees it and the usual pruning drops it.
+ */
+export function applyVexChanges(
+  advisories: Map<string, NormalizedAdvisory>,
+  changes: VexChange[],
+): { added: number; replaced: number; removed: number } {
+  const counts = { added: 0, replaced: 0, removed: 0 };
+  for (const { cve, advisory } of changes) {
+    if (advisory) {
+      counts[advisories.has(advisory.externalId) ? 'replaced' : 'added']++;
+      advisories.set(advisory.externalId, advisory);
+    } else if (advisories.delete(cve)) {
+      counts.removed++;
+    }
+  }
+  return counts;
+}
+
+async function runPool<T, U>(items: T[], concurrency: number, fn: (item: T) => Promise<U>): Promise<U[]> {
+  const out: U[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]);
+      }
+    }),
+  );
+  return out;
+}
+
 // ─── Fetcher ──────────────────────────────────────────────────
 
 /**
@@ -446,6 +546,60 @@ export class RedHatVexFetcher implements AdvisoryFetcher {
     });
 
     logger.info({ count: advisoriesByCve.size, failed: this.failedCount }, 'Parsed Red Hat VEX advisories');
+
+    await this.applyChangesSinceArchive(archiveName, advisoriesByCve);
     return [...advisoriesByCve.values()];
+  }
+
+  /**
+   * Red Hat rebuilds the archive only every few days, so a CVE published or
+   * revised since is missing from it (or still carries its old status) until
+   * the next one -- and an unfixed CVE has no OVAL entry to cover for it. The
+   * documents changes.csv lists as changed since the archive are fetched one
+   * by one and laid over what the archive gave.
+   *
+   * Best effort: if changes.csv cannot be read the run goes on with the archive
+   * alone, as before; a document that cannot be fetched is counted in
+   * fetchFailedCount() and keeps its archive version.
+   */
+  async applyChangesSinceArchive(archiveName: string, advisories: Map<string, NormalizedAdvisory>): Promise<void> {
+    const archiveDate = parseArchiveDate(archiveName);
+    if (!archiveDate) {
+      logger.warn({ archiveName }, 'Red Hat VEX archive name has no date; not applying changes.csv');
+      return;
+    }
+
+    let csv: string;
+    try {
+      csv = (await axios.get<string>(CHANGES_URL, { responseType: 'text', timeout: 60000 })).data;
+    } catch (err) {
+      logger.warn({ err }, 'Could not read Red Hat VEX changes.csv; using the archive alone');
+      return;
+    }
+
+    let paths = parseChanges(csv, new Date(archiveDate.getTime() - ARCHIVE_DATE_MARGIN_MS));
+    if (paths.length > MAX_CHANGED_DOCS) {
+      logger.warn({ changed: paths.length, kept: MAX_CHANGED_DOCS }, 'Red Hat VEX archive is far behind; applying only the newest changes');
+      paths = paths.slice(0, MAX_CHANGED_DOCS);
+    }
+    logger.info({ archive: archiveName, changed: paths.length }, 'Applying Red Hat VEX changes since the archive');
+
+    const changes = await runPool(paths, CHANGED_DOC_CONCURRENCY, async (path) => {
+      for (let attempt = 1; attempt <= CHANGED_DOC_ATTEMPTS; attempt++) {
+        try {
+          const { data } = await axios.get<unknown>(VEX_BASE_URL + path, { responseType: 'json', timeout: 60000 });
+          return vexChangeOf(data);
+        } catch (err) {
+          if (attempt === CHANGED_DOC_ATTEMPTS) {
+            this.failedCount++;
+            logger.warn({ err, path }, 'Failed to fetch a changed Red Hat VEX document');
+          }
+        }
+      }
+      return undefined;
+    });
+
+    const counts = applyVexChanges(advisories, changes.filter((c): c is VexChange => c !== undefined));
+    logger.info({ ...counts, total: advisories.size }, 'Applied Red Hat VEX changes since the archive');
   }
 }
