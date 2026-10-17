@@ -25,7 +25,7 @@ Import only what you scan. Each source adds import time, disk space and requests
 | Network appliances and commercial products | The vendor advisory jobs of the products you run (Fortinet, Palo Alto Networks, Cisco, ...) |
 | Products with no dedicated source | CVE Records (`cna`), which carry the affected products declared by each CVE's issuer |
 
-Measured import times: the full NVD mirror takes several hours, and Red Hat VEX about 12 minutes. Other sources depend on their size and upstream response times; the dashboard shows each run's duration.
+Measured import times: the full NVD mirror takes several hours, and Red Hat VEX about 15 minutes (the archive and the changes since it). Other sources depend on their size and upstream response times; the dashboard shows each run's duration.
 
 ## NVD
 
@@ -151,7 +151,7 @@ pnpm import:cna --bootstrap  # Force the full bundle (~600 MB)
 ```bash
 pnpm import:redhat          # OVAL, RHEL 9 and 8
 pnpm import:redhat rhel9    # OVAL, RHEL 9 only
-pnpm import:redhat-vex      # VEX archive (~12 minutes)
+pnpm import:redhat-vex      # VEX archive and the changes since it (~15 minutes)
 ```
 
 Search with `ecosystem=Red Hat:<major>` (`Red Hat:9`, `Red Hat:10`); versions are compared with `rpmvercmp`, epoch included.
@@ -166,6 +166,7 @@ Search with `ecosystem=Red Hat:<major>` (`Red Hat:9`, `Red Hat:10`); versions ar
 - **RHEL 10 has no OVAL feed at all** (Red Hat's OVAL v2 tree stops at RHEL 9). For RHEL 10 only, every fixed package also gets a `patchAvailable: true` row bounded by its newest fixed build across release streams. Debug packages are skipped.
 - A source RPM name (`sed.src`) is mapped to its installable name (`sed`).
 - Only RHEL 8, 9 and 10 are read from the archive, which covers every Red Hat product back to RHEL 5.
+- **The archive is rebuilt only every few days** (`archive_latest.txt` named the 2026-10-11 archive on 2026-10-17), so a CVE published or revised since is missing from it, and an unfixed one has no OVAL entry to cover for it. After the archive, the run reads `changes.csv`, Red Hat's list of every VEX file with the time it last changed, fetches the files changed since a day before the archive's date (a few thousand after a week, about 100 seconds with 8 requests at a time) and lays them over the archive's result: a CVE that still qualifies is added or replaced, and one that no longer does (it has been fixed everywhere) is dropped from the run, so the usual pruning removes it. If `changes.csv` cannot be read the run uses the archive alone, a file that cannot be fetched keeps its archive version and is counted as a fetch failure, and at most the newest 20,000 changes are applied.
 
 ## Oracle Linux
 

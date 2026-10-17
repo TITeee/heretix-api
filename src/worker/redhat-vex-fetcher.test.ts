@@ -5,7 +5,13 @@ import {
   extractUnfixedComponents,
   parseVexVulnerability,
   normalizeVexDoc,
+  parseArchiveDate,
+  parseChanges,
+  applyVexChanges,
+  vexChangeOf,
+  type VexChange,
 } from './redhat-vex-fetcher.js';
+import type { NormalizedAdvisory } from './advisory-fetcher.js';
 
 describe('mapSeverity', () => {
   it('maps known CVSS baseSeverity names', () => {
@@ -397,5 +403,92 @@ describe('normalizeVexDoc', () => {
   it('returns null for non-object input', () => {
     expect(normalizeVexDoc(null)).toBeNull();
     expect(normalizeVexDoc(undefined)).toBeNull();
+  });
+});
+
+describe('parseArchiveDate', () => {
+  it('reads the date in the archive name as midnight UTC', () => {
+    expect(parseArchiveDate('csaf_vex_2026-10-11.tar.zst')?.toISOString()).toBe('2026-10-11T00:00:00.000Z');
+  });
+
+  it('is null when the name has no date', () => {
+    expect(parseArchiveDate('latest.tar.zst')).toBeNull();
+    expect(parseArchiveDate('csaf_vex_2026-13-45.tar.zst')).toBeNull();
+  });
+});
+
+describe('parseChanges', () => {
+  const csv = [
+    '"2021/cve-2021-20329.json","2026-10-17T10:23:18+00:00"',
+    '"2026/cve-2026-71556.json","2026-10-17T08:36:25+00:00"',
+    '"2024/cve-2024-24786.json","2026-10-12T05:14:50+00:00"',
+    '"2025/cve-2025-00001.json","2026-10-10T23:59:59+00:00"',
+    '"2025/cve-2025-00002.json","2026-10-10T00:00:00+00:00"',
+    '"2025/not-a-cve.json","2026-10-17T00:00:00+00:00"',
+    'garbage',
+    '',
+  ].join('\n');
+
+  it('lists the CVE files changed after the given time, in the file\'s order', () => {
+    expect(parseChanges(csv, new Date('2026-10-10T00:00:00Z'))).toEqual([
+      '2021/cve-2021-20329.json',
+      '2026/cve-2026-71556.json',
+      '2024/cve-2024-24786.json',
+      '2025/cve-2025-00001.json',
+    ]);
+  });
+
+  it('leaves out what changed at or before that time, and lines that are not a CVE file', () => {
+    expect(parseChanges(csv, new Date('2026-10-17T09:00:00Z'))).toEqual(['2021/cve-2021-20329.json']);
+    expect(parseChanges(csv, new Date('2027-01-01T00:00:00Z'))).toEqual([]);
+  });
+});
+
+describe('applyVexChanges', () => {
+  const applyChangedDocs = (map: Map<string, NormalizedAdvisory>, docs: unknown[]) =>
+    applyVexChanges(map, docs.map(vexChangeOf).filter((c): c is VexChange => c !== undefined));
+
+  function vexDoc(cve: string, knownAffected: string[]) {
+    return {
+      product_tree: {
+        relationships: [
+          {
+            category: 'default_component_of',
+            full_product_name: { product_id: 'red_hat_enterprise_linux_9:bzip2-libs' },
+            product_reference: 'bzip2-libs',
+            relates_to_product_reference: 'red_hat_enterprise_linux_9',
+          },
+        ],
+      },
+      vulnerabilities: [{ cve, title: `title of ${cve}`, product_status: { known_affected: knownAffected } }],
+    };
+  }
+  const affected = ['red_hat_enterprise_linux_9:bzip2-libs'];
+  const advisory = (cve: string, summary: string) =>
+    ({ externalId: cve, cveId: cve, summary, affectedProducts: [], rawData: {} }) as NormalizedAdvisory;
+
+  it('adds a CVE the archive does not have', () => {
+    const map = new Map<string, NormalizedAdvisory>();
+    expect(applyChangedDocs(map, [vexDoc('CVE-2026-90001', affected)])).toEqual({ added: 1, replaced: 0, removed: 0 });
+    expect(map.get('CVE-2026-90001')?.affectedProducts).toHaveLength(1);
+  });
+
+  it('replaces what the archive has with the newer document', () => {
+    const map = new Map([['CVE-2026-90002', advisory('CVE-2026-90002', 'old')]]);
+    expect(applyChangedDocs(map, [vexDoc('CVE-2026-90002', affected)])).toEqual({ added: 0, replaced: 1, removed: 0 });
+    expect(map.get('CVE-2026-90002')?.summary).toBe('title of CVE-2026-90002');
+  });
+
+  it('removes a CVE the newer document no longer lists as unfixed', () => {
+    const map = new Map([['CVE-2026-90003', advisory('CVE-2026-90003', 'was unfixed')]]);
+    // Fixed everywhere now: nothing affected remains.
+    expect(applyChangedDocs(map, [vexDoc('CVE-2026-90003', [])])).toEqual({ added: 0, replaced: 0, removed: 1 });
+    expect(map.has('CVE-2026-90003')).toBe(false);
+  });
+
+  it('ignores a document that is not about a CVE, and one for a CVE it never had', () => {
+    const map = new Map([['CVE-2026-90004', advisory('CVE-2026-90004', 'kept')]]);
+    expect(applyChangedDocs(map, [{}, { vulnerabilities: [] }, null, vexDoc('CVE-2026-90005', [])])).toEqual({ added: 0, replaced: 0, removed: 0 });
+    expect([...map.keys()]).toEqual(['CVE-2026-90004']);
   });
 });
