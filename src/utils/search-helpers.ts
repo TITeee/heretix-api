@@ -72,6 +72,12 @@ export type VulnerabilityResult = {
    * vendor lists the CVE under the OS product. Absent otherwise.
    */
   requiresFeatures?: string[];
+  /**
+   * The part of the product the vendor says the finding is in, verbatim --
+   * MSRC's tag for Windows Server ("Role: DNS Server", "Windows Kernel").
+   * Absent when the source gives none.
+   */
+  component?: string;
 };
 
 /** Collect the distinct, non-null identifiers a finding can be recognised by. */
@@ -105,6 +111,9 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
       }
       if (!existing.requiresFeatures && item.requiresFeatures) {
         existing.requiresFeatures = item.requiresFeatures;
+      }
+      if (!existing.component && item.component) {
+        existing.component = item.component;
       }
       if (!existing.fixStatus && item.fixStatus) {
         existing.fixStatus = item.fixStatus;

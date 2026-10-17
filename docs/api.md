@@ -126,6 +126,7 @@ When `package` is the exact name of a [product catalog](data-sources.md#product-
 | `distroPriority` | The distribution's own rating (below) |
 | `fixStatus`, `fixStatusDetail` | Whether a fix will come (below) |
 | `aliases` | Every identifier this finding is known by, including `externalId`. A record that later received a CVE keeps its original ID here |
+| `component` | Windows Server only: the part of the product Microsoft says the CVE is in, verbatim (`Role: DNS Server`, `Windows Kernel`). Absent when there is none |
 | `requiresFeatures` | Windows Server only, and only when Microsoft files the CVE under an optional server role: the Windows optional features (DISM names, e.g. `DNS-Server-Full-Role`) any one of which puts the vulnerable code on the server. A server with none of them installed is not affected, although the finding is reported, since Microsoft lists it under the OS. Absent otherwise. See [Microsoft (Windows Server)](data-sources.md#microsoft-windows-server) |
 
 #### `distroPriority`

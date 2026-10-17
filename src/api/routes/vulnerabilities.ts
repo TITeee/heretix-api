@@ -455,7 +455,8 @@ async function searchAdvisory(
     const approximateMatch = version === undefined
       || (ownOrderInts.has(r.vendor) ? ownOrderInts.get(r.vendor) === null : approximate);
     const requiresFeatures = requiredWindowsFeatures(adv.component);
-    const roleFields = requiresFeatures ? { requiresFeatures } : {};
+    // The vendor's component tag, and what it needs on a Windows Server when it names a role.
+    const roleFields = { ...(adv.component && { component: adv.component }), ...(requiresFeatures && { requiresFeatures }) };
     if (adv.masterVuln) {
       return { ...masterToResult(adv.masterVuln, approximateMatch, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority, ...rowFixStatus(r), ...roleFields };
     }
