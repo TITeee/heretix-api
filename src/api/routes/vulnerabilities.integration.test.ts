@@ -256,6 +256,38 @@ describe('GET /api/v1/vulnerabilities/search', () => {
       fixedVersion: '10.0.20348.5761',
       approximateMatch: false,
     });
+    // MSRC tagged it with no role, so it applies to every server.
+    expect(res.body.results[0]).not.toHaveProperty('requiresFeatures');
+  });
+
+  it('names the Windows features a finding in an optional server role needs, in the batch search too', async () => {
+    const windows = (externalId: string, component: string) => importAdvisoryData({
+      externalId,
+      cveId: externalId,
+      component,
+      rawData: {},
+      affectedProducts: [
+        { vendor: 'microsoft', product: 'Windows Server 2022', versionEnd: '10.0.20348.5761', versionFixed: '10.0.20348.5761', patchAvailable: true },
+      ],
+    }, 'advisory-microsoft');
+    await windows('CVE-2026-7004', 'Role: DNS Server');
+    await windows('CVE-2026-7005', 'Windows Kernel');
+
+    const byId = (results: Array<{ externalId: string; requiresFeatures?: string[] }>) =>
+      Object.fromEntries(results.map(r => [r.externalId, r.requiresFeatures ?? null]));
+    const want = { 'CVE-2026-7004': ['DNS-Server-Full-Role'], 'CVE-2026-7005': null };
+
+    // A version no other test searches: results are cached per (package, version, ecosystem) for 30 s.
+    const single = await search(app, 'package=Windows%20Server%202022&version=10.0.20348.5000&ecosystem=advisory');
+    expect(byId(single.body.results)).toEqual(want);
+
+    const batch = await app.inject({
+      method: 'POST',
+      url: '/api/v1/vulnerabilities/search/batch',
+      headers: { 'x-api-key': API_KEY },
+      payload: { packages: [{ package: 'Windows Server 2022', version: '10.0.20348.5000', ecosystem: 'advisory' }] },
+    });
+    expect(byId(batch.json().results[0].vulnerabilities)).toEqual(want);
   });
 });
 

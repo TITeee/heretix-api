@@ -71,6 +71,21 @@ describe('buildMsrcAdvisories', () => {
     expect(adv.severity).toBe('HIGH');
   });
 
+  it('keeps the component MSRC tags the CVE with', () => {
+    const dns = {
+      ...CVE_OCT,
+      CVE: 'CVE-2026-103560',
+      Notes: [
+        { Title: 'Description', Type: 2, Value: '<p>Improper authorization in DNS Server ...</p>' },
+        { Title: 'Role: DNS Server', Type: 7, Value: 'Role: DNS Server' },
+        { Title: 'Microsoft', Type: 8, Value: 'Microsoft' },
+      ],
+    };
+    const [tagged, untagged] = buildMsrcAdvisories(doc([dns, CVE_OCT]), '2026-Oct');
+    expect(tagged.component).toBe('Role: DNS Server');
+    expect(untagged.component).toBeUndefined();
+  });
+
   it('reads the undated CVRF timestamps as UTC', () => {
     const [adv] = buildMsrcAdvisories(doc([CVE_OCT]), '2026-Oct');
     expect(adv.publishedAt?.toISOString()).toBe('2026-10-13T07:00:00.000Z');

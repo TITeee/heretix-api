@@ -301,6 +301,12 @@ model AdvisoryVulnerability {
   // distroPriority -- see VulnerabilityResult.distroPriority.
   distroPriority String?
 
+  // The part of the product the vendor says the vulnerability is in, verbatim
+  // -- MSRC's per-CVE tag ("Role: DNS Server", "Windows Kernel"). Returned
+  // per search result as requiresFeatures when it names an optional server
+  // role (see config/windows-role-features.ts).
+  component String?
+
   // アドバイザリ固有フィールド
   url         String?                   // 元のアドバイザリURL
   workaround  String?                   // 緩和策
