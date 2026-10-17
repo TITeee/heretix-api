@@ -57,23 +57,25 @@ The limits are a backstop, not a way to tell callers apart: heretix-management r
 
 Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and registered on startup. Times are UTC.
 
-| Job (`source`) | Schedule | Enabled by default |
-|---|---|---|
-| `nvd` (changes since last run) | Every 2 hours | ✅ |
-| `kev` | Daily 09:00 | ✅ |
-| `epss` | Daily 10:00 | ✅ |
-| `osv-<ecosystem>` (one per imported ecosystem) | Daily 08:00 | |
-| `osv-mal` (malicious packages) | Daily 08:30 | |
-| `debian-source-packages` | Weekly, Sunday 07:00 | |
-| `debian-tracker` | Daily 07:15 | |
-| `advisory-fortinet` / `-pan` / `-cisco` / `-oracle-linux` | Daily 11:00 / 11:15 / 11:30 / 11:45 | |
-| `advisory-sophos` / `-sonicwall` / `-oracle-cpu` | Daily 12:00 / 12:15 / 12:30 | |
-| `advisory-broadcom` / `-redhat-rhel9` / `-redhat-rhel8` / `-splunk` | Daily 13:00 / 13:15 / 13:30 / 13:45 | |
-| `advisory-apache` / `-zabbix` / `-tomcat` / `-nginx` | Daily 14:00 / 14:15 / 14:30 / 14:45 | |
-| `advisory-redhat-vex` | Daily 15:00 | |
-| `cna` (CVE Records and CISA SSVC) | Daily 15:30 | |
-| `advisory-checkpoint` / `-ivanti` / `-citrix` | Daily 16:00 / 16:30 / 16:45 | `advisory-ivanti` renders about 90 pages in a headless browser and takes 10 to 15 minutes; `advisory-citrix` reads about 20 pages over plain HTTP in under a minute |
-| `advisory-microsoft` | Daily 18:30 | Reads only the MSRC documents revised in the last 7 days and the latest month. Run `pnpm import:msrc` once after enabling it: it reads all of them since March 2021 (about 68) in about 3 minutes |
+| Job (`source`) | Schedule | Enabled by default | First load |
+|---|---|---|---|
+| `nvd` (changes since last run) | Every 2 hours | ✅ | `pnpm import:nvd full`. Run alone reads only the last 2 hours |
+| `kev` | Daily 09:00 | ✅ | Run is enough |
+| `epss` | Daily 10:00 | ✅ | Run is enough |
+| `osv-<ecosystem>` (one per imported ecosystem) | Daily 08:00 | | `pnpm import:osv ecosystem <name>`. The job does not exist until then; Run reads the changes since the last run, or the last 30 days |
+| `osv-mal` (malicious packages) | Daily 08:30 | | `pnpm import:osv malware`. Run reads the changes since the last run, or the last 30 days |
+| `debian-source-packages` | Weekly, Sunday 07:00 | | Run is enough |
+| `debian-tracker` | Daily 07:15 | | Run is enough |
+| `advisory-fortinet` / `-pan` / `-cisco` / `-oracle-linux` | Daily 11:00 / 11:15 / 11:30 / 11:45 | | Run is enough. `advisory-cisco` needs `CISCO_CLIENT_ID` and `CISCO_CLIENT_SECRET` |
+| `advisory-sophos` / `-sonicwall` / `-oracle-cpu` | Daily 12:00 / 12:15 / 12:30 | | Run is enough |
+| `advisory-broadcom` / `-redhat-rhel9` / `-redhat-rhel8` / `-splunk` | Daily 13:00 / 13:15 / 13:30 / 13:45 | | Run is enough |
+| `advisory-apache` / `-zabbix` / `-tomcat` / `-nginx` | Daily 14:00 / 14:15 / 14:30 / 14:45 | | Run is enough |
+| `advisory-redhat-vex` | Daily 15:00 | | Run is enough |
+| `cna` (CVE Records and CISA SSVC) | Daily 15:30 | | `pnpm import:cna`. The first run downloads a bundle of about 600MB; Run alone reads only the last 25 hours |
+| `advisory-checkpoint` / `-ivanti` / `-citrix` | Daily 16:00 / 16:30 / 16:45 | | Run is enough. `advisory-ivanti` renders about 90 pages in a headless browser and takes 10 to 15 minutes; `advisory-citrix` reads about 20 pages over plain HTTP in under a minute |
+| `advisory-microsoft` | Daily 18:30 | | `pnpm import:msrc` once: it reads all the MSRC documents since March 2021 (about 68) in about 3 minutes. Run alone reads only the documents revised in the last 7 days and the latest month |
+
+**First load.** A dashboard Run does what the scheduled job does. Most sources are fetched in full every time, so for them a Run is the first load. The sources marked with a command fetch only what changed since the last run, so a Run on an empty database loads next to nothing: run the command first (`docker compose exec app pnpm import:...`, after `pnpm build` when running from source), then switch the job on. Switching a job on is separate from running it: a new job is Off until switched on, and Run works either way.
 
 Switch jobs on and off with the dashboard's On/Off toggle or `PATCH /api/v1/jobs/:source` (see [api.md](api.md#jobs)). On a fresh install only NVD, KEV and EPSS are enabled. The other jobs are high-volume scrapers, so switch on just the ones you need. Each OSV ecosystem job appears once that ecosystem has been imported.
 
