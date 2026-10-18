@@ -37,6 +37,9 @@ export interface NormalizedAdvisory {
     // Why there is no fix (utils/fix-status.ts) -- set only by sources that say.
     fixStatus?: FixStatus;
     fixStatusDetail?: string | null;
+    // Newest fixed build per minor-release stream, on an unfixed row bounded
+    // by versionEnd (Red Hat VEX). See AdvisoryAffectedProduct.streamFixes.
+    streamFixes?: string[];
   }>;
   rawData: unknown;
 }
@@ -220,6 +223,7 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
         patchAvailable: prod.patchAvailable ?? null,
         fixStatus: prod.fixStatus ?? null,
         fixStatusDetail: prod.fixStatusDetail ?? null,
+        streamFixes: prod.streamFixes ?? [],
       };
     });
 

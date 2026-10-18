@@ -5,7 +5,7 @@ import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js'
 import { logger } from '../utils/logger.js';
 import { parseRedHatImpact } from './redhat-fetcher.js';
 import { type FixStatusInfo, redHatRemediationStatus } from '../utils/fix-status.js';
-import { compareRpmVersions } from '../utils/rpm-version.js';
+import { compareRpmVersions, rpmReleaseStream } from '../utils/rpm-version.js';
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -200,11 +200,44 @@ const NEVRA_RE = /^(.+)-(\d+):([^-]+)-([^-]+)\.([A-Za-z0-9_]+)$/;
  * bound: anything at or above it is newer than every recorded fix, so it can
  * be called fixed without risking a miss. Builds between an older stream's
  * fix (an EUS one, say) and that bound still match -- a remaining false
- * positive, deliberately preferred over introducing misses by guessing which
- * stream an installed build belongs to.
+ * positive for a build that carries no stream tag; one that does is judged
+ * against its own stream's fix (streamFixedVersions()).
  */
 export function newestFixedVersions(relationships: unknown, productStatus: unknown): Map<string, string> {
   const result = new Map<string, string>();
+  for (const [key, builds] of fixedBuilds(relationships, productStatus)) {
+    for (const evr of builds) {
+      const current = result.get(key);
+      if (!current || compareRpmVersions(evr, current) > 0) result.set(key, evr);
+    }
+  }
+  return result;
+}
+
+/**
+ * The newest fixed build in each minor-release stream ("el9_6"), per
+ * (RHEL major, package) -- what a build carrying that tag is judged against.
+ * Fixed builds with no such tag (GA builds, modules) are left out: they say
+ * nothing about a particular stream and only feed the cross-stream bound.
+ */
+export function streamFixedVersions(relationships: unknown, productStatus: unknown): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  for (const [key, builds] of fixedBuilds(relationships, productStatus)) {
+    const newest = new Map<string, string>();
+    for (const evr of builds) {
+      const stream = rpmReleaseStream(evr);
+      if (!stream) continue;
+      const current = newest.get(stream);
+      if (!current || compareRpmVersions(evr, current) > 0) newest.set(stream, evr);
+    }
+    if (newest.size > 0) result.set(key, [...newest.values()]);
+  }
+  return result;
+}
+
+/** Every fixed build the document records, per "<major>:<package>". */
+function fixedBuilds(relationships: unknown, productStatus: unknown): Map<string, string[]> {
+  const result = new Map<string, string[]>();
   if (!Array.isArray(relationships) || !productStatus || typeof productStatus !== 'object') return result;
   const fixedIds = (productStatus as Record<string, unknown>)['fixed'];
   const fixed = new Set(Array.isArray(fixedIds) ? fixedIds : []);
@@ -226,8 +259,9 @@ export function newestFixedVersions(relationships: unknown, productStatus: unkno
     const [, name, epoch, version, release] = nevra;
     const evr = `${epoch}:${version}-${release}`;
     const key = `${majorMatch[1]}:${name}`;
-    const current = result.get(key);
-    if (!current || compareRpmVersions(evr, current) > 0) result.set(key, evr);
+    const builds = result.get(key);
+    if (builds) builds.push(evr);
+    else result.set(key, [evr]);
   }
   return result;
 }
@@ -311,6 +345,7 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
   let info: VexCveInfo | null = null;
   const components: UnfixedRhelComponent[] = [];
   const newestFix = new Map<string, string>();
+  const streamFixes = new Map<string, Map<string, string>>();
   const seen = new Set<string>();
   for (const vuln of vulnerabilities) {
     const parsed = parseVexVulnerability(vuln);
@@ -327,6 +362,15 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
     for (const [key, evr] of newestFixedVersions(productTree['relationships'], v['product_status'])) {
       const current = newestFix.get(key);
       if (!current || compareRpmVersions(evr, current) > 0) newestFix.set(key, evr);
+    }
+    for (const [key, evrs] of streamFixedVersions(productTree['relationships'], v['product_status'])) {
+      const byStream = streamFixes.get(key) ?? new Map<string, string>();
+      for (const evr of evrs) {
+        const stream = rpmReleaseStream(evr)!;
+        const current = byStream.get(stream);
+        if (!current || compareRpmVersions(evr, current) > 0) byStream.set(stream, evr);
+      }
+      streamFixes.set(key, byStream);
     }
   }
   // Fixed rows for VEX-only majors, bounded by the newest fix the same way
@@ -345,10 +389,12 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
     // Bounded by the newest fix the same document records for this major
     // (newestFixedVersions()); unbounded -- every version -- when it records none.
     const versionEnd = newestFix.get(`${c.major}:${c.pkg}`);
+    const perStream = streamFixes.get(`${c.major}:${c.pkg}`);
     return {
       vendor: `red-hat-${c.major}`,
       product: c.pkg,
       ...(versionEnd ? { versionEnd } : {}),
+      ...(versionEnd && perStream ? { streamFixes: [...perStream.values()] } : {}),
       patchAvailable: false,
       fixStatus: c.fixStatus,
       fixStatusDetail: c.fixStatusDetail,

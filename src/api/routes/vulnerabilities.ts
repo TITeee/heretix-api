@@ -595,6 +595,7 @@ type RpmAdvisoryRow = {
   patchAvailable: boolean | null;
   fixStatus: string | null;
   fixStatusDetail: string | null;
+  streamFixes: string[];
   advisory: {
     id: string;
     source: string;
@@ -680,6 +681,7 @@ async function buildRpmProductIndex(key: string, product: string, vendor: string
       patchAvailable: true,
       fixStatus: true,
       fixStatusDetail: true,
+      streamFixes: true,
       advisory: {
         select: {
           id: true,

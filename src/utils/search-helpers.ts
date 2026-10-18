@@ -3,7 +3,7 @@
  * for unit testability. No DB dependency.
  */
 import { compareDpkgVersions } from './dpkg-version.js';
-import { compareRpmVersions } from './rpm-version.js';
+import { compareRpmVersions, rpmReleaseStream } from './rpm-version.js';
 import type { FixStatus } from './fix-status.js';
 
 export type VulnerabilityResult = {
@@ -561,10 +561,26 @@ export function matchesRpmStyleOsvVersion(
  * unrelated stream.
  */
 export function matchesRpmVersionRange(
-  row: { versionStart: string | null; versionEnd: string | null; patchAvailable?: boolean | null },
+  row: {
+    versionStart: string | null;
+    versionEnd: string | null;
+    patchAvailable?: boolean | null;
+    streamFixes?: string[] | null;
+  },
   version: string,
 ): boolean {
   if (!row.versionEnd) return row.patchAvailable === false;
+  // A build tagged with its minor-release stream ("el9_8") is judged against
+  // that stream's own fix, not the newest one across streams: a fix that only
+  // an older stream (EUS, E4S, ...) received does not reach it, and a build
+  // past every recorded fix can still sit in a stream that has none.
+  if (row.streamFixes?.length) {
+    const stream = rpmReleaseStream(version);
+    if (stream) {
+      const fix = row.streamFixes.find(f => rpmReleaseStream(f) === stream);
+      return fix === undefined || compareRpmVersions(version, fix) < 0;
+    }
+  }
   if (compareRpmVersions(version, row.versionEnd) >= 0) return false;
   if (row.versionStart && compareRpmVersions(version, row.versionStart) < 0) return false;
   return true;
