@@ -162,7 +162,7 @@ Search with `ecosystem=Red Hat:<major>` (`Red Hat:9`, `Red Hat:10`); versions ar
 
 **VEX** fills in what OVAL cannot express:
 - Packages that are `known_affected` or `under_investigation` with no fix become rows with `patchAvailable: false`, which match every version. Red Hat's reason for the missing fix is returned as `fixStatus`.
-- VEX says "unfixed" per major release but "fixed" per release stream. An unfixed row is therefore bounded by the newest fix the same document records for that major.
+- VEX says "unfixed" per major release but "fixed" per release stream. An unfixed row is therefore bounded by the newest fix the same document records for that major, and also carries the newest fix of each minor-release stream (`el9_6`, `el9_8`, ...). A build with such a tag is judged against its own stream's fix alone, and is affected when that stream has none; a build with no tag uses the bound across streams.
 - **RHEL 10 has no OVAL feed at all** (Red Hat's OVAL v2 tree stops at RHEL 9). For RHEL 10 only, every fixed package also gets a `patchAvailable: true` row bounded by its newest fixed build across release streams. Debug packages are skipped.
 - A source RPM name (`sed.src`) is mapped to its installable name (`sed`).
 - Only RHEL 8, 9 and 10 are read from the archive, which covers every Red Hat product back to RHEL 5.
