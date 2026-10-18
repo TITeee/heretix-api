@@ -81,6 +81,16 @@ export function compareRpmVersions(a: string, b: string): number {
   return rpmvercmp(pa.release, pb.release);
 }
 
+/**
+ * The minor-release stream a RHEL-family build carries in its release, as
+ * "el9_6" for "5.14.0-570.140.1.el9_6" (also "el8_10", "el10_0"); null for a
+ * build with no minor tag -- a GA build ("-13.el9") or a module build
+ * ("-1.module+el9.2.0+123+abc"), which says nothing about the stream.
+ */
+export function rpmReleaseStream(evr: string): string | null {
+  return parseEvr(evr).release.match(/(?:^|\.)(el\d+_\d+)(?![0-9])/)?.[1] ?? null;
+}
+
 function parseEvr(s: string): { epoch: number; version: string; release: string } {
   let epoch = 0;
   let rest = s;

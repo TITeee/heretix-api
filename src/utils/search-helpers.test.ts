@@ -521,6 +521,41 @@ describe('matchesRpmVersionRange', () => {
   });
 });
 
+describe('matchesRpmVersionRange with per-stream fixes', () => {
+  // A kernel CVE unfixed on RHEL 9, fixed only in the 9.4 and 9.6 sustaining streams.
+  const row = {
+    versionStart: null,
+    versionEnd: '0:5.14.0-570.140.1.el9_6',
+    patchAvailable: false,
+    streamFixes: ['0:5.14.0-427.149.1.el9_4', '0:5.14.0-570.140.1.el9_6'],
+  };
+
+  it('matches a build in a stream with no fix even when it is newer than every fix', () => {
+    expect(matchesRpmVersionRange(row, '5.14.0-687.58.1.el9_8')).toBe(true);
+  });
+
+  it('judges a build against the fix of its own stream', () => {
+    expect(matchesRpmVersionRange(row, '5.14.0-427.100.1.el9_4')).toBe(true);
+    expect(matchesRpmVersionRange(row, '5.14.0-427.149.1.el9_4')).toBe(false);
+    expect(matchesRpmVersionRange(row, '5.14.0-427.150.1.el9_4')).toBe(false);
+  });
+
+  it('does not match a build past its own stream fix but below another stream fix', () => {
+    // Past the 9.4 fix, below the 9.6 bound: the cross-stream bound alone would still match it.
+    expect(matchesRpmVersionRange(row, '5.14.0-500.1.1.el9_4')).toBe(false);
+  });
+
+  it('falls back to the cross-stream bound for a build with no stream tag', () => {
+    expect(matchesRpmVersionRange(row, '5.14.0-500.el9')).toBe(true);
+    expect(matchesRpmVersionRange(row, '5.14.0-687.el9')).toBe(false);
+  });
+
+  it('behaves as before for a row that carries no stream fixes', () => {
+    const plain = { versionStart: null, versionEnd: '0:5.14.0-570.140.1.el9_6', patchAvailable: false, streamFixes: [] };
+    expect(matchesRpmVersionRange(plain, '5.14.0-687.58.1.el9_8')).toBe(false);
+  });
+});
+
 describe('summaryBudgetChars', () => {
   it('leaves ordinary batches alone', () => {
     // 100 packages x 500 results allows 7,600 chars, well past the longest

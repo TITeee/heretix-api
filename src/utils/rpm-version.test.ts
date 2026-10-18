@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rpmvercmp, compareRpmVersions } from './rpm-version.js';
+import { rpmvercmp, compareRpmVersions, rpmReleaseStream } from './rpm-version.js';
 
 describe('rpmvercmp', () => {
   it('returns 0 for identical strings', () => {
@@ -52,5 +52,24 @@ describe('compareRpmVersions', () => {
 
   it('handles a version with no release component', () => {
     expect(compareRpmVersions('3.2.5', '3.2.6')).toBe(-1);
+  });
+});
+
+describe('rpmReleaseStream', () => {
+  it('reads the minor-release tag from the release', () => {
+    expect(rpmReleaseStream('5.14.0-687.58.1.el9_8')).toBe('el9_8');
+    expect(rpmReleaseStream('0:5.14.0-570.140.1.el9_6')).toBe('el9_6');
+    expect(rpmReleaseStream('4.18.0-553.87.1.el8_10')).toBe('el8_10');
+    expect(rpmReleaseStream('6.12.0-55.98.1.el10_0')).toBe('el10_0');
+  });
+
+  it('is null for a build that carries no minor tag', () => {
+    expect(rpmReleaseStream('0.10.4-13.el9')).toBeNull();
+    expect(rpmReleaseStream('3.0.7-1.module+el9.2.0+123+abc')).toBeNull();
+    expect(rpmReleaseStream('1.0')).toBeNull();
+  });
+
+  it('does not take a tag from the version part', () => {
+    expect(rpmReleaseStream('1.el9_2-3.el9')).toBeNull();
   });
 });

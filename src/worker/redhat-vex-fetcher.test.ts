@@ -320,8 +320,40 @@ describe('normalizeVexDoc', () => {
     }
 
     expect(normalizeVexDoc(doc)?.affectedProducts).toEqual([
-      { vendor: 'red-hat-9', product: 'bzip2-libs', versionEnd: '0:1.0.8-10.el9_3', patchAvailable: false, fixStatus: 'affected', fixStatusDetail: null },
+      { vendor: 'red-hat-9', product: 'bzip2-libs', versionEnd: '0:1.0.8-10.el9_3', patchAvailable: false, fixStatus: 'affected', fixStatusDetail: null, streamFixes: ['0:1.0.8-8.el9_2.1', '0:1.0.8-10.el9_3'] },
     ]);
+  });
+
+  it('keeps only the newest fix of each stream, and none for a build with no stream tag', () => {
+    const doc = buildDoc({
+      fixed: [
+        'BaseOS-9.2.0.Z.EUS:bzip2-libs-0:1.0.8-8.el9_2.1.x86_64',
+        'BaseOS-9.2.0.Z.E4S:bzip2-libs-0:1.0.8-8.el9_2.2.x86_64',
+        'BaseOS-9.2.0.Z.EUS:bzip2-libs-0:1.0.8-8.el9_2.1.aarch64',
+        'BaseOS-9.0.0.GA:bzip2-libs-0:1.0.8-6.el9.x86_64',
+      ],
+    }) as { product_tree: { relationships: unknown[] } };
+    for (const [stream, nevra] of [
+      ['BaseOS-9.2.0.Z.EUS', 'bzip2-libs-0:1.0.8-8.el9_2.1.x86_64'],
+      ['BaseOS-9.2.0.Z.E4S', 'bzip2-libs-0:1.0.8-8.el9_2.2.x86_64'],
+      ['BaseOS-9.2.0.Z.EUS', 'bzip2-libs-0:1.0.8-8.el9_2.1.aarch64'],
+      ['BaseOS-9.0.0.GA', 'bzip2-libs-0:1.0.8-6.el9.x86_64'],
+    ]) {
+      doc.product_tree.relationships.push({
+        category: 'default_component_of',
+        full_product_name: { product_id: `${stream}:${nevra}` },
+        product_reference: nevra,
+        relates_to_product_reference: stream,
+      });
+    }
+
+    const [row] = normalizeVexDoc(doc)!.affectedProducts;
+    expect(row.versionEnd).toBe('0:1.0.8-8.el9_2.2');
+    expect(row.streamFixes).toEqual(['0:1.0.8-8.el9_2.2']);
+  });
+
+  it('records no stream fixes for a row that has no fix at all', () => {
+    expect(normalizeVexDoc(buildDoc())?.affectedProducts[0]).not.toHaveProperty('streamFixes');
   });
 
   it('carries the remediation reason onto the affected product', () => {
@@ -383,7 +415,7 @@ describe('normalizeVexDoc', () => {
       relates_to_product_reference: 'red_hat_enterprise_linux_10',
     });
     expect(normalizeVexDoc(doc)?.affectedProducts).toEqual([
-      { vendor: 'red-hat-10', product: 'sudo', versionEnd: '0:1.9.15-8.p5.el10_0.2', patchAvailable: false, fixStatus: 'affected', fixStatusDetail: null },
+      { vendor: 'red-hat-10', product: 'sudo', versionEnd: '0:1.9.15-8.p5.el10_0.2', patchAvailable: false, fixStatus: 'affected', fixStatusDetail: null, streamFixes: ['0:1.9.15-8.p5.el10_0.2'] },
     ]);
   });
 
