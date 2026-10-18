@@ -27,7 +27,7 @@ One RHEL 9.8 host scanned with both heretix-api and [Trivy](https://trivy.dev/).
 | Host | RHEL 9.8 on AWS EC2, fully updated with `dnf update` on 2026-10-18 |
 | Kernels installed | `5.14.0-687.10.1.el9_8` and `5.14.0-687.58.1.el9_8` (the second is running) |
 | Packages | 520 `rpm -qa` entries: 517 packages and 3 `gpg-pubkey` entries |
-| Trivy | 0.74.0, `rootfs` scan run on the host on 2026-10-18. Vulnerability database (schema version 2) built 2026-10-18 00:43 UTC, downloaded 06:05 UTC, just before the scan |
+| Trivy | 0.74.0, `rootfs` scan run on the host on 2026-10-18 with its defaults, so unfixed findings are included (no `--ignore-unfixed`). Vulnerability database (schema version 2) built 2026-10-18 00:43 UTC, downloaded 06:05 UTC, just before the scan |
 | heretix-api | Before: `00835cc` (#116). After: `62ce731` (#117). Red Hat VEX archive of 2026-10-11 |
 | heretix-cli | 0.5.1, which produced the CycloneDX SBOM that supplied the package list |
 
@@ -118,9 +118,14 @@ The check covers all 5,471 heretix-api-only rows, all 13 Trivy-only rows and the
 On the host:
 
 ```bash
-trivy rootfs --scanners vuln --list-all-pkgs --format json -o trivy-all.json /
+trivy rootfs --scanners vuln --list-all-pkgs --format json -o trivy-all.json /   # the run compared, unfixed findings included
+heretix-cli collect --output sbom.json                                          # CycloneDX SBOM of the host
+```
+
+Every comparison above uses `trivy-all.json`. A second run with `--ignore-unfixed` was made only to check the fixed versions: it reports the same 1,712 fixed rows as the first run, so it adds nothing to the other comparisons.
+
+```bash
 trivy rootfs --scanners vuln --ignore-unfixed --format json -o trivy-fixed.json /
-heretix-cli collect --output sbom.json        # CycloneDX SBOM of the host
 ```
 
 For each RPM component of the SBOM (ecosystem `Red Hat:9`), ask heretix-api for its findings, paging at 500 per request:
