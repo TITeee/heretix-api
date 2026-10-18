@@ -46,7 +46,7 @@ Module streams are separated using the OVAL module criterion (see [data-sources.
 
 ### Red Hat VEX bounds use the newest stream's fix
 
-An unfixed RHEL row, and every RHEL 10 fixed row, is bounded by the newest fix across release streams. A build fixed only in an older stream (EUS, or 10.0.Z when 10.2 also has a fix) is still reported.
+A RHEL build whose release carries no minor-release tag (`el9_8`), such as a GA build (`-13.el9`) or a module build, is compared with the newest fix across release streams, so one fixed only in an older stream (EUS, say) is still reported. Every RHEL 10 fixed row is bounded the same way (10.0.Z when 10.2 also has a fix). A build that does carry the tag is judged against its own stream's fix; see [data-sources.md](data-sources.md#red-hat). Unfixed rows imported before this change have no per-stream fixes until the next Red Hat VEX import.
 
 ### RHEL 10 fixed versions can lag
 
