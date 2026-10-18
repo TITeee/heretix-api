@@ -2,6 +2,8 @@
 
 Scripts to measure Precision / Recall against official security advisories. This file grows as more products get boundary-value coverage — see [README.md](README.md) for everything else.
 
+For a comparison of heretix-api with another scanner on a real RHEL 9.8 host, see [docs/detection-comparison-rhel9.md](docs/detection-comparison-rhel9.md).
+
 ```bash
 pnpm validate:tomcat 9.0.100      # vs tomcat.apache.org
 pnpm validate:apache 2.4.62       # vs httpd.apache.org

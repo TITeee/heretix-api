@@ -209,6 +209,7 @@ Per-source details, import commands and limitations: [docs/data-sources.md](docs
 | [docs/architecture.md](docs/architecture.md) | Data model, deduplication, version matching |
 | [docs/known-issues.md](docs/known-issues.md) | Current limitations |
 | [ACCURACY.md](ACCURACY.md) | Precision / recall measurements against official advisories |
+| [docs/detection-comparison-rhel9.md](docs/detection-comparison-rhel9.md) | One RHEL 9.8 host scanned with heretix-api and Trivy, every difference checked against Red Hat's VEX data |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development, tests, adding a vendor |
 
 ## License
