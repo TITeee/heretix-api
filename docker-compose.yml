@@ -2,6 +2,9 @@ services:
   db:
     image: postgres:15-alpine
     restart: unless-stopped
+    # PostgreSQL's own default is 128MB, far less than one large search reads
+    # (see docs/operations.md#memory). Takes effect when the container restarts.
+    command: ["postgres", "-c", "shared_buffers=${POSTGRES_SHARED_BUFFERS:-1GB}"]
     environment:
       POSTGRES_DB: heretix
       POSTGRES_USER: postgres

@@ -106,6 +106,12 @@ pnpm db:migrate    # apply Prisma migrations
 pnpm db:studio     # browse the database at http://localhost:5555
 ```
 
+### Memory
+
+PostgreSQL keeps recently read data in `shared_buffers`, 128MB unless configured. That is small next to what one search can read: a batch search for an RHEL 9 host with two kernels installed (523 packages) reads about 1.1GB, mostly the kernel's 10,000 Red Hat rows per package. What `shared_buffers` cannot hold is read again through the operating system's file cache, which is fast while the files are still cached (8 s for that batch) and slow once other programs have pushed them out: the same batch then took 171 s, most of it waiting for the disk.
+
+The Compose file sets `shared_buffers` to 1GB. Change it with `POSTGRES_SHARED_BUFFERS` in `.env` (for example `2GB`), up to about a quarter of the server's memory, and restart the database (`docker compose up -d db`). For a PostgreSQL you run yourself, set it in `postgresql.conf` or with `ALTER SYSTEM SET shared_buffers = '1GB';`, then restart PostgreSQL; `SHOW shared_buffers;` shows the value in use.
+
 ### Indexes Prisma does not manage
 
 The name suggestions (`/vulnerabilities/suggest`) match a prefix on `lower(name)`. Unless the database uses the `C` collation, a plain index cannot serve `LIKE 'x%'`, so migration `20261010150000_add_lowercase_prefix_indexes` adds `lower(...) text_pattern_ops` indexes on `NVDAffectedPackage` (`packageName`, `vendor`), `OSVAffectedPackage` (`packageName`) and `CnaAffectedProduct` (`product`). Prisma's schema cannot express an expression index and ignores one when it compares the database with `schema.prisma`, so they do not appear there and `prisma migrate dev` leaves them alone. They take a few seconds per million rows to build and hold a write lock on their table meanwhile, so the first start after the upgrade builds them before any import runs. A second migration, `20261010150100_analyze_prefix_search_tables`, analyzes the three tables: until a table is analyzed the planner ignores the new indexes. Without the indexes the suggestions still work, only slowly (two to five seconds on a database with millions of rows).
@@ -113,6 +119,8 @@ The name suggestions (`/vulnerabilities/suggest`) match a prefix on `lower(name)
 ## Troubleshooting
 
 **`P1001: Can't reach database server`**: check `DATABASE_URL`, check that PostgreSQL is running, and check firewall / security group rules.
+
+**The first search after a quiet period is slow, or a client times out on a large batch** (heretix-management: `heretix-api batch search did not answer within ...`): the database is reading from disk. Raise `shared_buffers` (see [Memory](#memory)); a second run of the same search is fast because the data is then cached.
 
 **Migration errors on a development database**: `pnpm prisma migrate reset` drops and recreates it; then re-run `pnpm db:migrate`. Never run this against production.
 
