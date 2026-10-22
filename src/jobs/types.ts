@@ -22,4 +22,11 @@ export interface JobDefinition {
   cron: string;
   /** Actual work; returns record counts for the CollectionJob row */
   run: () => Promise<JobResult>;
+  /**
+   * Holds a lot in memory (a whole dataset or archive at once). The job runner
+   * runs at most JOB_MAX_HEAVY of these at a time (see runner.ts), so two of
+   * them never add up past what a small server has. Measured: EPSS took the
+   * process to 2.6GB. A job left unmarked only loses that guard.
+   */
+  heavy?: boolean;
 }

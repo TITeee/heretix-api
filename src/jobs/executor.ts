@@ -29,7 +29,8 @@ export function isJobRunning(source: string): boolean {
  */
 export async function reconcileOrphanedJobs(): Promise<number> {
   const { count } = await prisma.collectionJob.updateMany({
-    where: { status: 'running' },
+    // 'queued': waiting for a free slot in the job runner when that process ended.
+    where: { status: { in: ['running', 'queued'] } },
     data: {
       status: 'failed',
       completedAt: new Date(),
@@ -107,26 +108,52 @@ export async function executeJob(def: JobDefinition): Promise<void> {
       return;
     }
 
-    try {
-      const result = await def.run();
-      await recordOutcome(job.id, def.source, {
-        status: 'completed',
-        completedAt: new Date(),
-        totalFetched: result.fetched ?? 0,
-        totalInserted: result.inserted ?? 0,
-        totalUpdated: result.updated ?? 0,
-        totalFailed: result.failed ?? 0,
-      });
-      logger.info({ job: def.source, ...result }, 'Job completed');
-    } catch (err) {
-      await recordOutcome(job.id, def.source, {
-        status: 'failed',
-        completedAt: new Date(),
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
-      logger.error({ job: def.source, err }, 'Job failed');
-    }
+    await runRecordedJob(def, job.id);
   } finally {
     running.delete(def.source);
+  }
+}
+
+/**
+ * Run a job whose CollectionJob row already exists (status 'running') and
+ * record how it ended on that row. Never rejects. What executeJob() runs in
+ * this process, and what a job process (scripts/run-job.ts) runs for the job
+ * runner, which creates the row itself.
+ *
+ * `metadata` is merged into the row's own on completion or failure, for what
+ * only the caller knows (a job process's peak memory).
+ */
+export async function runRecordedJob(
+  def: JobDefinition,
+  jobId: string,
+  metadata?: () => Record<string, unknown>,
+): Promise<'completed' | 'failed'> {
+  const withMetadata = async (data: Prisma.CollectionJobUpdateInput): Promise<Prisma.CollectionJobUpdateInput> => {
+    if (!metadata) return data;
+    const current = await prisma.collectionJob.findUnique({ where: { id: jobId }, select: { metadata: true } }).catch(() => null);
+    const base = current?.metadata && typeof current.metadata === 'object' ? (current.metadata as Record<string, unknown>) : {};
+    return { ...data, metadata: { ...base, ...metadata() } as Prisma.InputJsonValue };
+  };
+
+  try {
+    const result = await def.run();
+    await recordOutcome(jobId, def.source, await withMetadata({
+      status: 'completed',
+      completedAt: new Date(),
+      totalFetched: result.fetched ?? 0,
+      totalInserted: result.inserted ?? 0,
+      totalUpdated: result.updated ?? 0,
+      totalFailed: result.failed ?? 0,
+    }));
+    logger.info({ job: def.source, ...result }, 'Job completed');
+    return 'completed';
+  } catch (err) {
+    await recordOutcome(jobId, def.source, await withMetadata({
+      status: 'failed',
+      completedAt: new Date(),
+      errorMessage: err instanceof Error ? err.message : String(err),
+    }));
+    logger.error({ job: def.source, err }, 'Job failed');
+    return 'failed';
   }
 }

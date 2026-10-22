@@ -43,6 +43,10 @@ DATABASE_POOL_MAX=20        # Optional. Postgres connection pool size
 RATE_LIMIT_MAX=1200         # Optional. Requests per client address per minute, over 429 (0 = off). /health is never limited
 RATE_LIMIT_BATCH_MAX=30     # Optional. Batch searches per client address per minute (0 = only the limit above)
 BATCH_SEARCH_MAX_CONCURRENT=2  # Optional. Batch searches running at once; more get 429 (0 = no cap)
+JOB_MAX_CONCURRENT=2        # Optional. Collection jobs running at once; the rest wait as "queued"
+JOB_MAX_HEAVY=1             # Optional. Of those, memory-heavy jobs (EPSS, CNA, Red Hat OVAL and VEX) running at once
+JOB_MAX_OLD_SPACE_MB=3072   # Optional. Heap limit of each job process
+JOB_DATABASE_POOL_MAX=5     # Optional. Postgres connection pool of each job process
 NVD_API_KEY=                # Optional. NVD rate limit 10 → 50 requests/min
 CISCO_CLIENT_ID=            # Required for the Cisco import (openVuln API)
 CISCO_CLIENT_SECRET=
@@ -83,7 +87,17 @@ An existing install may have more jobs enabled; check the dashboard and switch o
 
 The setting is stored in `JobConfig` and checked when the job fires, so a change takes effect without a restart. A job can be run manually whether or not it is enabled.
 
-Each job run is recorded in `CollectionJob`: status, counts, error message, and the cursor for the next delta run. A job left `running` by a restart is marked as failed on the next start.
+Each job run is recorded in `CollectionJob`: status, counts, error message, peak memory (`metadata.peakMemoryMb`), and the cursor for the next delta run.
+
+### Job processes
+
+Every job runs in a process of its own, started by the API process ([src/jobs/runner.ts](../src/jobs/runner.ts)). A job that blocks for seconds, fails in an unexpected way or runs out of memory therefore stops only its own process: searches keep answering, and the job's row says what happened (`Job process crashed, most likely out of memory (heap limit 3072 MB ...)`). Before, jobs ran inside the API process, and a search could wait up to 14 seconds during the EPSS import.
+
+At most `JOB_MAX_CONCURRENT` jobs run at once (2), and of those at most `JOB_MAX_HEAVY` (1) of the jobs that hold a large dataset in memory (EPSS, CNA, and the Red Hat OVAL and VEX imports). A job waiting for a slot shows as **queued** on the dashboard; a Run while it is queued or running is refused. With the defaults, jobs use at most about one 3GB heap plus a light job beside it; raise the limits only with the memory to match, since two heavy jobs together approach 6GB.
+
+Each job process opens its own connections to PostgreSQL (`JOB_DATABASE_POOL_MAX`, 5), so the most in use is the API's `DATABASE_POOL_MAX` plus `JOB_MAX_CONCURRENT` times that.
+
+On shutdown, waiting jobs are dropped and running ones stopped, each recorded on its row (`Not started: the API was shutting down`, `Interrupted: ...`). A row left `queued` or `running` by a process that was killed outright is marked as failed on the next start. An interrupted job did not record its delta cursor, so its next run picks up the same changes again.
 
 ## One-time backfills
 

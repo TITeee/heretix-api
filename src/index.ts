@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { startServer } from './api/server.js';
 import { startScheduler, stopScheduler } from './scheduler.js';
 import { reconcileOrphanedJobs } from './jobs/executor.js';
+import { getJobRunner } from './jobs/runner.js';
 import { closeDb } from './db/client.js';
 import { logger } from './utils/logger.js';
 
@@ -13,10 +14,11 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 let shuttingDown = false;
 
 /**
- * Stop firing jobs, drain HTTP, release the DB pool.
+ * Stop firing jobs, stop the job processes, drain HTTP, release the DB pool.
  *
- * A job already running is deliberately not waited on: imports take minutes,
- * well past any grace period, and its half-written CollectionJob row is
+ * Running jobs are stopped rather than waited on: imports take minutes, well
+ * past any grace period. Each is recorded as interrupted on its CollectionJob
+ * row, and one this process could not record (it was killed first) is
  * reconciled by reconcileOrphanedJobs() on the next boot. Without this, a
  * `docker compose restart` dropped in-flight requests and left Postgres
  * connections to time out on their own.
@@ -46,6 +48,7 @@ async function shutdown(server: FastifyInstance, signal: string, exitCode = 0): 
 
   try {
     await stopScheduler();
+    await getJobRunner().stop();
     await server.close();
     await closeDb();
     logger.info('Shutdown complete');

@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { resolveJob } from '../../jobs/registry.js';
-import { executeJob, isJobRunning } from '../../jobs/executor.js';
+import { getJobRunner } from '../../jobs/runner.js';
 import { setEnabled } from '../../jobs/config.js';
 
 const enableSchema = z.object({
@@ -9,7 +9,8 @@ const enableSchema = z.object({
 });
 
 export default async function jobsRoute(fastify: FastifyInstance) {
-  // Manual trigger: fire-and-forget. Works regardless of enabled state.
+  // Manual trigger: queued with the scheduled jobs, started when a slot is
+  // free. Works regardless of enabled state.
   fastify.post<{ Params: { source: string } }>('/jobs/:source/run', async (request, reply) => {
     const { source } = request.params;
 
@@ -17,13 +18,18 @@ export default async function jobsRoute(fastify: FastifyInstance) {
     if (!def) {
       return reply.status(404).send({ error: `Unknown job source: ${source}` });
     }
-    if (isJobRunning(source)) {
-      return reply.status(409).send({ error: `Job already running: ${source}` });
+    // The CollectionJob row tracks progress from here: queued, then running.
+    const outcome = await getJobRunner().request(def);
+    if (outcome === 'busy') {
+      return reply.status(409).send({ error: `Job already queued or running: ${source}` });
     }
-
-    // Fire-and-forget; the CollectionJob row tracks progress.
-    void executeJob(def);
-    return reply.status(202).send({ status: 'started', source });
+    if (outcome === 'stopped') {
+      return reply.status(503).send({ error: 'Shutting down' });
+    }
+    if (outcome === 'failed') {
+      return reply.status(500).send({ error: `Could not queue job: ${source}` });
+    }
+    return reply.status(202).send({ status: outcome, source });
   });
 
   // Enable/disable a job (gates only the scheduler, not manual runs).

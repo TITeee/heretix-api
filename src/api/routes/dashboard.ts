@@ -426,6 +426,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         completed: 'border-[var(--border)] bg-transparent text-[var(--foreground)]',
         failed:    'border-transparent bg-[var(--destructive)]/20 text-[var(--destructive)]',
         running:   'border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]',
+        queued:    'border-[var(--border)] bg-transparent text-[var(--muted-foreground)]',
         pending:   'border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]',
       };
       const cls = map[status] || 'border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]';
@@ -477,12 +478,13 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     // inline handler would need it escaped for the HTML attribute *and* the JS
     // string literal inside it -- a data attribute has only the one context.
     function actionCell(row) {
-      const running = row.status === 'running';
+      // A queued job waits for a free slot in the job runner; it runs once one opens.
+      const busy = row.status === 'running' || row.status === 'queued';
       const runBtn = '<button data-action="run" data-source="' + esc(row.source) + '" ' +
-        (running ? 'disabled ' : '') +
+        (busy ? 'disabled ' : '') +
         'class="w-[72px] px-2.5 py-1 text-xs font-medium rounded-md border border-[var(--border)] text-center ' +
-        (running ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[var(--accent)]') + '">' +
-        (running ? 'Running…' : 'Run') + '</button>';
+        (busy ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[var(--accent)]') + '">' +
+        (row.status === 'queued' ? 'Queued…' : busy ? 'Running…' : 'Run') + '</button>';
       const enabled = row.enabled !== false;
       const toggleBtn = '<button data-action="toggle" data-source="' + esc(row.source) + '" ' +
         'data-enabled="' + (!enabled) + '" ' +
@@ -510,9 +512,10 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
           headers: { 'x-api-key': key },
         });
         if (res.status === 401) { showToast('Invalid API key', 'error'); return; }
-        if (res.status === 409) { showToast(source + ' is already running', 'error'); return; }
+        if (res.status === 409) { showToast(source + ' is already queued or running', 'error'); return; }
         if (!res.ok) { showToast('Failed: HTTP ' + res.status, 'error'); return; }
-        showToast('Started ' + source, 'ok');
+        const body = await res.json().catch(() => ({}));
+        showToast((body.status === 'queued' ? 'Queued ' : 'Started ') + source, 'ok');
         setTimeout(loadData, 800);
       } catch (err) {
         showToast('Failed: ' + err.message, 'error');

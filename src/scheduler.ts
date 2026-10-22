@@ -1,7 +1,8 @@
 import cron, { type ScheduledTask } from 'node-cron';
 import { logger } from './utils/logger.js';
 import { STATIC_JOBS, listOsvEcosystemJobs } from './jobs/registry.js';
-import { executeJob } from './jobs/executor.js';
+import { getJobRunner } from './jobs/runner.js';
+import type { JobDefinition } from './jobs/types.js';
 import { isEnabled } from './jobs/config.js';
 
 // OSV per-ecosystem discovery runs on this schedule; each ecosystem is a
@@ -10,12 +11,18 @@ const OSV_ECOSYSTEM_CRON = '0 8 * * *';
 
 const tasks: ScheduledTask[] = [];
 
+/** Hand a job to the runner, which starts it as soon as a slot is free. */
+async function enqueue(def: JobDefinition): Promise<void> {
+  const outcome = await getJobRunner().request(def);
+  if (outcome === 'busy') logger.warn({ job: def.source }, 'Scheduler: job already queued or running, skipping');
+}
+
 /**
  * Run a cron tick without ever rejecting.
  *
  * node-cron invokes these callbacks with no handler attached, so anything that
- * escapes becomes an unhandled rejection and kills the process. executeJob()
- * already guarantees this for itself, but the enabled-flag lookup and the OSV
+ * escapes becomes an unhandled rejection and kills the process. The job runner's
+ * request() already guarantees this for itself, but the enabled-flag lookup and the OSV
  * ecosystem discovery around it are plain DB reads that can fail on their own.
  */
 function tick(name: string, run: () => Promise<void>): () => void {
@@ -33,12 +40,12 @@ export function startScheduler(): void {
         logger.info({ job: def.source }, 'Scheduler: job disabled, skipping');
         return;
       }
-      await executeJob(def);
+      await enqueue(def);
     })));
   }
 
   // OSV ecosystems: discovered dynamically. Each enabled ecosystem runs as its
-  // own CollectionJob (osv-<ecosystem>).
+  // own CollectionJob (osv-<ecosystem>); the runner works through them a few at a time.
   tasks.push(cron.schedule(OSV_ECOSYSTEM_CRON, tick('osv-ecosystems', async () => {
     const jobs = await listOsvEcosystemJobs();
     for (const def of jobs) {
@@ -46,7 +53,7 @@ export function startScheduler(): void {
         logger.info({ job: def.source }, 'Scheduler: job disabled, skipping');
         continue;
       }
-      await executeJob(def);
+      await enqueue(def);
     }
   })));
 
@@ -54,9 +61,8 @@ export function startScheduler(): void {
 }
 
 /**
- * Stop firing new jobs. Does not interrupt a job already running -- those are
- * left to finish or to be reconciled by reconcileOrphanedJobs() on next boot,
- * since an import can run for minutes, far longer than a shutdown grace period.
+ * Stop firing new jobs. Jobs already queued or running are the runner's to
+ * stop (JobRunner.stop()).
  */
 export async function stopScheduler(): Promise<void> {
   // stop() is typed `void | Promise<void>`; awaiting keeps a rejecting
