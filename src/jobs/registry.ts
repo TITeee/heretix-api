@@ -79,6 +79,7 @@ export const STATIC_JOBS: JobDefinition[] = [
     source: 'epss',
     label: 'EPSS',
     cron: '0 10 * * *',
+    heavy: true,
     run: async () => {
       const result = await fullImportEPSS();
       return { updated: result.updated };
@@ -92,9 +93,10 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-sonicwall',    label: 'SonicWall',        cron: '15 12 * * *', run: () => runAdvisory('advisory-sonicwall', new SonicWallFetcher()) },
   { source: 'advisory-oracle-cpu',   label: 'Oracle CPU',       cron: '30 12 * * *', run: () => runAdvisory('advisory-oracle-cpu', new OracleCpuFetcher()) },
   { source: 'advisory-broadcom',     label: 'Broadcom/VMware',  cron: '0 13 * * *',  run: () => runAdvisory('advisory-broadcom', new BroadcomFetcher()) },
-  { source: 'advisory-redhat-rhel9', label: 'Red Hat (RHEL 9)', cron: '15 13 * * *', run: () => runAdvisory('advisory-redhat-rhel9', new RedHatFetcher('rhel9')) },
-  { source: 'advisory-redhat-rhel8', label: 'Red Hat (RHEL 8)', cron: '30 13 * * *', run: () => runAdvisory('advisory-redhat-rhel8', new RedHatFetcher('rhel8')) },
-  { source: 'advisory-redhat-vex',   label: 'Red Hat VEX (unfixed CVEs, RHEL 10)', cron: '0 15 * * *', run: () => runAdvisory('advisory-redhat-vex', new RedHatVexFetcher()) },
+  // The Red Hat jobs unpack and parse a whole OVAL file or VEX archive.
+  { source: 'advisory-redhat-rhel9', label: 'Red Hat (RHEL 9)', cron: '15 13 * * *', heavy: true, run: () => runAdvisory('advisory-redhat-rhel9', new RedHatFetcher('rhel9')) },
+  { source: 'advisory-redhat-rhel8', label: 'Red Hat (RHEL 8)', cron: '30 13 * * *', heavy: true, run: () => runAdvisory('advisory-redhat-rhel8', new RedHatFetcher('rhel8')) },
+  { source: 'advisory-redhat-vex',   label: 'Red Hat VEX (unfixed CVEs, RHEL 10)', cron: '0 15 * * *', heavy: true, run: () => runAdvisory('advisory-redhat-vex', new RedHatVexFetcher()) },
   { source: 'advisory-splunk',       label: 'Splunk',           cron: '45 13 * * *', run: () => runAdvisory('advisory-splunk', new SplunkFetcher()) },
   { source: 'advisory-apache',       label: 'Apache HTTP Server', cron: '0 14 * * *', run: () => runAdvisory('advisory-apache', new ApacheFetcher()) },
   { source: 'advisory-zabbix',       label: 'Zabbix',             cron: '15 14 * * *', run: () => runAdvisory('advisory-zabbix', new ZabbixFetcher()) },
@@ -113,6 +115,9 @@ export const STATIC_JOBS: JobDefinition[] = [
     source: 'cna',
     label: 'CVE Record (CNA)',
     cron: '30 15 * * *',
+    // Marked from what was known before jobs ran on their own; revisit with
+    // the peak memory each run now records.
+    heavy: true,
     run: async () => {
       const since = await getDeltaCursor('cna', 25 * HOUR_MS);
       const result = await importCnaDelta(since);

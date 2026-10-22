@@ -9,7 +9,7 @@ CVE Records ──┼─► per-source tables ─► Vulnerability (master) ─�
 Vendor feeds ─┘                                   └─ deduplicated by CVE ID
 ```
 
-Each source has a fetcher in `src/worker/` that downloads and normalizes its data. Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts), scheduled by [src/scheduler.ts](../src/scheduler.ts) and run through [src/jobs/executor.ts](../src/jobs/executor.ts). Search lives in [src/api/routes/vulnerabilities.ts](../src/api/routes/vulnerabilities.ts) with its matching predicates in [src/utils/search-helpers.ts](../src/utils/search-helpers.ts).
+Each source has a fetcher in `src/worker/` that downloads and normalizes its data. Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts), scheduled by [src/scheduler.ts](../src/scheduler.ts), and run one process per job by [src/jobs/runner.ts](../src/jobs/runner.ts) through [src/scripts/run-job.ts](../src/scripts/run-job.ts) and [src/jobs/executor.ts](../src/jobs/executor.ts). Search lives in [src/api/routes/vulnerabilities.ts](../src/api/routes/vulnerabilities.ts) with its matching predicates in [src/utils/search-helpers.ts](../src/utils/search-helpers.ts).
 
 ## Data model
 
