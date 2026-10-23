@@ -40,10 +40,21 @@ import {
   escapeLikePattern,
 } from '../../utils/search-helpers.js';
 
+// The source package an installed binary package was built from, as dpkg records it ("Source:
+// lvm2 (2.03.31-2)" on dmsetup 2:1.02.205-2) or as apk does (origin). Debian, Ubuntu and Alpine
+// advisories name source packages and source versions, so these, when given, are what an
+// installed package is matched by on those distros; see searchOSV(). Optional: a client that
+// does not send them gets the binary name and version compared, as before.
+const sourceFields = {
+  sourcePackage: z.string().min(1).optional(),
+  sourceVersion: z.string().min(1).optional(),
+};
+
 const searchSchema = z.object({
   package: z.string().min(1),
   version: z.string().optional(),
   ecosystem: z.string().min(1).optional(),
+  ...sourceFields,
   // Fastify's query parser only arrays a repeated key (?severity=A&severity=B);
   // a single occurrence (?severity=A) comes through as a bare string, which
   // z.array() alone would reject outright. Accept either shape and normalize.
@@ -58,6 +69,7 @@ const batchSearchSchema = z.object({
     package: z.string().min(1),
     version: z.string().min(1),
     ecosystem: z.string().min(1).optional(),
+    ...sourceFields,
   })).min(1).max(1000),
 });
 
@@ -145,18 +157,32 @@ async function resolveDebianSourceName(ecosystem: string, packageName: string): 
   return row?.sourceName ?? null;
 }
 
+/** The source package of an installed package, when the client knows it (see sourceFields). */
+export type SourcePackageRef = { name?: string; version?: string };
+
 /** Search master via OSV table */
 async function searchOSV(
   packageName: string,
   version: string | undefined,
   versionInt: bigint | null,
   ecosystem: string | undefined,
+  source: SourcePackageRef = {},
 ): Promise<VulnerabilityResult[]> {
   const isDistro = ecosystem ? isDistroEcosystem(ecosystem) : false;
-  const useDpkgRangeFallback = !!(ecosystem && version && isDpkgStyleDistro(ecosystem));
+  const isDpkgStyle = !!(ecosystem && isDpkgStyleDistro(ecosystem));
+  const useDpkgRangeFallback = !!(version && isDpkgStyle);
   const useRpmRangeFallback = !!(ecosystem && version && isRpmStyleOsvDistro(ecosystem));
   const debianSourceName = ecosystem ? await resolveDebianSourceName(ecosystem, packageName) : null;
-  const packageNameFilter = debianSourceName ? { in: [packageName, debianSourceName] } : packageName;
+  // Debian, Ubuntu and Alpine records name the source package and give source versions. The
+  // client's source package joins the names searched (it is the only way to find an Ubuntu or
+  // Alpine binary named unlike its source, which DebianSourcePackage does not cover), and its
+  // source version is what the records' ranges are compared with: a binary's own version can
+  // differ from its source's in epoch or in scheme altogether (dmsetup 2:1.02.205-2 is built
+  // from lvm2 2.03.31-2). RPM subpackages carry their source's version, so RPM is left alone.
+  const sourceName = isDpkgStyle ? source.name : undefined;
+  const matchVersion = isDpkgStyle && source.version ? source.version : version;
+  const names = [...new Set([packageName, debianSourceName, sourceName].filter((n): n is string => !!n))];
+  const packageNameFilter = names.length > 1 ? { in: names } : packageName;
 
   const ecosystemFilter = ecosystem
     ? { ecosystem: { startsWith: ecosystem } }
@@ -213,7 +239,7 @@ async function searchOSV(
   });
 
   const filteredRows = useDpkgRangeFallback
-    ? rows.filter(r => matchesDpkgStyleVersion(r, version!))
+    ? rows.filter(r => matchesDpkgStyleVersion(r, matchVersion!))
     : useRpmRangeFallback
       ? rows.filter(r => matchesRpmStyleOsvVersion(r, version!))
       : rows;
@@ -829,8 +855,8 @@ const SEARCH_RESULT_CACHE_MAX_TOTAL_ITEMS = 20_000;
 const searchResultCache = new Map<string, { results: VulnerabilityResult[]; expiresAt: number }>();
 let searchResultCacheItemCount = 0;
 
-function searchResultCacheKey(packageName: string, version: string | undefined, ecosystem: string | undefined): string {
-  return `${packageName}\0${version ?? ''}\0${ecosystem ?? ''}`;
+function searchResultCacheKey(packageName: string, version: string | undefined, ecosystem: string | undefined, source: SourcePackageRef): string {
+  return `${packageName}\0${version ?? ''}\0${ecosystem ?? ''}\0${source.name ?? ''}\0${source.version ?? ''}`;
 }
 
 function cacheSearchResults(cacheKey: string, results: VulnerabilityResult[]): void {
@@ -853,8 +879,9 @@ async function searchVulnerabilities(
   limit = 50,
   offset = 0,
   severity?: string[],
+  source: SourcePackageRef = {},
 ): Promise<VulnerabilityResult[]> {
-  const filtered = await searchAllVulnerabilities(packageName, version, ecosystem, severity);
+  const filtered = await searchAllVulnerabilities(packageName, version, ecosystem, severity, source);
   return filtered.slice(offset, offset + limit);
 }
 
@@ -864,8 +891,9 @@ async function searchAllVulnerabilities(
   version: string | undefined,
   ecosystem: string | undefined,
   severity?: string[],
+  source: SourcePackageRef = {},
 ): Promise<VulnerabilityResult[]> {
-  const cacheKey = searchResultCacheKey(packageName, version, ecosystem);
+  const cacheKey = searchResultCacheKey(packageName, version, ecosystem, source);
   const cached = searchResultCache.get(cacheKey);
 
   let all: VulnerabilityResult[];
@@ -890,7 +918,7 @@ async function searchAllVulnerabilities(
     const isCatalog = findCatalogEntry(packageName) !== undefined;
 
     const [osvResults, nvdResults, advisoryResults, cnaResults] = await Promise.all([
-      isCatalog ? Promise.resolve([]) : searchOSV(packageName, version, versionInt, normalizedEcosystem),
+      isCatalog ? Promise.resolve([]) : searchOSV(packageName, version, versionInt, normalizedEcosystem, source),
       isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, normalizedEcosystem),
       isCatalog ? Promise.resolve([]) : rpmVendor
         ? searchAdvisoryRpm(packageName, version, rpmVendor)
@@ -1170,6 +1198,7 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
     const results = await searchVulnerabilities(
       params.package, params.version, params.ecosystem,
       params.limit, params.offset, params.severity,
+      { name: params.sourcePackage, version: params.sourceVersion },
     );
     return { results };
   });
@@ -1217,7 +1246,10 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
         results.push(
           ...await Promise.all(
             chunk.map(async (pkg) => {
-              const all = await searchAllVulnerabilities(pkg.package, pkg.version, pkg.ecosystem);
+              const all = await searchAllVulnerabilities(pkg.package, pkg.version, pkg.ecosystem, undefined, {
+                name: pkg.sourcePackage,
+                version: pkg.sourceVersion,
+              });
               return {
                 package: pkg.package,
                 version: pkg.version,
