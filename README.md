@@ -210,6 +210,7 @@ Per-source details, import commands and limitations: [docs/data-sources.md](docs
 | [docs/known-issues.md](docs/known-issues.md) | Current limitations |
 | [ACCURACY.md](ACCURACY.md) | Precision / recall measurements against official advisories |
 | [docs/detection-comparison-rhel9.md](docs/detection-comparison-rhel9.md) | One RHEL 9.8 host scanned with heretix-api and Trivy, every difference checked against Red Hat's VEX data |
+| [docs/detection-comparison-debian13.md](docs/detection-comparison-debian13.md) | One Debian 13 host scanned with heretix-api and Trivy, every difference checked against the Debian security tracker and OSV |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development, tests, adding a vendor |
 
 ## License
