@@ -804,3 +804,125 @@ describe('GET /api/v1/catalog', () => {
     expect(one.body.total).toBe(db.body.total);
   });
 });
+
+describe('search by source package and source version (Debian, Ubuntu, Alpine)', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  const fixedIn = (id: string, ecosystem: string, name: string, fixed: string) => importOSVData({
+    id,
+    modified: '2026-01-01T00:00:00Z',
+    aliases: [],
+    upstream: [id.replace(/^(DEBIAN|UBUNTU)-/, '')],
+    affected: [{ package: { ecosystem, name }, ranges: [{ type: 'ECOSYSTEM', events: [{ introduced: '0' }, { fixed }] }] }],
+  });
+
+  const batch = async (packages: object[]) => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/vulnerabilities/search/batch',
+      headers: { 'x-api-key': API_KEY },
+      payload: { packages },
+    });
+    expect(res.statusCode).toBe(200);
+    return res.json().results as Array<{ package: string; version: string; total: number; vulnerabilities: Array<{ externalId: string }> }>;
+  };
+
+  // Debian 13: util-linux 2.41-5 builds bsdutils 1:2.41-5 and login 1:4.16.0-2+really2.41-5. The
+  // fix is the source version 2.41.5-0+deb13u1, which both binary versions sort above.
+  it('compares the source version, which a binary version can differ from in epoch or in scheme', async () => {
+    await fixedIn('DEBIAN-CVE-2026-53612', 'Debian:13', 'util-linux', '2.41.5-0+deb13u1');
+    await prisma.debianSourcePackage.createMany({ data: [
+      { ecosystem: 'Debian:13', binaryName: 'bsdutils', sourceName: 'util-linux' },
+      { ecosystem: 'Debian:13', binaryName: 'login', sourceName: 'util-linux' },
+    ] });
+
+    const results = await batch([
+      { package: 'bsdutils', version: '1:2.41-5', ecosystem: 'Debian:13' },
+      { package: 'bsdutils', version: '1:2.41-5', ecosystem: 'Debian:13', sourcePackage: 'util-linux', sourceVersion: '2.41-5' },
+      { package: 'login', version: '1:4.16.0-2+really2.41-5', ecosystem: 'Debian:13', sourcePackage: 'util-linux', sourceVersion: '2.41-5' },
+      { package: 'bsdutils', version: '1:2.41.5-0+deb13u1', ecosystem: 'Debian:13', sourcePackage: 'util-linux', sourceVersion: '2.41.5-0+deb13u1' },
+    ]);
+
+    expect(results.map((r) => r.total)).toEqual([0, 1, 1, 0]);
+    // The response still names the installed binary package and its version.
+    expect(results[2]).toMatchObject({ package: 'login', version: '1:4.16.0-2+really2.41-5' });
+  });
+
+  // dmsetup 2:1.02.205-2 is built from lvm2 2.03.31-2: compared by its own version it sorts above
+  // every lvm2 version, so it could never match an lvm2 advisory.
+  it('matches a binary whose own version sorts above every source version', async () => {
+    await fixedIn('DEBIAN-CVE-2026-0101', 'Debian:13', 'lvm2', '2.03.32-1');
+    await fixedIn('DEBIAN-CVE-2010-2526', 'Debian:13', 'lvm2', '2.02.66-3');
+    await prisma.debianSourcePackage.create({ data: { ecosystem: 'Debian:13', binaryName: 'dmsetup', sourceName: 'lvm2' } });
+
+    const [own, bySource] = await batch([
+      { package: 'dmsetup', version: '2:1.02.205-2', ecosystem: 'Debian:13' },
+      { package: 'dmsetup', version: '2:1.02.205-2', ecosystem: 'Debian:13', sourcePackage: 'lvm2', sourceVersion: '2.03.31-2' },
+    ]);
+
+    expect(own.total).toBe(0);
+    expect(bySource.vulnerabilities.map((v) => v.externalId)).toEqual(['CVE-2026-0101']);
+  });
+
+  // Only Debian has a binary-to-source table; an Ubuntu binary named unlike its source (libssl3
+  // from openssl) was found by nothing.
+  it('finds an Ubuntu or Alpine binary named unlike its source by the source name it is given', async () => {
+    await fixedIn('UBUNTU-CVE-2026-0202', 'Ubuntu:22.04:LTS', 'openssl', '3.0.2-0ubuntu1.19');
+    await importOSVData({
+      id: 'ALPINE-CVE-2026-0303',
+      modified: '2026-01-01T00:00:00Z',
+      aliases: [],
+      upstream: ['CVE-2026-0303'],
+      affected: [{ package: { ecosystem: 'Alpine:v3.22', name: 'openssl' }, ranges: [{ type: 'ECOSYSTEM', events: [{ introduced: '0' }, { fixed: '3.5.4-r0' }] }] }],
+    });
+
+    const results = await batch([
+      { package: 'libssl3', version: '3.0.2-0ubuntu1.10', ecosystem: 'Ubuntu:22.04:LTS' },
+      { package: 'libssl3', version: '3.0.2-0ubuntu1.10', ecosystem: 'Ubuntu:22.04:LTS', sourcePackage: 'openssl', sourceVersion: '3.0.2-0ubuntu1.10' },
+      { package: 'libcrypto3', version: '3.5.1-r0', ecosystem: 'Alpine:v3.22', sourcePackage: 'openssl', sourceVersion: '3.5.1-r0' },
+    ]);
+
+    expect(results.map((r) => r.total)).toEqual([0, 1, 1]);
+  });
+
+  it('leaves RPM distros alone: a subpackage carries its source RPM version already', async () => {
+    await importOSVData({
+      id: 'ALSA-2026:0404',
+      modified: '2026-01-01T00:00:00Z',
+      aliases: [],
+      upstream: ['CVE-2026-0404'],
+      affected: [{ package: { ecosystem: 'AlmaLinux:9', name: 'openssl' }, ranges: [{ type: 'ECOSYSTEM', events: [{ introduced: '0' }, { fixed: '1:3.2.2-7.el9' }] }] }],
+    });
+
+    const [plain, withSource] = await batch([
+      { package: 'openssl-libs', version: '1:3.2.2-6.el9', ecosystem: 'AlmaLinux:9' },
+      { package: 'openssl-libs', version: '1:3.2.2-6.el9', ecosystem: 'AlmaLinux:9', sourcePackage: 'openssl', sourceVersion: '1:3.2.2-6.el9' },
+    ]);
+
+    expect(withSource.total).toBe(plain.total);
+  });
+
+  it('does not serve a search cached without the source to the same search with it', async () => {
+    await fixedIn('DEBIAN-CVE-2026-53612', 'Debian:13', 'util-linux', '2.41.5-0+deb13u1');
+    await prisma.debianSourcePackage.create({ data: { ecosystem: 'Debian:13', binaryName: 'bsdutils', sourceName: 'util-linux' } });
+
+    const without = await search(app, 'package=bsdutils&version=1:2.41-5&ecosystem=Debian:13');
+    const withSource = await search(app, 'package=bsdutils&version=1:2.41-5&ecosystem=Debian:13&sourcePackage=util-linux&sourceVersion=2.41-5');
+
+    expect(without.body.results).toHaveLength(0);
+    expect(withSource.body.results).toHaveLength(1);
+  });
+});

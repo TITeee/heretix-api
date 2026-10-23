@@ -35,6 +35,8 @@ GET /api/v1/vulnerabilities/search
 | `package` | ✅ | Package or product name (e.g. `lodash`, `FortiOS`) |
 | `version` | | Version string (e.g. `4.17.20`, `7.4.3`). Omit to match the package/ecosystem alone: every result then has `approximateMatch: true` |
 | `ecosystem` | | Ecosystem or vendor (e.g. `npm`, `PyPI`, `Go`, `Ubuntu:22.04:LTS`, `Red Hat:9`). Case-sensitive. `composer` is accepted as an alias of `Packagist` |
+| `sourcePackage` | | Debian, Ubuntu, Alpine: the source package the installed package was built from (dpkg `Source:`, apk origin), e.g. `openssl` for `libssl3`. Searched alongside `package` |
+| `sourceVersion` | | Debian, Ubuntu, Alpine: the version of that source package (dpkg `Source: lvm2 (2.03.31-2)`). Compared with the advisories instead of `version`, which can differ from it (`dmsetup` is `2:1.02.205-2`) |
 | `severity` | | Filter by one or more severities (`severity=CRITICAL&severity=HIGH`). Exact match against the `severity` a result carries: `CRITICAL` / `HIGH` / `MEDIUM` / `LOW`, plus `NONE` (CVSS 0.0) and `INFORMATIONAL` (Splunk). GHSA's `MODERATE` is stored as `MEDIUM`. A result with no severity never matches |
 | `limit` | | Max results (default 500, max 500) |
 | `offset` | | Pagination offset (default 0) |
@@ -52,6 +54,8 @@ curl -H "x-api-key: $API_KEY" \
 ### Search behavior by ecosystem
 
 `ecosystem` changes *which sources are queried* and *how versions are compared*. It is not just a display filter.
+
+**Source packages (Debian, Ubuntu, Alpine).** These distros publish advisories per source package and source version, and one source builds many binary packages (`util-linux` builds `bsdutils`, `login`, `mount`, ...) whose names, and sometimes versions, differ from it: `login` is `1:4.16.0-2+really2.41-5` and `dmsetup` is `2:1.02.205-2` (from `lvm2` `2.03.31-2`). Give `sourcePackage` and `sourceVersion` and the package is matched as its source; without them the binary name and version are used, with Debian's binary names resolved through the archive's package lists. heretix-cli sends both.
 
 | `ecosystem` | Sources queried | Version comparison | Why |
 |---|---|---|---|
@@ -180,6 +184,8 @@ curl -X POST -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
     ]
   }'
 ```
+
+An entry can also give `sourcePackage` and `sourceVersion`, as in the single search.
 
 Each entry of `results` repeats `package`, `version` and `ecosystem`, and carries:
 
