@@ -22,10 +22,26 @@
 // day, imported nothing and reported success: no Debian or Alpine record was
 // updated for months. The list of live ecosystems is
 // https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt; a distro
-// listed there under its bare name belongs here. (Ubuntu is listed there too
-// and is in the same state; its shared bucket is 792 MB and needs a different
-// way of reading the delta, so it moves separately.)
-export const SHARED_BUCKET_ECOSYSTEMS = ['AlmaLinux', 'Rocky Linux', 'Debian', 'Alpine'];
+// listed there under its bare name belongs here.
+//
+// Ubuntu was in the same state (per-release buckets frozen on 2024-10-09), and its
+// shared bucket is 792 MB, so its delta is read from the bucket's modified_id.csv
+// (see usesModifiedList) rather than from the zip.
+//
+// "Packagist:https://packages.drupal.org/8" is the Drupal repository's name inside
+// the Packagist feed; it has no bucket of its own (404) and its records arrive with
+// the "Packagist" job.
+export const SHARED_BUCKET_ECOSYSTEMS = ['AlmaLinux', 'Rocky Linux', 'Debian', 'Alpine', 'Ubuntu', 'Packagist'];
+
+// Buckets whose delta is taken from `<bucket>/modified_id.csv` ("<time>,<id>" per record, newest
+// first) plus one request per changed record, instead of downloading all.zip. Right for a bucket
+// whose zip is too big to hold in memory every day (Ubuntu: 792 MB, against a few thousand
+// records changed per day).
+const MODIFIED_LIST_BUCKETS = new Set(['Ubuntu']);
+
+export function usesModifiedList(bucket: string): boolean {
+  return MODIFIED_LIST_BUCKETS.has(bucket);
+}
 
 /** Maps a DB ecosystem value to the OSV bucket name actually used to fetch it. */
 export function osvBucketName(ecosystem: string): string {
