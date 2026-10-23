@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { osvBucketName, maxBucketAgeMs, staleBucketProblem } from './osv-bucket.js';
+import { osvBucketName, maxBucketAgeMs, staleBucketProblem, usesModifiedList } from './osv-bucket.js';
 
 describe('osvBucketName', () => {
   it('maps a versioned AlmaLinux/Rocky Linux ecosystem to the shared bare bucket name', () => {
@@ -30,7 +30,7 @@ describe('osvBucketName', () => {
     expect(osvBucketName('Alpine-Edge')).toBe('Alpine-Edge');
   });
 
-  it('leaves ecosystems that still use their own bucket unchanged', () => {
+  it('leaves ecosystems that use their own bucket unchanged', () => {
     expect(osvBucketName('Red Hat:9')).toBe('Red Hat:9');
     expect(osvBucketName('npm')).toBe('npm');
     expect(osvBucketName('PyPI')).toBe('PyPI');
@@ -71,5 +71,23 @@ describe('maxBucketAgeMs', () => {
       expect(maxBucketAgeMs(eco)).toBe(14 * 24 * 60 * 60 * 1000);
     }
     expect(maxBucketAgeMs('npm')).toBe(90 * 24 * 60 * 60 * 1000);
+  });
+});
+
+describe('Ubuntu and Packagist', () => {
+  it('maps every Ubuntu release, Pro and FIPS variant to the one shared Ubuntu bucket', () => {
+    for (const eco of ['Ubuntu:22.04:LTS', 'Ubuntu:Pro:20.04:LTS', 'Ubuntu:Pro:FIPS-updates:22.04:LTS', 'Ubuntu:25.10', 'Ubuntu:26.04:LTS']) {
+      expect(osvBucketName(eco)).toBe('Ubuntu');
+    }
+  });
+
+  it("maps the Drupal repository's name to the Packagist bucket it has no bucket of its own for", () => {
+    expect(osvBucketName('Packagist:https://packages.drupal.org/8')).toBe('Packagist');
+    expect(osvBucketName('Packagist')).toBe('Packagist');
+  });
+
+  it('reads the delta of Ubuntu from its modified-ID list, and of the smaller buckets from the zip', () => {
+    expect(usesModifiedList('Ubuntu')).toBe(true);
+    for (const bucket of ['Debian', 'Alpine', 'AlmaLinux', 'npm']) expect(usesModifiedList(bucket)).toBe(false);
   });
 });

@@ -99,7 +99,7 @@ pnpm import:osv update malware           # Malware changes since the last run
 ```
 
 - Ecosystem names are case-sensitive: `npm`, `PyPI`, `Go`, `RubyGems`, `crates.io`, `Packagist`, `Maven`, `NuGet`, `Hex`, `Pub`, `ConanCenter`, `SwiftURL`, `CRAN`, `Linux`, `Android`, `OSS-Fuzz`, `Bitnami`, and distributions (`Debian`, `Ubuntu`, `Alpine`, `AlmaLinux`, `Rocky Linux`, with or without a release suffix).
-- Each ecosystem has its own daily job (`osv-<ecosystem>`, 08:00 UTC) that imports records modified since its last completed run. The releases of AlmaLinux, Rocky Linux, Debian and Alpine share one job and one OSV file (`osv-Debian` covers `Debian:12`, `Debian:13`, ...), because OSV serves them that way. Malware is `osv-mal` (08:30 UTC); it makes one GitHub API call, so set `GITHUB_TOKEN` only if you run it more than 60 times an hour.
+- Each ecosystem has its own daily job (`osv-<ecosystem>`, 08:00 UTC) that imports records modified since its last completed run. The releases of AlmaLinux, Rocky Linux, Debian, Alpine and Ubuntu (Pro and FIPS variants included) share one job and one OSV file (`osv-Debian` covers `Debian:12`, `Debian:13`, ...), because OSV serves them that way, and so do `Packagist:https://packages.drupal.org/8` and `Packagist`. Ubuntu's file is 792 MB, so its job reads the bucket's `modified_id.csv` and fetches only the records modified since the last run, instead of downloading the zip. Malware is `osv-mal` (08:30 UTC); it makes one GitHub API call, so set `GITHUB_TOKEN` only if you run it more than 60 times an hour.
 - **Adding an ecosystem**: run the full `pnpm import:osv ecosystem <name>` once *before* enabling its daily job. The daily job only picks up records modified after its cursor, so it never backfills older ones. The full import is recorded as an `osv-full-<ecosystem>` job. Check completeness against OSV's live export at any time:
   ```bash
   pnpm validate:osv-coverage            # every tracked ecosystem
@@ -114,6 +114,7 @@ pnpm import:osv update malware           # Malware changes since the last run
   pnpm import:osv update Debian --since=2026-08-01
   ```
   `update Debian:13` is the same as `update Debian`.
+  Debian takes about 45 minutes for 60,000 records. Ubuntu is slower (about 3 records a second, its kernel records carrying thousands of package rows each), so a backfill of months takes hours; run it in the background. The daily run, a few thousand records, takes minutes.
 - Only the distro releases in the [support policy](../README.md#supported-os-releases) are maintained. Others are imported and searchable on a best-effort basis.
 - Severity: GHSA's `MODERATE` is stored as `MEDIUM`. A CVSS score is computed from OSV's vector when the record has none. Ubuntu priority and Debian urgency are kept per package as `distroPriority`.
 - AlmaLinux, Rocky Linux and Alpine data only lists fixed vulnerabilities, so unfixed vulnerabilities on those distributions are not reported.

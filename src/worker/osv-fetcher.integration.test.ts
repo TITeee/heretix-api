@@ -226,3 +226,76 @@ describe('importOSVEcosystemDelta — a bucket that is missing or no longer writ
     await expect(importOSVEcosystemDelta('Debian', new Date(0))).rejects.toThrow(/holds no records/);
   });
 });
+
+describe('importOSVEcosystemDelta — a bucket read from its modified-ID list (Ubuntu)', () => {
+  const BASE = 'https://storage.googleapis.com/osv-vulnerabilities/Ubuntu';
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+
+  const usn = (id: string, modified: string) => makeOsv({
+    id,
+    modified,
+    aliases: [],
+    affected: [{ package: { ecosystem: 'Ubuntu:22.04:LTS', name: 'openssl' }, ranges: [{ type: 'ECOSYSTEM', events: [{ introduced: '0' }, { fixed: '3.0.2-0ubuntu1.19' }] }] }],
+  });
+
+  /** Serves a modified_id.csv and the single records the way the bucket does. */
+  function serveBucket(list: Array<{ id: string; modified: string }>, records: Record<string, unknown>) {
+    return vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url === `${BASE}/modified_id.csv`) return { data: list.map((e) => `${e.modified},${e.id}`).join('\n') + '\n' };
+      const id = decodeURIComponent(url.slice(BASE.length + 1).replace(/\.json$/, ''));
+      if (records[id]) return { data: records[id] };
+      throw Object.assign(new Error('Request failed with status code 404'), { isAxiosError: true, response: { status: 404 } });
+    });
+  }
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetches only the records listed as modified after the cursor, and never the zip', async () => {
+    const list = [
+      { id: 'USN-9002-1', modified: hoursAgo(1) },
+      { id: 'USN-9001-1', modified: hoursAgo(5) },
+      { id: 'USN-1000-1', modified: '2025-01-01T00:00:00Z' },
+    ];
+    const spy = serveBucket(list, { 'USN-9002-1': usn('USN-9002-1', list[0].modified), 'USN-9001-1': usn('USN-9001-1', list[1].modified), 'USN-1000-1': usn('USN-1000-1', list[2].modified) });
+
+    const result = await importOSVEcosystemDelta('Ubuntu', new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+    expect(result).toMatchObject({ total: 3, skipped: 1, inserted: 2, failed: 0 });
+    expect(await prisma.oSVVulnerability.count({ where: { osvId: { in: ['USN-9002-1', 'USN-9001-1'] } } })).toBe(2);
+    expect(await prisma.oSVVulnerability.count({ where: { osvId: 'USN-1000-1' } })).toBe(0);
+    const urls = spy.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.endsWith('all.zip'))).toBe(false);
+    expect(urls.filter((u) => u.endsWith('.json'))).toHaveLength(2);
+  });
+
+  it('counts a record that cannot be fetched as failed and goes on with the rest', async () => {
+    const list = [{ id: 'USN-9002-1', modified: hoursAgo(1) }, { id: 'USN-9001-1', modified: hoursAgo(2) }];
+    serveBucket(list, { 'USN-9001-1': usn('USN-9001-1', list[1].modified) });
+
+    const result = await importOSVEcosystemDelta('Ubuntu', new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+    expect(result).toMatchObject({ inserted: 1, failed: 1 });
+  });
+
+  it('fails the job when the newest entry of the list is old, as the per-release Ubuntu buckets were from 2024-10-09', async () => {
+    serveBucket([{ id: 'USN-6000-1', modified: '2024-10-09T02:28:48Z' }], { 'USN-6000-1': usn('USN-6000-1', '2024-10-09T02:28:48Z') });
+
+    await expect(importOSVEcosystemDelta('Ubuntu', new Date('2024-01-01T00:00:00Z'))).rejects.toThrow(
+      /listed 1 records and imported 1, but the newest record in the OSV bucket "Ubuntu" is \d+ days old/,
+    );
+  });
+
+  it('fails the job when the list is missing (404)', async () => {
+    serveBucket([], {});
+    vi.spyOn(axios, 'get').mockRejectedValue(Object.assign(new Error('Request failed with status code 404'), { isAxiosError: true, response: { status: 404 } }));
+    vi.spyOn(axios, 'isAxiosError').mockReturnValue(true);
+
+    await expect(importOSVEcosystemDelta('Ubuntu', new Date(0))).rejects.toThrow(/OSV has no bucket "Ubuntu"/);
+  });
+});

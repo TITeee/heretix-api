@@ -6,7 +6,7 @@ import { normalizeVersion } from '../utils/version.js';
 import { cvssFromOsvSeverity } from '../utils/cvss.js';
 import { normalizeSeverity, severityFromCvssScore } from '../utils/severity.js';
 import AdmZip from 'adm-zip';
-import { staleBucketProblem } from '../jobs/osv-bucket.js';
+import { staleBucketProblem, usesModifiedList } from '../jobs/osv-bucket.js';
 import type { Prisma } from '@prisma/client';
 
 /**
@@ -275,25 +275,130 @@ export async function importOSVEcosystemStreaming(ecosystem: string): Promise<{
   return { total, succeeded, failed };
 }
 
-/**
- * Delta import for a single OSV ecosystem.
- * Downloads the full ecosystem ZIP (same as importOSVEcosystemStreaming) but skips
- * entries whose `modified` timestamp is not newer than `since`.
- *
- * Throws, rather than returning an empty success, when the bucket is missing (404) or is no
- * longer written to (its newest record is older than osv-bucket.ts's limit for the ecosystem).
- * A run that fetches the same frozen file and imports nothing looks exactly like a quiet day,
- * and Debian, Ubuntu and Alpine went months without an update that way.
- */
-export async function importOSVEcosystemDelta(ecosystem: string, since: Date): Promise<{
+type DeltaResult = {
   total: number;
   skipped: number;
   succeeded: number;
   inserted: number;
   updated: number;
   failed: number;
-}> {
-  const url = `https://storage.googleapis.com/osv-vulnerabilities/${ecosystem}/all.zip`;
+};
+
+const OSV_BUCKET_URL = 'https://storage.googleapis.com/osv-vulnerabilities';
+
+function missingBucketError(ecosystem: string, url: string, cause: unknown): Error {
+  return new Error(
+    `OSV has no bucket "${ecosystem}" (404 for ${url}). Check osvBucketName() / SHARED_BUCKET_ECOSYSTEMS in ` +
+      'src/jobs/osv-bucket.ts against https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt',
+    { cause },
+  );
+}
+
+/** GET with a few retries: a delta of thousands of single records meets the odd reset or 5xx. */
+async function getWithRetry<T>(url: string, responseType: 'json' | 'text', attempts = 4): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return (await axios.get<T>(url, { responseType, timeout: 60000 })).data;
+    } catch (err) {
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+      // A 404 is an answer, and so is any other 4xx; only a transport error or a 5xx can pass.
+      if (attempt >= attempts || (status !== undefined && status < 500)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+}
+
+const LISTED_DELTA_CHUNK = 16;
+
+/**
+ * Delta import of a bucket too big to download whole every day (Ubuntu: 792 MB): read its
+ * modified_id.csv ("<time>,<id>", newest first), then fetch one record per line newer than
+ * `since`. Fails on a missing or frozen bucket exactly as the zip variant does, judging by the
+ * newest line of the list.
+ */
+async function importOSVEcosystemDeltaFromList(ecosystem: string, since: Date): Promise<DeltaResult> {
+  const base = `${OSV_BUCKET_URL}/${ecosystem}`;
+  const listUrl = `${base}/modified_id.csv`;
+  logger.info({ ecosystem, url: listUrl, since }, 'Fetching OSV modified-ID list for delta import');
+
+  let text: string;
+  try {
+    text = await getWithRetry<string>(listUrl, 'text');
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) throw missingBucketError(ecosystem, listUrl, err);
+    throw err;
+  }
+
+  const entries: Array<{ modified: Date; id: string }> = [];
+  for (const line of text.split(/\r?\n/)) {
+    const comma = line.indexOf(',');
+    if (comma === -1) continue;
+    const modified = new Date(line.slice(0, comma));
+    const id = line.slice(comma + 1).trim();
+    if (id && !Number.isNaN(modified.getTime())) entries.push({ modified, id });
+  }
+  const newestModified = entries.reduce<Date | null>((newest, e) => (!newest || e.modified > newest ? e.modified : newest), null);
+  const changed = entries.filter((e) => e.modified > since);
+  logger.info({ ecosystem, listed: entries.length, changed: changed.length }, 'Applying delta filter to the modified-ID list');
+
+  let inserted = 0;
+  let updated = 0;
+  let failed = 0;
+  for (let i = 0; i < changed.length; i += LISTED_DELTA_CHUNK) {
+    const chunk = changed.slice(i, i + LISTED_DELTA_CHUNK);
+    // The requests of a chunk run together; the records are written one at a time.
+    const fetched = await Promise.all(chunk.map(async (e) => {
+      try {
+        return { id: e.id, vuln: await getWithRetry<OSVVulnerability>(`${base}/${encodeURIComponent(e.id)}.json`, 'json') };
+      } catch (err) {
+        logger.error({ err, id: e.id }, 'Failed to fetch OSV record');
+        return { id: e.id, vuln: null };
+      }
+    }));
+    for (const { id, vuln } of fetched) {
+      if (!vuln) {
+        failed++;
+        continue;
+      }
+      try {
+        const result = await importOSVData(vuln);
+        if (result === 'inserted') inserted++; else updated++;
+      } catch (err) {
+        failed++;
+        logger.error({ err, id }, 'Failed to import OSV entry');
+      }
+    }
+    if ((i / LISTED_DELTA_CHUNK) % 50 === 0) {
+      logger.info({ done: Math.min(i + LISTED_DELTA_CHUNK, changed.length), of: changed.length, inserted, updated, failed }, 'OSV delta import progress');
+    }
+  }
+
+  const succeeded = inserted + updated;
+  const skipped = entries.length - changed.length;
+  logger.info({ ecosystem, since, total: entries.length, skipped, succeeded, failed, newestModified }, 'OSV delta import completed');
+
+  const problem = staleBucketProblem(ecosystem, newestModified);
+  if (problem) {
+    throw new Error(`OSV delta for "${ecosystem}" listed ${entries.length} records and imported ${succeeded}, but ${problem}`);
+  }
+  return { total: entries.length, skipped, succeeded, inserted, updated, failed };
+}
+
+/**
+ * Delta import for a single OSV ecosystem.
+ * Downloads the full ecosystem ZIP (same as importOSVEcosystemStreaming) but skips
+ * entries whose `modified` timestamp is not newer than `since`. A bucket too big for that
+ * (see usesModifiedList) is read from its modified-ID list instead.
+ *
+ * Throws, rather than returning an empty success, when the bucket is missing (404) or is no
+ * longer written to (its newest record is older than osv-bucket.ts's limit for the ecosystem).
+ * A run that fetches the same frozen file and imports nothing looks exactly like a quiet day,
+ * and Debian, Ubuntu and Alpine went months without an update that way.
+ */
+export async function importOSVEcosystemDelta(ecosystem: string, since: Date): Promise<DeltaResult> {
+  if (usesModifiedList(ecosystem)) return importOSVEcosystemDeltaFromList(ecosystem, since);
+
+  const url = `${OSV_BUCKET_URL}/${ecosystem}/all.zip`;
 
   logger.info({ ecosystem, url, since }, 'Fetching OSV ecosystem ZIP for delta import');
 
@@ -314,11 +419,7 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
       // success every day for a week, and Alpine 3.21+ and Ubuntu 24.10+ did
       // the same after it). Failing the job is what makes it show up.
       logger.error({ ecosystem, url }, 'No GCS bucket found for ecosystem');
-      throw new Error(
-        `OSV has no bucket "${ecosystem}" (404 for ${url}). Check osvBucketName() / SHARED_BUCKET_ECOSYSTEMS in ` +
-          'src/jobs/osv-bucket.ts against https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt',
-        { cause: err },
-      );
+      throw missingBucketError(ecosystem, url, err);
     }
     throw err;
   }
@@ -609,6 +710,11 @@ async function upsertMasterFromOSV(
   });
 }
 
+// One record is written in one transaction. Prisma's default of 5 s is too short for a Linux
+// kernel CVE, which Ubuntu lists against thousands of package rows: those records failed with
+// P2028 on every run, so they were never imported.
+const OSV_IMPORT_TRANSACTION_TIMEOUT_MS = 60_000;
+
 /**
  * Convert OSV data to Prisma model and save
  */
@@ -807,7 +913,7 @@ export async function importOSVData(osvData: OSVVulnerability): Promise<'inserte
       }
 
       return existing ? 'updated' : 'inserted';
-    });
+    }, { timeout: OSV_IMPORT_TRANSACTION_TIMEOUT_MS });
 
     logger.info({ osvId: osvData.id }, 'Successfully imported OSV vulnerability');
     return result;
