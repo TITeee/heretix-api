@@ -187,7 +187,7 @@ Each entry of `results` repeats `package`, `version` and `ecosystem`, and carrie
 | `total` | How many matched |
 | `truncated` | `true` when `vulnerabilities` holds fewer than `total` |
 
-A package returns up to 5,000 matches, and a batch up to 500,000 in all: when the packages together match more, the cap of the largest ones is lowered just enough to fit, never below 500. A package over its cap keeps its most severe matches (known exploited first, then by CVSS), so check `truncated` before treating the list as complete. A Windows Server many months behind on updates is the usual case. Very large batches may also have their `summary` text shortened to fit the response.
+A package returns up to 20,000 matches, and a batch up to 500,000 in all: when the packages together match more, the cap of the largest ones is lowered just enough to fit, never below 500. A package over its cap keeps its most severe matches (known exploited first, then by severity tier — the severity rating when there is one, otherwise the CVSS score — then by CVSS, then by EPSS), so check `truncated` before treating the list as complete. In practice only a batch of many outdated kernels or Windows Server builds comes near these limits. Very large batches may also have their `summary` text shortened to fit the response.
 
 ## CPE search
 
