@@ -317,6 +317,7 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
       throw new Error(
         `OSV has no bucket "${ecosystem}" (404 for ${url}). Check osvBucketName() / SHARED_BUCKET_ECOSYSTEMS in ` +
           'src/jobs/osv-bucket.ts against https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt',
+        { cause: err },
       );
     }
     throw err;
