@@ -80,6 +80,32 @@ describe('findFixedHeadings', () => {
   });
 });
 
+describe('findAdvisoryBlocks', () => {
+  it('reads the heading with a linked CVE id and a parenthesised severity, as the page has it since October 2026', () => {
+    const html =
+      '<dt><h3 id="CVE-2026-42528"><a href="https://www.cve.org/CVERecord?id=CVE-2026-42528">CVE-2026-42528</a> (moderate): <name name="CVE-2026-42528">mod_dav shared lock overflow</name>\n' +
+      '<a class="headerlink" href="#CVE-2026-42528" title="Permanent link">&para;</a></h3></dt>\n' +
+      '<dd><p>A memory calculation bug in mod_dav.</p><p></p><p>Users are recommended to upgrade to version 2.4.69, which fixes this issue</p>\n' +
+      '<table class="table"><tr><td class="cve-header">Affects</td><td class="cve-value"> through 2.4.68</td></tr>\n</table></dd>\n' +
+      '<dt><h3 id="CVE-2024-38476"><a href="https://www.cve.org/CVERecord?id=CVE-2024-38476">CVE-2024-38476</a> (important): <name name="CVE-2024-38476">backend output</name>\n' +
+      '<a class="headerlink" href="#CVE-2024-38476" title="Permanent link">&para;</a></h3></dt>\n<dd><p>desc</p></dd>';
+    const blocks = findAdvisoryBlocks(html);
+    expect(blocks.map(b => [b.cveId, b.severity, b.title])).toEqual([
+      ['CVE-2026-42528', 'moderate', 'mod_dav shared lock overflow'],
+      ['CVE-2024-38476', 'important', 'backend output'],
+    ]);
+
+    const advisory = parseAdvisoryBlock(blocks[0], []);
+    expect(advisory).toMatchObject({ externalId: 'CVE-2026-42528', severity: 'MEDIUM', description: 'A memory calculation bug in mod_dav.' });
+    expect(advisory?.affectedProducts[0]).toMatchObject({ lastAffected: '2.4.68', versionFixed: '2.4.69' });
+  });
+
+  it('still reads the older heading without a link, with the severity unparenthesised', () => {
+    const html = '<dt><h3 id="CVE-2021-41773">important: <name>Path traversal</name></h3></dt><dd><p>d</p></dd>';
+    expect(findAdvisoryBlocks(html).map(b => [b.cveId, b.severity, b.title])).toEqual([['CVE-2021-41773', 'important', 'Path traversal']]);
+  });
+});
+
 describe('parseAdvisoryBlock', () => {
   function makeBlock(affectsValue: string, extra = ''): ReturnType<typeof findAdvisoryBlocks>[number] {
     const html =

@@ -87,8 +87,15 @@ export interface AdvisoryBlock {
   index: number;
 }
 
+// An advisory's heading, in the two forms the page has had:
+//   <dt><h3 id="CVE-2021-41773">important: <name>Path traversal ...</name>
+//   <dt><h3 id="CVE-2026-42528"><a href="https://www.cve.org/...">CVE-2026-42528</a> (moderate): <name name="...">mod_dav ...</name>
+// The second is what the page uses since October 2026, for every advisory.
+const ADVISORY_HEADING_RE =
+  /<dt><h3 id="(CVE-\d{4}-\d+)">(?:<a\b[^>]*>[^<]*<\/a>\s*)?\(?([a-z/]+)\)?:\s*<name[^>]*>([^<]*)<\/name>/g;
+
 export function findAdvisoryBlocks(html: string): AdvisoryBlock[] {
-  const headingRe = /<dt><h3 id="(CVE-\d{4}-\d+)">([a-z/]+): <name[^>]*>([^<]*)<\/name>/g;
+  const headingRe = new RegExp(ADVISORY_HEADING_RE);
   const hits: { index: number; cveId: string; severity: string; title: string }[] = [];
   let m: RegExpExecArray | null;
   while ((m = headingRe.exec(html)) !== null) {
