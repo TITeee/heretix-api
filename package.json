@@ -96,6 +96,7 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
+    "@fastify/compress": "^9.2.2",
     "@fastify/cors": "^11.2.0",
     "@fastify/rate-limit": "^11.2.1",
     "@prisma/adapter-pg": "^7.7.0",

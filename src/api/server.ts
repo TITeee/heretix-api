@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import compress from '@fastify/compress';
 import rateLimit from '@fastify/rate-limit';
 import { envInt } from './concurrency-gate.js';
 import vulnerabilitiesRoute from './routes/vulnerabilities.js';
@@ -50,6 +51,19 @@ export async function createServer() {
     .filter(Boolean);
   await fastify.register(cors, {
     origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+  });
+
+  // Compress responses for a client that asks for it (Accept-Encoding). A batch search over
+  // a host with outdated kernels is over 100 MB of JSON, mostly the same CVE texts repeated
+  // for each package, and gzip brings that to under a third. Go (heretix-cli) and Node's
+  // fetch (heretix-management) ask for gzip and decompress on their own, so neither needed a
+  // change. Level 1: the fastest, and most of the saving; compression runs on libuv's thread
+  // pool, not on the event loop. Brotli is left off, being several times slower.
+  await fastify.register(compress, {
+    global: true,
+    encodings: ['gzip', 'deflate'],
+    threshold: 1024,
+    zlibOptions: { level: 1 },
   });
 
   // Rate limit per client address, so a leaked key or a runaway client cannot keep

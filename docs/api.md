@@ -10,6 +10,8 @@ Browser cross-origin access is limited to `ALLOWED_ORIGINS` (see [operations.md]
 
 **Limits.** A client address is limited per minute (`RATE_LIMIT_MAX`, and `RATE_LIMIT_BATCH_MAX` for the batch search); past it the answer is `429` with a `Retry-After`. At most `BATCH_SEARCH_MAX_CONCURRENT` batch searches run at once; another one gets `429` with `Retry-After: 5`, and should be sent again after that. See [operations.md](operations.md#environment-variables).
 
+**Compression.** A response over 1 KB is gzip-compressed (or deflate) when the request says it accepts that (`Accept-Encoding`); without the header it is sent as it is. A batch search over a host with many outdated packages is over 100 MB of JSON and a third of that compressed. `curl` needs `--compressed` to read it; heretix-cli and heretix-management decompress on their own.
+
 ## Health check
 
 ```
