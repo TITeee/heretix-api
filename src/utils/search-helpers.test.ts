@@ -590,8 +590,8 @@ describe('summaryBudgetChars', () => {
 describe('batchResultCap', () => {
   it('allows the full per-package cap while the batch total fits', () => {
     expect(batchResultCap([])).toBe(BATCH_RESULTS_PER_PACKAGE);
-    expect(batchResultCap([5_157, 3, 0])).toBe(BATCH_RESULTS_PER_PACKAGE);
-    expect(batchResultCap(Array(100).fill(5_000))).toBe(BATCH_RESULTS_PER_PACKAGE);
+    expect(batchResultCap([9_133, 3, 0])).toBe(BATCH_RESULTS_PER_PACKAGE);
+    expect(batchResultCap(Array(25).fill(20_000))).toBe(BATCH_RESULTS_PER_PACKAGE);
   });
 
   it('lowers the cap just enough to bring the total within the budget', () => {
@@ -628,6 +628,25 @@ describe('keepMostSevere', () => {
     expect(keepMostSevere(items, 3).map(r => r.id)).toEqual(['kev', 'crit', 'high']);
     expect(keepMostSevere(items, 4).map(r => r.id)).toEqual(['kev', 'crit', 'high', 'low']);
     expect(keepMostSevere(items, 5).map(r => r.id)).toEqual(['low', 'none', 'kev', 'crit', 'high']);
+  });
+
+  it('ranks by severity word before CVSS, as clients badge them', () => {
+    const items = [
+      makeResult({ id: 'scored-high', severity: 'HIGH', cvssScore: 8.8 }),
+      makeResult({ id: 'rated-critical', severity: 'CRITICAL', cvssScore: null }),
+      makeResult({ id: 'rated-low', severity: 'LOW', cvssScore: 9.8 }),
+      makeResult({ id: 'moderate', severity: 'moderate', cvssScore: 5 }),
+    ];
+    expect(keepMostSevere(items, 3).map(r => r.id)).toEqual(['rated-critical', 'scored-high', 'moderate']);
+  });
+
+  it('breaks ties on CVSS, then EPSS', () => {
+    const items = [
+      makeResult({ id: 'a', severity: 'HIGH', cvssScore: 7.5, epssScore: 0.01 }),
+      makeResult({ id: 'b', severity: 'HIGH', cvssScore: 7.5, epssScore: 0.9 }),
+      makeResult({ id: 'c', severity: 'HIGH', cvssScore: 8.1, epssScore: null }),
+    ];
+    expect(keepMostSevere(items, 2).map(r => r.id)).toEqual(['c', 'b']);
   });
 });
 

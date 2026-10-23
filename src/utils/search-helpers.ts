@@ -216,11 +216,17 @@ export function truncateSummaries(
 // thousands of CVEs, and the ones dropped could be the critical ones, since
 // clients sort after the cut.
 //
+// The per-package cap was 5,000, which an outdated kernel still exceeds: a
+// RHEL 9.0 GA kernel-core matches about 9,100, an old Ubuntu 22.04 linux about
+// 8,700, and every binary rpm built from the kernel matches the same set.
+// 20,000 leaves twice that headroom; the total below is what actually bounds
+// the response.
+//
 // The total keeps the batch inside what summaryBudgetChars() can still
 // serialize: 500,000 results is the old worst case (1,000 x 500), which fits
 // with summaries shortened to 400 chars. A package is never cut below the old
 // 500, since 1,000 packages x 500 is within the total.
-export const BATCH_RESULTS_PER_PACKAGE = 5_000;
+export const BATCH_RESULTS_PER_PACKAGE = 20_000;
 export const BATCH_RESULTS_TOTAL = 500_000;
 const BATCH_RESULTS_FLOOR = 500;
 
@@ -245,14 +251,40 @@ export function batchResultCap(counts: number[]): number {
 }
 
 /**
+ * A result's severity tier, 4 (critical) down to 0 (unrated): the severity
+ * word when it has one, otherwise the CVSS score. The same rule heretix-management
+ * uses for its badges, so a cut keeps what clients will show as most severe.
+ * The word comes first because a source can rate a CVE "Critical" without a
+ * score, or with a base score its own rating overrides.
+ */
+function severityTier(r: VulnerabilityResult): number {
+  switch (r.severity?.toUpperCase()) {
+    case 'CRITICAL': return 4;
+    case 'HIGH': return 3;
+    case 'MEDIUM': case 'MODERATE': return 2;
+    case 'LOW': return 1;
+  }
+  const score = r.cvssScore ?? 0;
+  if (score >= 9) return 4;
+  if (score >= 7) return 3;
+  if (score >= 4) return 2;
+  return score > 0 ? 1 : 0;
+}
+
+/**
  * The `cap` results to keep out of `results`: all of them if they fit,
- * otherwise those that matter most -- known exploited first, then by CVSS --
- * so a cut never drops a critical finding to keep a low one.
+ * otherwise those that matter most -- known exploited first, then by severity
+ * tier, CVSS and EPSS -- so a cut never drops a critical finding to keep a low
+ * one.
  */
 export function keepMostSevere(results: VulnerabilityResult[], cap: number): VulnerabilityResult[] {
   if (results.length <= cap) return results;
   return [...results]
-    .sort((a, b) => Number(b.isKev) - Number(a.isKev) || (b.cvssScore ?? -1) - (a.cvssScore ?? -1))
+    .sort((a, b) =>
+      Number(b.isKev) - Number(a.isKev) ||
+      severityTier(b) - severityTier(a) ||
+      (b.cvssScore ?? -1) - (a.cvssScore ?? -1) ||
+      (b.epssScore ?? -1) - (a.epssScore ?? -1))
     .slice(0, cap);
 }
 
