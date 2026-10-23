@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
+import axios from 'axios';
+import AdmZip from 'adm-zip';
 import { prisma } from '../db/client.js';
 import { resetDb } from '../test-utils/db.js';
-import { importOSVData } from './osv-fetcher.js';
+import { importOSVData, importOSVEcosystemDelta } from './osv-fetcher.js';
 
 // OSVVulnerability isn't exported from osv-fetcher.ts; a plain object literal
 // satisfies the parameter's structural type without needing that import.
@@ -165,5 +167,62 @@ describe('importOSVData — severity and CVSS', () => {
 
     const master = await prisma.vulnerability.findUnique({ where: { cveId: 'CVE-2026-4444' } });
     expect(master).toMatchObject({ severity: 'HIGH', cvssScore: 7.5 });
+  });
+});
+
+describe('importOSVEcosystemDelta — a bucket that is missing or no longer written to', () => {
+  const debianRecord = (id: string, modified: string) => makeOsv({
+    id,
+    modified,
+    aliases: [id.replace('DEBIAN-', '')],
+    affected: [{ package: { ecosystem: 'Debian:13', name: 'util-linux' }, ranges: [{ type: 'ECOSYSTEM', events: [{ introduced: '0' }, { fixed: '2.41.5-0+deb13u1' }] }] }],
+  });
+
+  function zipOf(records: Array<ReturnType<typeof makeOsv>>): ArrayBuffer {
+    const zip = new AdmZip();
+    for (const r of records) zip.addFile(`${r.id}.json`, Buffer.from(JSON.stringify(r)));
+    const buf = zip.toBuffer();
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+  }
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('imports the records newer than the cursor from a live bucket', async () => {
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    vi.spyOn(axios, 'get').mockResolvedValue({ data: zipOf([debianRecord('DEBIAN-CVE-2026-0001', recent), debianRecord('DEBIAN-CVE-2025-0001', '2025-01-01T00:00:00Z')]) });
+
+    const result = await importOSVEcosystemDelta('Debian', new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+    expect(result).toMatchObject({ total: 2, skipped: 1, inserted: 1, failed: 0 });
+    expect(await prisma.oSVVulnerability.count({ where: { osvId: 'DEBIAN-CVE-2026-0001' } })).toBe(1);
+  });
+
+  it('fails the job on a 404 instead of reporting an empty success', async () => {
+    vi.spyOn(axios, 'get').mockRejectedValue(Object.assign(new Error('Request failed with status code 404'), { isAxiosError: true, response: { status: 404 } }));
+    vi.spyOn(axios, 'isAxiosError').mockReturnValue(true);
+
+    await expect(importOSVEcosystemDelta('Alpine:v3.24', new Date(0))).rejects.toThrow(/OSV has no bucket "Alpine:v3.24".*SHARED_BUCKET_ECOSYSTEMS/);
+  });
+
+  // This is what Debian:12, Debian:13, Alpine:* and Ubuntu:* looked like from October 2024: the
+  // file answers 200, holds records, and none of them has changed since.
+  it('fails the job when the newest record of a distro bucket is old, after importing what it holds', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValue({ data: zipOf([debianRecord('DEBIAN-CVE-2024-0001', '2024-10-04T14:58:33Z')]) });
+
+    await expect(importOSVEcosystemDelta('Debian:13', new Date('2024-01-01T00:00:00Z'))).rejects.toThrow(
+      /fetched 1 records and imported 1, but the newest record in the OSV bucket "Debian:13" is \d+ days old/,
+    );
+    expect(await prisma.oSVVulnerability.count({ where: { osvId: 'DEBIAN-CVE-2024-0001' } })).toBe(1);
+  });
+
+  it('fails the job on an empty bucket', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValue({ data: zipOf([]) });
+    await expect(importOSVEcosystemDelta('Debian', new Date(0))).rejects.toThrow(/holds no records/);
   });
 });

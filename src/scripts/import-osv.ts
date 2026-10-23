@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
+import { osvBucketName } from '../jobs/osv-bucket.js';
 import {
   fetchOSVById,
   queryOSVByPackage,
@@ -83,6 +84,7 @@ async function main() {
     logger.info('  pnpm import:osv package <ecosystem> [name] # Import by package (or entire ecosystem)');
     logger.info('  pnpm import:osv ecosystem <ecosystem>      # Import entire ecosystem (full)');
     logger.info('  pnpm import:osv update <ecosystem>         # Delta update since last run (e.g. npm, PyPI, malware)');
+    logger.info('  pnpm import:osv update <ecosystem> --since=YYYY-MM-DD   # ...or since that day (backfill)');
     logger.info('  pnpm import:osv id <osv-id>                # Import specific vulnerability');
     logger.info('  pnpm import:osv malware                    # Import all MAL entries from ossf/malicious-packages');
     logger.info('');
@@ -185,14 +187,24 @@ async function main() {
           logger.error('Missing argument: ecosystem required (e.g. npm, PyPI, malware)');
           process.exit(1);
         }
-        const ecosystem = args[1];
+        // "Debian:13" and "Debian" are the same job: the releases of a distro share one bucket.
+        const ecosystem = args[1] === 'malware' ? 'malware' : osvBucketName(args[1]);
         const sourceKey = ecosystem === 'malware' ? 'osv-mal' : `osv-${ecosystem}`;
+
+        // --since=YYYY-MM-DD starts from that day instead of the last completed run, to
+        // backfill what an earlier run missed (a job that read a frozen bucket for months).
+        const sinceArg = args.find((a) => a.startsWith('--since='))?.slice('--since='.length);
+        const sinceOverride = sinceArg ? new Date(sinceArg) : null;
+        if (sinceOverride && Number.isNaN(sinceOverride.getTime())) {
+          logger.error({ sinceArg }, 'Invalid --since, expected YYYY-MM-DD');
+          process.exit(1);
+        }
 
         const lastJob = await prisma.collectionJob.findFirst({
           where: { source: sourceKey, status: 'completed' },
           orderBy: { completedAt: 'desc' },
         });
-        const since = lastJob?.completedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const since = sinceOverride ?? lastJob?.completedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
         logger.info({ ecosystem, since }, 'Starting OSV delta update');
 

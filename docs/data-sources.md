@@ -99,12 +99,21 @@ pnpm import:osv update malware           # Malware changes since the last run
 ```
 
 - Ecosystem names are case-sensitive: `npm`, `PyPI`, `Go`, `RubyGems`, `crates.io`, `Packagist`, `Maven`, `NuGet`, `Hex`, `Pub`, `ConanCenter`, `SwiftURL`, `CRAN`, `Linux`, `Android`, `OSS-Fuzz`, `Bitnami`, and distributions (`Debian`, `Ubuntu`, `Alpine`, `AlmaLinux`, `Rocky Linux`, with or without a release suffix).
-- Each ecosystem has its own daily job (`osv-<ecosystem>`, 08:00 UTC) that imports records modified since its last completed run. Malware is `osv-mal` (08:30 UTC); it makes one GitHub API call, so set `GITHUB_TOKEN` only if you run it more than 60 times an hour.
+- Each ecosystem has its own daily job (`osv-<ecosystem>`, 08:00 UTC) that imports records modified since its last completed run. The releases of AlmaLinux, Rocky Linux, Debian and Alpine share one job and one OSV file (`osv-Debian` covers `Debian:12`, `Debian:13`, ...), because OSV serves them that way. Malware is `osv-mal` (08:30 UTC); it makes one GitHub API call, so set `GITHUB_TOKEN` only if you run it more than 60 times an hour.
 - **Adding an ecosystem**: run the full `pnpm import:osv ecosystem <name>` once *before* enabling its daily job. The daily job only picks up records modified after its cursor, so it never backfills older ones. The full import is recorded as an `osv-full-<ecosystem>` job. Check completeness against OSV's live export at any time:
   ```bash
   pnpm validate:osv-coverage            # every tracked ecosystem
   pnpm validate:osv-coverage Go PyPI    # selected ecosystems
   ```
+- **A job fails, rather than reporting an empty success, when its OSV file is missing (404) or no longer written to** (the newest record is over 14 days old for a distro, 90 for anything else). This happened: OSV stopped updating the per-release Debian, Alpine and Ubuntu files in October 2024 and moved them into one file per distro, but the old files kept answering, so the jobs fetched the same records for months and imported nothing. If such a failure appears, compare the name with [OSV's list of ecosystems](https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt) and `SHARED_BUCKET_ECOSYSTEMS` in [osv-bucket.ts](../src/jobs/osv-bucket.ts). To check every file the jobs would fetch ahead of time:
+  ```bash
+  pnpm validate:osv-buckets   # exits 1 when a file is missing, frozen, or a distro OSV lists under its bare name
+  ```
+- **Backfilling after a job has read a stale or wrong file**: the daily job only looks at records modified after its last completed run, so what it missed stays missing. Re-import from a date with `--since`, choosing a date before the problem started (when in doubt, a few months before; the import is idempotent):
+  ```bash
+  pnpm import:osv update Debian --since=2026-08-01
+  ```
+  `update Debian:13` is the same as `update Debian`.
 - Only the distro releases in the [support policy](../README.md#supported-os-releases) are maintained. Others are imported and searchable on a best-effort basis.
 - Severity: GHSA's `MODERATE` is stored as `MEDIUM`. A CVSS score is computed from OSV's vector when the record has none. Ubuntu priority and Debian urgency are kept per package as `distroPriority`.
 - AlmaLinux, Rocky Linux and Alpine data only lists fixed vulnerabilities, so unfixed vulnerabilities on those distributions are not reported.
