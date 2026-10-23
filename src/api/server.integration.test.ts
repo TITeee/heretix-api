@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { gunzipSync } from 'node:zlib';
 import { createServer } from './server.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
@@ -60,5 +61,52 @@ describe('CORS', () => {
       headers: { 'x-api-key': API_KEY },
     });
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe('response compression', () => {
+  let app: FastifyInstance | undefined;
+
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  // A request that sends no Accept-Encoding gets the body as it always was, so a client that
+  // cannot decompress is unaffected; one that asks for gzip (Go's net/http, Node's fetch do by
+  // default) gets it compressed and reads it back the same.
+  const search = (headers: Record<string, string>) => app!.inject({
+    method: 'POST',
+    url: '/api/v1/vulnerabilities/search/batch',
+    headers: { 'x-api-key': API_KEY, ...headers },
+    payload: { packages: Array.from({ length: 40 }, (_, i) => ({ package: `lodash-${i}`, version: '4.17.20', ecosystem: 'npm' })) },
+  });
+
+  it('gzips a response for a client that asks for it, and the body reads back the same', async () => {
+    app = await createServer();
+
+    const plain = await search({ 'accept-encoding': 'identity' });
+    const zipped = await search({ 'accept-encoding': 'gzip' });
+
+    expect(plain.statusCode).toBe(200);
+    expect(plain.headers['content-encoding']).toBeUndefined();
+    expect(zipped.statusCode).toBe(200);
+    expect(zipped.headers['content-encoding']).toBe('gzip');
+    expect(zipped.headers.vary).toMatch(/accept-encoding/i);
+    expect(JSON.parse(gunzipSync(zipped.rawPayload).toString())).toEqual(JSON.parse(plain.payload));
+  });
+
+  it('sends a client that does not say what it accepts the body uncompressed', async () => {
+    app = await createServer();
+    const res = await search({});
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-encoding']).toBeUndefined();
+  });
+
+  it('leaves a small response alone', async () => {
+    app = await createServer();
+    const res = await app.inject({ method: 'GET', url: '/health', headers: { 'accept-encoding': 'gzip' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-encoding']).toBeUndefined();
   });
 });
