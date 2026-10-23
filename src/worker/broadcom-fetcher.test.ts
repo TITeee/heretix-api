@@ -4,6 +4,7 @@ import {
   parseResponseMatrixRow,
   parseAffectedVersionCell,
   productVersionsFromRows,
+  collectAdvisoryPages,
   type MatrixRawRow,
 } from './broadcom-fetcher.js';
 
@@ -353,5 +354,34 @@ describe('buildBroadcomAdvisories: affected-version ranges', () => {
     expect(advisories[0].affectedProducts).toEqual([
       { vendor: 'broadcom', product: 'VMware ESXi', versionFixed: '8.0 U3f', patchAvailable: true },
     ]);
+  });
+});
+
+describe('collectAdvisoryPages', () => {
+  const item = (documentId: string) => baseItem({ documentId });
+  const page = (documentIds: string[], currentPage: number, lastPage: number) =>
+    ({ success: true, data: { list: documentIds.map(item), pageInfo: { totalCount: 0, currentPage, lastPage, pageSize: 50, nextPage: currentPage + 1 } } });
+
+  it('reads every page up to the last one', async () => {
+    const pages = [page(['A', 'B'], 0, 1), page(['C'], 1, 1)];
+    const asked: number[] = [];
+    const result = await collectAdvisoryPages('VC', async (_segment, n) => { asked.push(n); return pages[n]; });
+    expect(result.items.map(i => i.documentId)).toEqual(['A', 'B', 'C']);
+    expect(result.truncated).toBe(false);
+    expect(asked).toEqual([0, 1]);
+  });
+
+  it('marks the listing truncated when the first page is refused, as Cloudflare does a request from Node', async () => {
+    const result = await collectAdvisoryPages('VC', async () => { throw new Error('Request failed with status code 403'); });
+    expect(result).toEqual({ items: [], truncated: true });
+  });
+
+  it('keeps the pages it had and marks the listing truncated when a later page fails', async () => {
+    const result = await collectAdvisoryPages('VC', async (_segment, n) => {
+      if (n === 0) return page(['A'], 0, 2);
+      throw new Error('boom');
+    });
+    expect(result.items.map(i => i.documentId)).toEqual(['A']);
+    expect(result.truncated).toBe(true);
   });
 });

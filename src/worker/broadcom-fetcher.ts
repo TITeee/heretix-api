@@ -5,6 +5,8 @@ import { withPage, closeBrowser } from '../utils/browser.js';
 
 const LIST_API =
   'https://support.broadcom.com/web/ecx/security-advisory/-/securityadvisory/getSecurityAdvisoryList';
+// A page of the same site, opened in the browser for the list requests Cloudflare refuses from Node.
+const LIST_PAGE = 'https://support.broadcom.com/web/ecx/security-advisory';
 
 // Broadcom segments to query. "VC" covers VMware Cloud Foundation / VMware products (VMSA series).
 const SEGMENTS = ['VC'];
@@ -346,7 +348,32 @@ export function productVersionsFromRows(rawRows: MatrixRawRow[]): ProductVersion
 
 // ─── Data Fetching ─────────────────────────────────────────────
 
-async function fetchAdvisoryList(segment: string): Promise<{ items: BroadcomApiItem[]; truncated: boolean }> {
+/** The list request's body for one page. */
+function listRequest(segment: string, pageNumber: number) {
+  return { pageNumber, pageSize: PAGE_SIZE, searchVal: '', segment, sortInfo: { column: '', order: '' } };
+}
+
+/** One page of the list over plain HTTP. */
+async function postListPageOverHttp(segment: string, pageNumber: number): Promise<BroadcomApiResponse> {
+  const { data } = await axios.post<BroadcomApiResponse>(LIST_API, listRequest(segment, pageNumber), {
+    timeout: 30000,
+    headers: {
+      'User-Agent': 'heretix-api/1.0',
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+  });
+  return data;
+}
+
+/**
+ * The list, page by page, through `postPage`. A page that fails ends the listing there and
+ * marks it `truncated`: the caller must not take what came back for the whole list.
+ */
+export async function collectAdvisoryPages(
+  segment: string,
+  postPage: (segment: string, pageNumber: number) => Promise<BroadcomApiResponse>,
+): Promise<{ items: BroadcomApiItem[]; truncated: boolean }> {
   const all: BroadcomApiItem[] = [];
   let pageNumber = 0;
   let truncated = false;
@@ -354,21 +381,7 @@ async function fetchAdvisoryList(segment: string): Promise<{ items: BroadcomApiI
   while (true) {
     let response: BroadcomApiResponse;
     try {
-      const { data } = await axios.post<BroadcomApiResponse>(LIST_API, {
-        pageNumber,
-        pageSize: PAGE_SIZE,
-        searchVal: '',
-        segment,
-        sortInfo: { column: '', order: '' },
-      }, {
-        timeout: 30000,
-        headers: {
-          'User-Agent': 'heretix-api/1.0',
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-      });
-      response = data;
+      response = await postPage(segment, pageNumber);
     } catch (err) {
       logger.error({ err, segment, pageNumber }, 'Broadcom API request failed');
       // Any later pages beyond this one are silently missing from `all` —
@@ -392,6 +405,31 @@ async function fetchAdvisoryList(segment: string): Promise<{ items: BroadcomApiI
   }
 
   return { items: all, truncated };
+}
+
+/**
+ * Since October 2026 Cloudflare answers the list request from Node (axios) with its "Just a
+ * moment..." challenge, a 403, while a browser is let through. So the list is asked for over
+ * plain HTTP first, and when that brings back nothing it is asked for again from inside a page
+ * of the site, which gets through (as the detail pages already do).
+ */
+export async function fetchAdvisoryList(segment: string): Promise<{ items: BroadcomApiItem[]; truncated: boolean }> {
+  const overHttp = await collectAdvisoryPages(segment, postListPageOverHttp);
+  if (overHttp.items.length > 0 || !overHttp.truncated) return overHttp;
+
+  logger.warn({ segment }, 'Broadcom list request failed over HTTP, retrying in the browser');
+  return withPage(LIST_PAGE, (page) =>
+    collectAdvisoryPages(segment, (seg, pageNumber) =>
+      page.evaluate(async ({ url, body }) => {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(`Broadcom list API returned HTTP ${res.status}`);
+        return (await res.json()) as BroadcomApiResponse;
+      }, { url: LIST_API, body: listRequest(seg, pageNumber) })),
+  );
 }
 
 /**
