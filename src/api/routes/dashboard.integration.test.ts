@@ -106,6 +106,37 @@ describe('dashboard', () => {
         expect(countFor(after)).toBe(2);
       });
     });
+
+    describe('OSV rows of a distro that shares one bucket', () => {
+      // OSV serves every Debian release from one bucket, so one job ("osv-Debian") imports them
+      // all. A row for "Debian:13" that looked up "osv-Debian:13" would show the status of a
+      // job that no longer runs (and its old enabled flag), hiding the real one.
+      const ecosystem = 'Debian:13';
+
+      afterEach(async () => {
+        vi.useRealTimers();
+        await prisma.oSVAffectedPackage.deleteMany({ where: { ecosystem } });
+        await prisma.oSVVulnerability.deleteMany({ where: { osvId: 'DEBIAN-CVE-shared-bucket-test' } });
+        await prisma.collectionJob.deleteMany({ where: { source: { in: ['osv-Debian', 'osv-Debian:13'] } } });
+        await prisma.jobConfig.deleteMany({ where: { source: { in: ['osv-Debian', 'osv-Debian:13'] } } });
+      });
+
+      it('takes the status and the on/off flag of the shared job', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        // The count cache is shared with the tests above, which leave it warm for a few TTLs.
+        vi.setSystemTime(Date.now() + 10 * ECOSYSTEM_COUNTS_CACHE_TTL_MS);
+        const master = await prisma.vulnerability.create({ data: {} });
+        const osv = await prisma.oSVVulnerability.create({ data: { osvId: 'DEBIAN-CVE-shared-bucket-test', rawData: {}, masterVulnId: master.id } });
+        await prisma.oSVAffectedPackage.create({ data: { vulnerabilityId: osv.id, ecosystem, packageName: 'util-linux' } });
+        await prisma.collectionJob.create({ data: { source: 'osv-Debian', status: 'failed', startedAt: new Date(), completedAt: new Date(), errorMessage: 'frozen bucket' } });
+        await prisma.collectionJob.create({ data: { source: 'osv-Debian:13', status: 'completed', startedAt: new Date(0), completedAt: new Date(0) } });
+        await prisma.jobConfig.create({ data: { source: 'osv-Debian', enabled: true } });
+
+        const row = (await get({ 'x-api-key': API_KEY })).json().osvEcosystems.find((e: { ecosystem: string }) => e.ecosystem === ecosystem);
+
+        expect(row).toMatchObject({ source: 'osv-Debian', enabled: true, status: 'failed', errorMessage: 'frozen bucket' });
+      });
+    });
   });
 
   describe('GET /dashboard', () => {

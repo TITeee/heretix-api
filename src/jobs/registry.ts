@@ -183,7 +183,8 @@ export async function resolveJob(source: string): Promise<JobDefinition | null> 
 
   // osv-<ecosystem> (osv-mal is static and handled above)
   if (source.startsWith('osv-')) {
-    const bucketEcosystem = source.slice(4);
+    // "osv-Debian:13" is the job "osv-Debian" now: the releases of a distro share one bucket.
+    const bucketEcosystem = osvBucketName(source.slice(4));
     // A shared-bucket job (e.g. "osv-AlmaLinux") is valid as long as any
     // version under it exists, not just an exact "AlmaLinux" match.
     const where = SHARED_BUCKET_ECOSYSTEMS.includes(bucketEcosystem)

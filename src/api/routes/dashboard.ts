@@ -6,6 +6,7 @@ import { prisma } from '../../db/client.js';
 import { STATIC_JOBS } from '../../jobs/registry.js';
 import { getEnabledMap, defaultEnabled } from '../../jobs/config.js';
 import { isMaintainedOsvEcosystem } from '../../config/support-policy.js';
+import { osvBucketName } from '../../jobs/osv-bucket.js';
 
 function isOsvEcosystemSource(source: string): boolean {
   return source.startsWith('osv-') && source !== 'osv-delta';
@@ -91,7 +92,8 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
     const osvEcosystems = ecosystemCounts.map((r) => {
       const eco = r.ecosystem;
-      const source = `osv-${eco}`;
+      // The releases of a distro share one job (osv-Debian runs for Debian:12 and Debian:13 alike).
+      const source = `osv-${osvBucketName(eco)}`;
       const job = latestBySource.get(source);
       return {
         ecosystem: eco,

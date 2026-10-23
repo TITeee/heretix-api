@@ -6,6 +6,7 @@ import { normalizeVersion } from '../utils/version.js';
 import { cvssFromOsvSeverity } from '../utils/cvss.js';
 import { normalizeSeverity, severityFromCvssScore } from '../utils/severity.js';
 import AdmZip from 'adm-zip';
+import { staleBucketProblem } from '../jobs/osv-bucket.js';
 import type { Prisma } from '@prisma/client';
 
 /**
@@ -278,6 +279,11 @@ export async function importOSVEcosystemStreaming(ecosystem: string): Promise<{
  * Delta import for a single OSV ecosystem.
  * Downloads the full ecosystem ZIP (same as importOSVEcosystemStreaming) but skips
  * entries whose `modified` timestamp is not newer than `since`.
+ *
+ * Throws, rather than returning an empty success, when the bucket is missing (404) or is no
+ * longer written to (its newest record is older than osv-bucket.ts's limit for the ecosystem).
+ * A run that fetches the same frozen file and imports nothing looks exactly like a quiet day,
+ * and Debian, Ubuntu and Alpine went months without an update that way.
  */
 export async function importOSVEcosystemDelta(ecosystem: string, since: Date): Promise<{
   total: number;
@@ -300,16 +306,18 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
     responseData = response.data;
   } catch (err) {
     if (axios.isAxiosError(err) && err.response?.status === 404) {
-      // registry.ts's osvBucketName() is responsible for mapping a DB
+      // osvBucketName() (jobs/osv-bucket.ts) is responsible for mapping a DB
       // ecosystem value to a bucket name that actually exists -- a 404 here
       // means that mapping is missing or wrong for this ecosystem (the
       // AlmaLinux/Rocky Linux case: their per-version DB values 404 against
-      // OSV's shared, version-less bucket and silently returned a fake
-      // "0 fetched" success every day for a week before this was caught).
-      // Log at error, not warn, so a still-unmapped ecosystem doesn't go
-      // unnoticed the same way again.
-      logger.error({ ecosystem, url }, 'No GCS bucket found for ecosystem -- check osvBucketName() in registry.ts, skipping delta update');
-      return { total: 0, skipped: 0, succeeded: 0, inserted: 0, updated: 0, failed: 0 };
+      // OSV's shared, version-less bucket and returned a fake "0 fetched"
+      // success every day for a week, and Alpine 3.21+ and Ubuntu 24.10+ did
+      // the same after it). Failing the job is what makes it show up.
+      logger.error({ ecosystem, url }, 'No GCS bucket found for ecosystem');
+      throw new Error(
+        `OSV has no bucket "${ecosystem}" (404 for ${url}). Check osvBucketName() / SHARED_BUCKET_ECOSYSTEMS in ` +
+          'src/jobs/osv-bucket.ts against https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt',
+      );
     }
     throw err;
   }
@@ -324,6 +332,7 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
   let inserted = 0;
   let updated = 0;
   let failed = 0;
+  let newestModified: Date | null = null;
 
   for (const entry of zipEntries) {
     if (!entry.entryName.endsWith('.json')) continue;
@@ -332,6 +341,11 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
     try {
       const content = entry.getData().toString('utf8');
       const vuln = JSON.parse(content) as OSVVulnerability;
+
+      if (vuln.modified) {
+        const modified = new Date(vuln.modified);
+        if (!newestModified || modified > newestModified) newestModified = modified;
+      }
 
       if (vuln.modified && new Date(vuln.modified) <= since) {
         skipped++;
@@ -351,7 +365,12 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
   }
 
   const succeeded = inserted + updated;
-  logger.info({ ecosystem, since, total, skipped, succeeded, failed }, 'OSV delta import completed');
+  logger.info({ ecosystem, since, total, skipped, succeeded, failed, newestModified }, 'OSV delta import completed');
+
+  const problem = staleBucketProblem(ecosystem, newestModified);
+  if (problem) {
+    throw new Error(`OSV delta for "${ecosystem}" fetched ${total} records and imported ${succeeded}, but ${problem}`);
+  }
   return { total, skipped, succeeded, inserted, updated, failed };
 }
 
