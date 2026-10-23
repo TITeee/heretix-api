@@ -115,6 +115,15 @@ describe('dashboard', () => {
       expect(res.headers['content-type']).toContain('text/html');
     });
 
+    it('declares the favicon, and serves it without an API key', async () => {
+      const html = (await app.inject({ method: 'GET', url: '/dashboard' })).body;
+      expect(html).toContain('<link rel="icon" type="image/png" href="/icon.png" />');
+
+      const icon = await app.inject({ method: 'GET', url: '/icon.png' });
+      expect(icon.statusCode).toBe(200);
+      expect(icon.headers['content-type']).toBe('image/png');
+    });
+
     it('escapes values that reach innerHTML', async () => {
       // The dashboard renders values it does not control: OSV ecosystem names
       // come from upstream data, and errorMessage is whatever a failing fetcher
