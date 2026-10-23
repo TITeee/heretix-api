@@ -202,6 +202,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Heretix - Import Dashboard</title>
+  <link rel="icon" type="image/png" href="/icon.png" />
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     :root {
