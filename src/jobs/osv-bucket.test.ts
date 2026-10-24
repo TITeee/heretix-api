@@ -30,8 +30,24 @@ describe('osvBucketName', () => {
     expect(osvBucketName('Alpine-Edge')).toBe('Alpine-Edge');
   });
 
+  // OSV's "Echo" feed holds Echo:PyPI, Echo:Maven, ...; a job on "Echo:Maven" got a 404 every day.
+  it('maps the ecosystems a vendor feed holds to the vendor bucket', () => {
+    expect(osvBucketName('Echo:Maven')).toBe('Echo');
+    expect(osvBucketName('Echo:PyPI')).toBe('Echo');
+    expect(osvBucketName('Root:Debian:13')).toBe('Root');
+    expect(osvBucketName('SUSE:Linux Enterprise Server 16.0')).toBe('SUSE');
+    expect(osvBucketName('openSUSE:Leap 16.0')).toBe('openSUSE');
+    expect(osvBucketName('Red Hat:enterprise_linux:10.2')).toBe('Red Hat');
+    expect(osvBucketName('VSCode:https://open-vsx.org')).toBe('VSCode');
+  });
+
+  it('keeps SUSE and openSUSE apart', () => {
+    expect(osvBucketName('SUSE')).toBe('SUSE');
+    expect(osvBucketName('openSUSE')).toBe('openSUSE');
+    expect(osvBucketName('openSUSE:Tumbleweed')).not.toBe('SUSE');
+  });
+
   it('leaves ecosystems that use their own bucket unchanged', () => {
-    expect(osvBucketName('Red Hat:9')).toBe('Red Hat:9');
     expect(osvBucketName('npm')).toBe('npm');
     expect(osvBucketName('PyPI')).toBe('PyPI');
   });

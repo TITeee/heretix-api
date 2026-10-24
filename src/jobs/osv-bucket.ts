@@ -31,7 +31,18 @@
 // "Packagist:https://packages.drupal.org/8" is the Drupal repository's name inside
 // the Packagist feed; it has no bucket of its own (404) and its records arrive with
 // the "Packagist" job.
-export const SHARED_BUCKET_ECOSYSTEMS = ['AlmaLinux', 'Rocky Linux', 'Debian', 'Alpine', 'Ubuntu', 'Packagist'];
+//
+// The vendors that publish one feed for several ecosystems are the same case: the "Echo" feed
+// holds "Echo:PyPI", "Echo:Maven", "Echo:Go" and "Echo:NuGet", "Root" holds "Root:PyPI",
+// "Root:Debian:13", ..., and "SUSE", "openSUSE", "openEuler", "TuxCare", "Mageia", "Alpaquita",
+// "BellSoft Hardened Containers", "Azure Linux", "Red Hat" and "VSCode" likewise. A job on
+// "Echo:Maven" asked for a bucket that does not exist and failed with 404 every day. Found by
+// reading the records of every bucket in ecosystems.txt for ecosystem names unlike the bucket's.
+export const SHARED_BUCKET_ECOSYSTEMS = [
+  'AlmaLinux', 'Rocky Linux', 'Debian', 'Alpine', 'Ubuntu', 'Packagist',
+  'Echo', 'Root', 'SUSE', 'openSUSE', 'openEuler', 'TuxCare', 'Mageia', 'Alpaquita',
+  'BellSoft Hardened Containers', 'Azure Linux', 'Red Hat', 'VSCode',
+];
 
 // Buckets whose delta is taken from `<bucket>/modified_id.csv` ("<time>,<id>" per record, newest
 // first) plus one request per changed record, instead of downloading all.zip. Right for a bucket
