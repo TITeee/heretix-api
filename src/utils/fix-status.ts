@@ -82,3 +82,36 @@ export function redHatRemediationStatus(category: unknown, details: unknown): Fi
   }
   return null;
 }
+
+/**
+ * An Ubuntu CVE Tracker status for one (release, package, CVE) that has no fix, normalized.
+ * The tracker's reason, where it gives one, is kept in fixStatusDetail after the status.
+ *   needs-triage                  -> under_investigation (Ubuntu has not looked at it yet)
+ *   needed                        -> affected (it will be fixed)
+ *   pending                       -> affected (a fix is being built or tested)
+ *   deferred                      -> deferred (the tracker gives the date to look at it again)
+ *   ignored, "end of ..." reason  -> out_of_support (the release or the pocket is no longer maintained)
+ *   ignored, any other reason     -> will_not_fix ("see notes", "only affects Perl for Windows", ...)
+ * Any other status (released, not-affected, DNE) has a fix or no problem and returns null.
+ */
+export function ubuntuTrackerStatus(entry: { status: string; reason?: string | null }): FixStatusInfo | null {
+  const reason = entry.reason?.trim() || null;
+  const withReason = (tag: string) => (reason ? `${tag}: ${reason}` : tag);
+  switch (entry.status) {
+    case 'needs-triage':
+      return { fixStatus: 'under_investigation', fixStatusDetail: 'needs-triage' };
+    case 'needed':
+      return { fixStatus: 'affected', fixStatusDetail: null };
+    case 'pending':
+      return { fixStatus: 'affected', fixStatusDetail: withReason('pending') };
+    case 'deferred':
+      return { fixStatus: 'deferred', fixStatusDetail: withReason('deferred') };
+    case 'ignored':
+      return {
+        fixStatus: reason && /^end of /i.test(reason) ? 'out_of_support' : 'will_not_fix',
+        fixStatusDetail: withReason('ignored'),
+      };
+    default:
+      return null;
+  }
+}

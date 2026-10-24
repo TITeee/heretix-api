@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { debianTrackerStatus, redHatRemediationStatus } from './fix-status.js';
+import { debianTrackerStatus, redHatRemediationStatus, ubuntuTrackerStatus } from './fix-status.js';
 
 describe('debianTrackerStatus', () => {
   // Real tag combinations from the tracker export.
@@ -43,5 +43,26 @@ describe('redHatRemediationStatus', () => {
   it('ignores categories that do not describe a missing fix', () => {
     expect(redHatRemediationStatus('vendor_fix', 'For details on how to apply this update...')).toBeNull();
     expect(redHatRemediationStatus('workaround', 'Do not process untrusted files.')).toBeNull();
+  });
+});
+
+describe('ubuntuTrackerStatus', () => {
+  it('maps each Ubuntu CVE Tracker status that means "no fix yet"', () => {
+    expect(ubuntuTrackerStatus({ status: 'needs-triage' })).toEqual({ fixStatus: 'under_investigation', fixStatusDetail: 'needs-triage' });
+    expect(ubuntuTrackerStatus({ status: 'needed' })).toEqual({ fixStatus: 'affected', fixStatusDetail: null });
+    expect(ubuntuTrackerStatus({ status: 'pending', reason: '5.40.1-6ubuntu0.1' })).toEqual({ fixStatus: 'affected', fixStatusDetail: 'pending: 5.40.1-6ubuntu0.1' });
+    expect(ubuntuTrackerStatus({ status: 'deferred', reason: '2026-10-15' })).toEqual({ fixStatus: 'deferred', fixStatusDetail: 'deferred: 2026-10-15' });
+  });
+
+  it('tells a decision not to fix from the end of support', () => {
+    expect(ubuntuTrackerStatus({ status: 'ignored', reason: 'see notes' })).toEqual({ fixStatus: 'will_not_fix', fixStatusDetail: 'ignored: see notes' });
+    expect(ubuntuTrackerStatus({ status: 'ignored', reason: 'only affects Perl for Windows' })?.fixStatus).toBe('will_not_fix');
+    expect(ubuntuTrackerStatus({ status: 'ignored' })).toEqual({ fixStatus: 'will_not_fix', fixStatusDetail: 'ignored' });
+    expect(ubuntuTrackerStatus({ status: 'ignored', reason: 'end of standard support, was deferred' })?.fixStatus).toBe('out_of_support');
+    expect(ubuntuTrackerStatus({ status: 'ignored', reason: 'end of ESM support' })?.fixStatus).toBe('out_of_support');
+  });
+
+  it('has nothing to say about a status that has a fix or no problem', () => {
+    for (const status of ['released', 'not-affected', 'DNE', '']) expect(ubuntuTrackerStatus({ status })).toBeNull();
   });
 });

@@ -152,15 +152,15 @@ Alpine, AlmaLinux, Rocky Linux and Oracle Linux return `null`: their sources hav
 
 Whether a fix will come for an unfixed package. It answers a different question from `distroPriority`: Red Hat can rate a CVE `moderate` and still not fix it. `fixStatusDetail` carries the source's own wording (e.g. `Will not fix`, or the Debian tracker's tag and note).
 
-| `fixStatus` | Meaning | Red Hat | Debian security tracker |
-|---|---|---|---|
-| `affected` | Not fixed yet; a fix may still come | `Affected` | open, no tag |
-| `deferred` | Postponed, or will not come as a security update | `Fix deferred` | `postponed`; plain `no-dsa` |
-| `will_not_fix` | The vendor has decided not to fix it | `Will not fix` | `ignored` |
-| `out_of_support` | Outside the vendor's support scope | `Out of support scope` | `end-of-life` |
-| `under_investigation` | Not yet confirmed whether it applies | (product status) | `undetermined` |
+| `fixStatus` | Meaning | Red Hat | Debian security tracker | Ubuntu CVE Tracker |
+|---|---|---|---|---|
+| `affected` | Not fixed yet; a fix may still come | `Affected` | open, no tag | `needed`, `pending` |
+| `deferred` | Postponed, or will not come as a security update | `Fix deferred` | `postponed`; plain `no-dsa` | `deferred` |
+| `will_not_fix` | The vendor has decided not to fix it | `Will not fix` | `ignored` | `ignored` |
+| `out_of_support` | Outside the vendor's support scope | `Out of support scope` | `end-of-life` | `ignored` with a reason that starts "end of" |
+| `under_investigation` | Not yet confirmed whether it applies | (product status) | `undetermined` | `needs-triage` |
 
-Sources today: Red Hat CSAF VEX (RHEL 8/9/10), the Debian security tracker (Debian 12 and later; Debian 11 is not in the tracker's export), and Check Point, which marks end-of-support release lines with no fix as `out_of_support` (`fixStatusDetail` is the release line, e.g. `R80.40 (EOS)`). Other results return `null`, including every match that only has a `fixedVersion`. **The set of values may grow**: treat an unknown value like `affected`.
+Sources today: Red Hat CSAF VEX (RHEL 8/9/10), the Debian security tracker (Debian 12 and later; Debian 11 is not in the tracker's export), the Ubuntu CVE Tracker (Ubuntu 20.04, 22.04, 24.04 and 26.04; not Pro), and Check Point, which marks end-of-support release lines with no fix as `out_of_support` (`fixStatusDetail` is the release line, e.g. `R80.40 (EOS)`). Other results return `null`, including every match that only has a `fixedVersion`. **The set of values may grow**: treat an unknown value like `affected`.
 
 A RHEL result can carry both `fixedVersion` and `fixStatus`:
 - Red Hat's VEX says "unfixed" per major version but "fixed" per release stream (9.3 GA, 9.2 EUS, ...). Such an entry is bounded by the newest fix for that major, returned as `fixedVersion`. A build that is fixed only in an older stream (e.g. EUS) is still reported. This false positive is preferred over guessing which stream a build belongs to.

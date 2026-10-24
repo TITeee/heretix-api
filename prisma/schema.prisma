@@ -186,6 +186,22 @@ model DebianSourcePackage {
 // fully replaced on each run. Used only to attach fixStatus to Debian OSV
 // matches -- the tracker carries no-dsa / ignored / postponed, which OSV's
 // DEBIAN-CVE records drop. Matching itself stays on OSVAffectedPackage.
+// Ubuntu CVE Tracker entries with no fix yet, for the releases heretix-api maintains: why
+// an OSV "introduced 0, no fix" row has none (see ubuntuTrackerStatus() in utils/fix-status.ts).
+// Fully replaced by the daily ubuntu-tracker job; an entry that has been released is gone.
+model UbuntuTrackerStatus {
+  id            String   @id @default(cuid())
+
+  ecosystem     String   // "Ubuntu:22.04:LTS", as on OSVAffectedPackage
+  sourcePackage String
+  vulnId        String   // CVE id
+  status        String   // "needs-triage" | "needed" | "pending" | "deferred" | "ignored"
+  reason        String?  // the tracker's note in brackets, e.g. "end of standard support"
+
+  @@unique([ecosystem, sourcePackage, vulnId])
+  @@index([vulnId])
+}
+
 model DebianTrackerStatus {
   id            String   @id @default(cuid())
 

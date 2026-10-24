@@ -38,6 +38,7 @@ import { importCnaDelta } from '../worker/cna-importer.js';
 import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
 import { importDebianSourceMappings } from '../worker/debian-sources-fetcher.js';
 import { importDebianTrackerStatus } from '../worker/debian-tracker-fetcher.js';
+import { importUbuntuTrackerStatus } from '../worker/ubuntu-tracker-fetcher.js';
 import { SHARED_BUCKET_ECOSYSTEMS, osvBucketName } from './osv-bucket.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -141,6 +142,18 @@ export const STATIC_JOBS: JobDefinition[] = [
     cron: '15 7 * * *',
     run: async () => {
       const result = await importDebianTrackerStatus();
+      return { fetched: result.fetched, inserted: result.inserted };
+    },
+  },
+  {
+    // Unfixed entries of the maintained releases only, fully replaced each run -- feeds
+    // fixStatus on Ubuntu OSV matches (ignored / deferred / needs-triage), not matching
+    // itself. Clones the tracker's git repository (about 220 MB) with the git binary.
+    source: 'ubuntu-tracker',
+    label: 'Ubuntu CVE Tracker',
+    cron: '45 7 * * *',
+    run: async () => {
+      const result = await importUbuntuTrackerStatus();
       return { fetched: result.fetched, inserted: result.inserted };
     },
   },

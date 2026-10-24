@@ -197,6 +197,14 @@ Matching stays on OSV's Debian data. The tracker only adds `fixStatus` to unfixe
 
 A separate weekly job (`debian-source-packages`, Sunday 07:00 UTC) maps Debian binary package names to source package names for matching.
 
+## Ubuntu CVE Tracker
+
+Fetcher: [src/worker/ubuntu-tracker-fetcher.ts](../src/worker/ubuntu-tracker-fetcher.ts). Source: Canonical's [ubuntu-cve-tracker](https://git.launchpad.net/ubuntu-cve-tracker) git repository, the data OSV's Ubuntu records are generated from. Job `ubuntu-tracker`, daily at 07:45 UTC.
+
+OSV's Ubuntu records say only "introduced 0, no fix" for a package Ubuntu will fix, has not looked at, has put off or has decided not to fix. Matching stays on OSV; the tracker only adds `fixStatus` to unfixed Ubuntu matches: `needs-triage`, `needed`, `pending`, `deferred` and `ignored`, with the tag and the tracker's reason in `fixStatusDetail`. Releases 20.04, 22.04, 24.04 and 26.04 are labelled; a Pro (ESM) record is not, because the tracker keeps its status apart.
+
+The repository is cloned with the `git` binary (shallow, about 220 MB over the network, a few minutes) into a temporary directory that is deleted afterwards, and replaced into one table each run. The tracker lists every CVE against hundreds of retired kernel flavours (`linux-azure-5.19`, ...) as "ignored (superseded by ...)" or "(end of kernel support)"; those 1.5 million entries are left out. The Docker image has `git`; run it elsewhere with `git` on the PATH, or point `UBUNTU_CVE_TRACKER_URL` at a mirror.
+
 ## Fortinet
 
 [fortinet-fetcher.ts](../src/worker/fortinet-fetcher.ts) · `pnpm import:fortinet` · daily 11:00 UTC

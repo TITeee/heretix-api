@@ -10,7 +10,7 @@ export async function resetDb(): Promise<void> {
     TRUNCATE TABLE "Vulnerability", "OSVVulnerability", "OSVAffectedPackage",
       "NVDVulnerability", "NVDAffectedPackage", "AdvisoryVulnerability",
       "AdvisoryAffectedProduct", "CollectionJob", "JobConfig", "DebianSourcePackage",
-      "DebianTrackerStatus"
+      "DebianTrackerStatus", "UbuntuTrackerStatus"
     RESTART IDENTITY CASCADE
   `);
 }

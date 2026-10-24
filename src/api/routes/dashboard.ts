@@ -127,7 +127,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       errorMessage: malJob?.errorMessage ?? null,
     });
 
-    const [nvdCount, osvCount, kevCount, advisoryCount, epssCount, advisorySourceCounts, rhel9Count, rhel8Count, debianTrackerCount] = await Promise.all([
+    const [nvdCount, osvCount, kevCount, advisoryCount, epssCount, advisorySourceCounts, rhel9Count, rhel8Count, debianTrackerCount, ubuntuTrackerCount] = await Promise.all([
       prisma.nVDVulnerability.count(),
       prisma.oSVVulnerability.count(),
       prisma.vulnerability.count({ where: { isKev: true } }),
@@ -140,6 +140,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       prisma.advisoryVulnerability.count({ where: { source: 'red-hat', affectedProducts: { some: { vendor: 'red-hat-9' } } } }),
       prisma.advisoryVulnerability.count({ where: { source: 'red-hat', affectedProducts: { some: { vendor: 'red-hat-8' } } } }),
       prisma.debianTrackerStatus.count(),
+      prisma.ubuntuTrackerStatus.count(),
     ]);
     const advisoryCountBySource = new Map(advisorySourceCounts.map((r) => [r.source, r._count._all]));
 
@@ -148,6 +149,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       if (source === 'kev') return kevCount;
       if (source === 'epss') return epssCount;
       if (source === 'debian-tracker') return debianTrackerCount;
+      if (source === 'ubuntu-tracker') return ubuntuTrackerCount;
       if (source === 'advisory-redhat-rhel9') return rhel9Count;
       if (source === 'advisory-redhat-rhel8') return rhel8Count;
       if (source.startsWith('advisory-oracle-linux')) return advisoryCountBySource.get('oracle-linux') ?? 0;

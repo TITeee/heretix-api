@@ -70,6 +70,7 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 | `osv-mal` (malicious packages) | Daily 08:30 | | `pnpm import:osv malware`. Run reads the changes since the last run, or the last 30 days |
 | `debian-source-packages` | Weekly, Sunday 07:00 | | Run is enough |
 | `debian-tracker` | Daily 07:15 | | Run is enough |
+| `ubuntu-tracker` | Daily 07:45 | | Run is enough. Needs `git` (in the Docker image) and a few minutes: it clones a 220 MB repository |
 | `advisory-fortinet` / `-pan` / `-cisco` / `-oracle-linux` | Daily 11:00 / 11:15 / 11:30 / 11:45 | | Run is enough. `advisory-cisco` needs `CISCO_CLIENT_ID` and `CISCO_CLIENT_SECRET` |
 | `advisory-sophos` / `-sonicwall` / `-oracle-cpu` | Daily 12:00 / 12:15 / 12:30 | | Run is enough |
 | `advisory-broadcom` / `-redhat-rhel9` / `-redhat-rhel8` / `-splunk` | Daily 13:00 / 13:15 / 13:30 / 13:45 | | Run is enough |
