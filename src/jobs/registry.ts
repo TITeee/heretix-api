@@ -35,7 +35,7 @@ import { CitrixFetcher } from '../worker/citrix-fetcher.js';
 import { MsrcFetcher } from '../worker/msrc-fetcher.js';
 import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { importCnaDelta } from '../worker/cna-importer.js';
-import { importOSVEcosystemDelta, importMALDelta } from '../worker/osv-fetcher.js';
+import { importOSVEcosystemDelta } from '../worker/osv-fetcher.js';
 import { importDebianSourceMappings } from '../worker/debian-sources-fetcher.js';
 import { importDebianTrackerStatus } from '../worker/debian-tracker-fetcher.js';
 import { importUbuntuTrackerStatus } from '../worker/ubuntu-tracker-fetcher.js';
@@ -157,16 +157,6 @@ export const STATIC_JOBS: JobDefinition[] = [
       return { fetched: result.fetched, inserted: result.inserted };
     },
   },
-  {
-    source: 'osv-mal',
-    label: 'OSV / Malware',
-    cron: '30 8 * * *',
-    run: async () => {
-      const since = await getDeltaCursor('osv-mal', OSV_DELTA_FALLBACK_MS);
-      const result = await importMALDelta(since);
-      return { fetched: result.total, inserted: result.inserted, updated: result.updated, failed: result.failed };
-    },
-  },
 ];
 
 const STATIC_BY_SOURCE = new Map(STATIC_JOBS.map((j) => [j.source, j]));
@@ -194,7 +184,7 @@ export async function resolveJob(source: string): Promise<JobDefinition | null> 
   const staticJob = STATIC_BY_SOURCE.get(source);
   if (staticJob) return staticJob;
 
-  // osv-<ecosystem> (osv-mal is static and handled above)
+  // osv-<ecosystem>
   if (source.startsWith('osv-')) {
     // "osv-Debian:13" is the job "osv-Debian" now: the releases of a distro share one bucket.
     const bucketEcosystem = osvBucketName(source.slice(4));

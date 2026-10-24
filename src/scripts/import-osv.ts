@@ -9,8 +9,6 @@ import {
   batchImportOSV,
   importOSVEcosystemStreaming,
   importOSVEcosystemDelta,
-  importMALFromGitHub,
-  importMALDelta,
 } from '../worker/osv-fetcher.js';
 
 /**
@@ -83,10 +81,9 @@ async function main() {
     logger.info('  pnpm import:osv sample                     # Import sample vulnerabilities');
     logger.info('  pnpm import:osv package <ecosystem> [name] # Import by package (or entire ecosystem)');
     logger.info('  pnpm import:osv ecosystem <ecosystem>      # Import entire ecosystem (full)');
-    logger.info('  pnpm import:osv update <ecosystem>         # Delta update since last run (e.g. npm, PyPI, malware)');
+    logger.info('  pnpm import:osv update <ecosystem>         # Delta update since last run (e.g. npm, PyPI)');
     logger.info('  pnpm import:osv update <ecosystem> --since=YYYY-MM-DD   # ...or since that day (backfill)');
     logger.info('  pnpm import:osv id <osv-id>                # Import specific vulnerability');
-    logger.info('  pnpm import:osv malware                    # Import all MAL entries from ossf/malicious-packages');
     logger.info('');
     logger.info('Examples:');
     logger.info('  pnpm import:osv sample');
@@ -94,9 +91,7 @@ async function main() {
     logger.info('  pnpm import:osv package PyPI requests');
     logger.info('  pnpm import:osv ecosystem npm              # Full import of all npm vulnerabilities');
     logger.info('  pnpm import:osv update npm                 # Delta update for npm since last run');
-    logger.info('  pnpm import:osv update malware             # Delta update for MAL since last run');
     logger.info('  pnpm import:osv id GHSA-67hx-6x53-jw92');
-    logger.info('  pnpm import:osv malware                    # Full import of MAL entries');
     process.exit(1);
   }
 
@@ -175,21 +170,14 @@ async function main() {
         break;
       }
 
-      case 'malware': {
-        // Full import of all MAL entries from ossf/malicious-packages GitHub repository
-        const malResult = await importMALFromGitHub();
-        console.log(`Done: ${malResult.succeeded} imported, ${malResult.failed} failed (total: ${malResult.total})`);
-        break;
-      }
-
       case 'update': {
         if (args.length < 2) {
-          logger.error('Missing argument: ecosystem required (e.g. npm, PyPI, malware)');
+          logger.error('Missing argument: ecosystem required (e.g. npm, PyPI)');
           process.exit(1);
         }
         // "Debian:13" and "Debian" are the same job: the releases of a distro share one bucket.
-        const ecosystem = args[1] === 'malware' ? 'malware' : osvBucketName(args[1]);
-        const sourceKey = ecosystem === 'malware' ? 'osv-mal' : `osv-${ecosystem}`;
+        const ecosystem = osvBucketName(args[1]);
+        const sourceKey = `osv-${ecosystem}`;
 
         // --since=YYYY-MM-DD starts from that day instead of the last completed run, to
         // backfill what an earlier run missed (a job that read a frozen bucket for months).
@@ -213,9 +201,7 @@ async function main() {
         });
 
         try {
-          const result = ecosystem === 'malware'
-            ? await importMALDelta(since)
-            : await importOSVEcosystemDelta(ecosystem, since);
+          const result = await importOSVEcosystemDelta(ecosystem, since);
 
           await prisma.collectionJob.update({
             where: { id: job.id },
