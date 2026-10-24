@@ -39,6 +39,10 @@ RUN apk add --no-cache \
     ca-certificates \
     ttf-freefont
 
+# The Ubuntu CVE Tracker job (src/worker/ubuntu-tracker-fetcher.ts) clones the
+# tracker's git repository, which has no other export.
+RUN apk add --no-cache git
+
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 

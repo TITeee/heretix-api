@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { VENDORS_WITH_OWN_VERSION_ORDER, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
-import { type FixStatus, type FixStatusInfo, debianTrackerStatus } from '../../utils/fix-status.js';
+import { type FixStatus, type FixStatusInfo, debianTrackerStatus, ubuntuTrackerStatus } from '../../utils/fix-status.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
 import { createConcurrencyGate, envInt } from '../concurrency-gate.js';
@@ -244,13 +244,13 @@ async function searchOSV(
       ? rows.filter(r => matchesRpmStyleOsvVersion(r, version!))
       : rows;
 
-  const debianStatus = await debianTrackerStatusFor(filteredRows);
+  const trackerStatus = await trackerStatusFor(filteredRows);
 
   return filteredRows.map(r => {
     const v = r.vulnerability;
     // A row with a fix needs no reason for lacking one.
     const fix = !r.fixedVersion && v.cveId
-      ? debianStatus.get(`${r.ecosystem} ${r.packageName} ${v.cveId}`) ?? null
+      ? trackerStatus.get(`${r.ecosystem} ${r.packageName} ${v.cveId}`) ?? null
       : null;
     const fixFields = { fixStatus: fix?.fixStatus ?? null, fixStatusDetail: fix?.fixStatusDetail ?? null };
     if (v.masterVuln) {
@@ -305,6 +305,42 @@ async function debianTrackerStatusFor(
     if (status) result.set(`${e.ecosystem} ${e.sourcePackage} ${e.vulnId}`, status);
   }
   return result;
+}
+
+/**
+ * Why Ubuntu's unfixed OSV rows have no fix. OSV's Ubuntu records say only "introduced 0, no
+ * fix"; the Ubuntu CVE Tracker (UbuntuTrackerStatus, refreshed daily) says whether Ubuntu
+ * will fix it (needed), has not looked yet (needs-triage), has put it off (deferred) or has
+ * decided not to (ignored). Only the standard releases are labelled: a Pro (ESM) record is
+ * about a different archive, whose status the tracker keeps apart.
+ */
+async function ubuntuTrackerStatusFor(
+  rows: Array<{ ecosystem: string; packageName: string; vulnerability: { cveId: string | null } }>,
+): Promise<Map<string, FixStatusInfo>> {
+  const result = new Map<string, FixStatusInfo>();
+  const ubuntuRows = rows.filter(r => r.ecosystem.startsWith('Ubuntu:') && !r.ecosystem.startsWith('Ubuntu:Pro:') && r.vulnerability.cveId);
+  if (ubuntuRows.length === 0) return result;
+
+  const entries = await prisma.ubuntuTrackerStatus.findMany({
+    where: {
+      vulnId: { in: [...new Set(ubuntuRows.map(r => r.vulnerability.cveId!))] },
+      ecosystem: { in: [...new Set(ubuntuRows.map(r => r.ecosystem))] },
+      sourcePackage: { in: [...new Set(ubuntuRows.map(r => r.packageName))] },
+    },
+  });
+  for (const e of entries) {
+    const status = ubuntuTrackerStatus(e);
+    if (status) result.set(`${e.ecosystem} ${e.sourcePackage} ${e.vulnId}`, status);
+  }
+  return result;
+}
+
+/** The fix status of the unfixed rows of every distro whose tracker is imported, by "ecosystem package CVE". */
+async function trackerStatusFor(
+  rows: Array<{ ecosystem: string; packageName: string; vulnerability: { cveId: string | null } }>,
+): Promise<Map<string, FixStatusInfo>> {
+  const [debian, ubuntu] = await Promise.all([debianTrackerStatusFor(rows), ubuntuTrackerStatusFor(rows)]);
+  return new Map([...debian, ...ubuntu]);
 }
 
 /** Search master via NVD table */

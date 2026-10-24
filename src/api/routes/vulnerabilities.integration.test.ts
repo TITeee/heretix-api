@@ -926,3 +926,84 @@ describe('search by source package and source version (Debian, Ubuntu, Alpine)',
     expect(withSource.body.results).toHaveLength(1);
   });
 });
+
+describe('search — why an unfixed Ubuntu row has no fix (Ubuntu CVE Tracker)', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  // OSV's Ubuntu records say only "introduced 0, no fix" for a package Ubuntu will not fix,
+  // has not looked at, or has put off alike; the tracker tells them apart.
+  // One OSV record can carry several releases, as the real ones do.
+  const unfixed = (cve: string, ecosystems: string | string[], name: string) => importOSVData({
+    id: `UBUNTU-${cve}`,
+    modified: '2026-01-01T00:00:00Z',
+    aliases: [],
+    upstream: [cve],
+    affected: [ecosystems].flat().map((ecosystem) => ({ package: { ecosystem, name }, ranges: [{ type: 'ECOSYSTEM', events: [{ introduced: '0' }] }] })),
+  });
+
+  it('labels each unfixed row with what the tracker says about it', async () => {
+    for (const [cve, status, reason] of [
+      ['CVE-2026-0001', 'ignored', 'see notes'],
+      ['CVE-2026-0002', 'needs-triage', null],
+      ['CVE-2026-0003', 'needed', null],
+      ['CVE-2026-0004', 'deferred', '2026-10-15'],
+      ['CVE-2026-0005', 'ignored', 'end of standard support'],
+    ] as const) {
+      await unfixed(cve, 'Ubuntu:22.04:LTS', 'perl');
+      await prisma.ubuntuTrackerStatus.create({ data: { ecosystem: 'Ubuntu:22.04:LTS', sourcePackage: 'perl', vulnId: cve, status, reason } });
+    }
+
+    const { body } = await search(app, 'package=perl&version=5.34.0-1&ecosystem=Ubuntu:22.04:LTS');
+    const byCve = Object.fromEntries(body.results.map((r: { externalId: string; fixStatus: string | null; fixStatusDetail: string | null }) => [r.externalId, [r.fixStatus, r.fixStatusDetail]]));
+    expect(byCve).toEqual({
+      'CVE-2026-0001': ['will_not_fix', 'ignored: see notes'],
+      'CVE-2026-0002': ['under_investigation', 'needs-triage'],
+      'CVE-2026-0003': ['affected', null],
+      'CVE-2026-0004': ['deferred', 'deferred: 2026-10-15'],
+      'CVE-2026-0005': ['out_of_support', 'ignored: end of standard support'],
+    });
+  });
+
+  it('labels by release, source package and CVE, and leaves a Pro (ESM) record alone', async () => {
+    await unfixed('CVE-2026-0010', ['Ubuntu:22.04:LTS', 'Ubuntu:24.04:LTS', 'Ubuntu:Pro:22.04:LTS'], 'perl');
+    await unfixed('CVE-2026-0011', 'Ubuntu:22.04:LTS', 'perl');
+    // Only jammy's perl has an entry for this CVE.
+    await prisma.ubuntuTrackerStatus.create({ data: { ecosystem: 'Ubuntu:22.04:LTS', sourcePackage: 'perl', vulnId: 'CVE-2026-0010', status: 'ignored', reason: 'see notes' } });
+
+    const status = async (ecosystem: string, cve: string) => {
+      const { body } = await search(app, `package=perl&version=5.34.0-2&ecosystem=${ecosystem}`);
+      return body.results.find((r: { externalId: string }) => r.externalId === cve)?.fixStatus ?? null;
+    };
+    expect(await status('Ubuntu:22.04:LTS', 'CVE-2026-0010')).toBe('will_not_fix');
+    expect(await status('Ubuntu:24.04:LTS', 'CVE-2026-0010')).toBeNull();
+    expect(await status('Ubuntu:Pro:22.04:LTS', 'CVE-2026-0010')).toBeNull();
+    expect(await status('Ubuntu:22.04:LTS', 'CVE-2026-0011')).toBeNull();
+  });
+
+  it('gives a fixed row no status, whatever the tracker still holds', async () => {
+    await importOSVData({
+      id: 'UBUNTU-CVE-2026-0020',
+      modified: '2026-01-01T00:00:00Z',
+      aliases: [],
+      upstream: ['CVE-2026-0020'],
+      affected: [{ package: { ecosystem: 'Ubuntu:22.04:LTS', name: 'perl' }, ranges: [{ type: 'ECOSYSTEM', events: [{ introduced: '0' }, { fixed: '5.34.0-3ubuntu1.5' }] }] }],
+    });
+    await prisma.ubuntuTrackerStatus.create({ data: { ecosystem: 'Ubuntu:22.04:LTS', sourcePackage: 'perl', vulnId: 'CVE-2026-0020', status: 'needed', reason: null } });
+
+    const { body } = await search(app, 'package=perl&version=5.34.0-3&ecosystem=Ubuntu:22.04:LTS');
+    expect(body.results[0]).toMatchObject({ externalId: 'CVE-2026-0020', fixedVersion: '5.34.0-3ubuntu1.5', fixStatus: null });
+  });
+});
