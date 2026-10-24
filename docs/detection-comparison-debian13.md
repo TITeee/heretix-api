@@ -2,7 +2,7 @@
 
 One Debian 13 host scanned with both heretix-api and [Trivy](https://trivy.dev/). The two tools were given the same installed packages, and every difference between their findings was checked against the Debian security tracker and OSV.
 
-**Measured on 2026-10-23.** Both tools depend on data that changes daily, so a later run can give different numbers. This is one host and one distribution, so read it as a worked example of how the two sources differ, not as a general detection rate. The [RHEL 9 comparison](detection-comparison-rhel9.md) does the same for Red Hat, and [ACCURACY.md](../ACCURACY.md) has the per-product precision and recall sweeps.
+**Measured on 2026-10-23, with the heretix-cli 0.5.3 run added on 2026-10-24.** Both tools depend on data that changes daily, so a later run can give different numbers. This is one host and one distribution, so read it as a worked example of how the two sources differ, not as a general detection rate. The [RHEL 9 comparison](detection-comparison-rhel9.md) does the same for Red Hat, and [ACCURACY.md](../ACCURACY.md) has the per-product precision and recall sweeps.
 
 - [Summary](#summary)
 - [Setup](#setup)
@@ -21,7 +21,7 @@ One Debian 13 host scanned with both heretix-api and [Trivy](https://trivy.dev/)
   - it compared a binary package's own version with advisories that give source package versions, so `bsdutils` and `login`, built from `util-linux`, were taken as fixed before their fix ([#131](https://github.com/TITeee/heretix-api/pull/131), with heretix-cli 0.5.2).
 - The 11 rows only Trivy reports are Debian issues without a CVE number (`TEMP-*` and two CVE-less DSAs), which OSV does not publish.
 - The 10 rows only heretix-api reports are 6 that the Debian tracker has not yet decided on, which heretix-api reports and Trivy leaves out, and 4 where OSV still lists Debian 13 as affected after the tracker changed it to not affected.
-- Neither tool reports any kernel CVE for this host (see [Limits](#limits)).
+- With heretix-cli 0.5.3, heretix-api also reports the host's kernel and boot loaders, which Trivy does not: 6,196 kernel rows and 11 more on `grub-efi-amd64-signed`, `shim-signed` and `shim-helpers-amd64-signed`. All but one of the kernel rows match the Debian security tracker or OSV (see [The signed kernel and boot loaders](#the-kernel-and-the-boot-loaders-heretix-cli-053)).
 
 ## Setup
 
@@ -30,8 +30,8 @@ One Debian 13 host scanned with both heretix-api and [Trivy](https://trivy.dev/)
 | Host | Debian 13.4 (trixie) on AWS EC2, from Debian's official AMI. Kernel `6.12.74+deb13+1-cloud-amd64` |
 | Packages | 337 installed dpkg packages, from the host's `/var/lib/dpkg/status` (copied on 2026-10-23 08:38 UTC) |
 | Trivy | 0.74.0, `rootfs --scanners vuln --pkg-types os`, with its defaults (unfixed findings included) and again with `--ignore-unfixed`. Vulnerability database (schema version 2) updated 2026-10-23 07:12 UTC, downloaded just before the scan |
-| heretix-api | `618c709` (#131). OSV `Debian` bucket imported up to 2026-10-23; Debian security tracker imported 2026-10-23 08:41 UTC |
-| heretix-cli | 0.5.2. Its dpkg collector read the same status file to produce the CycloneDX SBOM, and `check` sent it to heretix-api |
+| heretix-api | `618c709` (#131). OSV `Debian` bucket imported up to 2026-10-23; Debian security tracker imported 2026-10-23 08:41 UTC. The 0.5.3 run used the same instance on 2026-10-24, after its daily OSV imports |
+| heretix-cli | 0.5.2 for the first three runs, 0.5.3 for the last. Its dpkg collector read the same status file to produce the CycloneDX SBOM, and `check` sent it to heretix-api |
 
 Both tools read the same status file, laid out as a root filesystem. The host's `apt list --upgradable` listed nothing, but both tools report 739 findings that have a fixed version newer than the installed one, so the package lists on the host were evidently not current: the host was behind on updates.
 
@@ -39,29 +39,31 @@ The unit of comparison is the row (installed package name, CVE). Both tools list
 
 ## Results
 
-| | First run | After #129/#130 | After #131 |
-|---|---:|---:|---:|
-| Trivy rows | 1,684 | 1,684 | 1,684 |
-| heretix-api rows | 1,152 | 1,669 | 1,683 |
-| Rows in both | 1,140 | 1,659 | 1,673 |
-| Only Trivy | 544 | 25 | 11 |
-| Only heretix-api | 12 | 10 | 10 |
-| Agreement, as a share of Trivy's rows | 67.7% | 98.5% | 99.3% |
-| Distinct CVEs, Trivy / heretix-api | 700 / 456 | 700 / 697 | 700 / 697 |
-| Distinct CVEs in both | 452 | 692 | 692 |
+| | First run | After #129/#130 | After #131 | With cli 0.5.3 |
+|---|---:|---:|---:|---:|
+| Trivy rows | 1,684 | 1,684 | 1,684 | 1,684 |
+| heretix-api rows | 1,152 | 1,669 | 1,683 | 7,896 |
+| Rows in both | 1,140 | 1,659 | 1,673 | 1,673 |
+| Only Trivy | 544 | 25 | 11 | 11 |
+| Only heretix-api | 12 | 10 | 10 | 6,223 |
+| Agreement, as a share of Trivy's rows | 67.7% | 98.5% | 99.3% | 99.3% |
+| Distinct CVEs, Trivy / heretix-api | 700 / 456 | 700 / 697 | 700 / 697 | 700 / 6,896 |
+| Distinct CVEs in both | 452 | 692 | 692 | 692 |
+
+The last column adds the kernel and the boot loaders: of its 6,223 rows only heretix-api reports, 6,196 are on the kernel package and 11 on the signed boot loaders. The packages Trivy also covers are unchanged (700 distinct CVEs on both sides, 692 shared).
 
 Rows with a fixed version (`--ignore-unfixed` for Trivy, rows with a `fixedVersion` for heretix-api):
 
-| | First run | After #129/#130 | After #131 |
-|---|---:|---:|---:|
-| Trivy rows | 739 | 739 | 739 |
-| heretix-api rows | 408 | 720 | 734 |
-| Only Trivy | 331 | 19 | 5 |
-| Agreement | 55.2% | 97.4% | 99.3% |
+| | First run | After #129/#130 | After #131 | With cli 0.5.3 |
+|---|---:|---:|---:|---:|
+| Trivy rows | 739 | 739 | 739 | 739 |
+| heretix-api rows | 408 | 720 | 734 | 6,079 |
+| Only Trivy | 331 | 19 | 5 | 5 |
+| Agreement | 55.2% | 97.4% | 99.3% | 99.3% |
 
 Other comparisons on the rows both tools report, after #131:
 
-- **Fix version.** All 734 rows that have a fixed version agree on it. In the first run, 177 further rows were reported by both tools, but by heretix-api without the fix it had not imported.
+- **Fix version.** All 734 rows that both tools report with a fixed version agree on it. In the first run, 177 further rows were reported by both tools, but by heretix-api without the fix it had not imported.
 - **Severity.** Trivy rates a Debian finding with Debian's urgency where the tracker gives one (263 shared rows), otherwise with NVD's (409) or not at all (1,001). heretix-api returns Debian's urgency as `distroPriority`. Where Trivy's rating is Debian's, the two match on 261 of 263 rows; on the other 2, Trivy has `LOW` where heretix-api has `not yet assigned`.
 - **Status.** heretix-api labels an unfixed finding with the tracker's handling as `fixStatus`: `deferred` 509, `affected` 417, `will_not_fix` 13, `under_investigation` 6, none 4. heretix-api counts the tracker's `no-dsa` as `deferred` (Debian has decided to fix it in a later point release, if at all), while Trivy reports most of those as `affected` (its `fix_deferred` has 17 rows), so the two tools label the same rows differently even where they agree on the rows.
 
@@ -89,6 +91,26 @@ With #131, heretix-cli 0.5.2 sends the source package and its version, and heret
 
 The same change lets an Ubuntu or Alpine binary named unlike its source (`libssl3` from `openssl`) be found at all; before it, only Debian's binary names were resolved to source names. That does not show here, since the host runs Debian.
 
+### The kernel and the boot loaders (heretix-cli 0.5.3)
+
+The host's kernel `linux-image-6.12.74+deb13+1-cloud-amd64` and its boot loaders are signed binaries. Debian builds them from a template source that carries no code (`linux-signed-amd64`, `grub-efi-amd64-signed`, `shim-signed`, `fwupd-amd64-signed`, ...): the template signs a binary an unsigned source already built and names that source in `Built-Using` (`linux (= 6.12.74-2)`). Debian and OSV file the advisories under the unsigned source, so a package sent as `linux-signed-amd64` matched none of them, and neither tool reported a kernel CVE in the first runs.
+
+heretix-cli 0.5.3 sends, for a package whose source name contains `-signed` and whose `Built-Using` names exactly one source, that source and version (`linux` `6.12.74-2`). Other packages use `Built-Using` for what they link in statically, which advisories do not name them by, and are left alone. Trivy still reports none of these.
+
+The 6,196 kernel rows, checked against the Debian security tracker (fetched 2026-10-23) and OSV:
+
+| What the data says for trixie | Rows |
+|---|---:|
+| Resolved in a version newer than the installed 6.12.74-2 (tracker) | 5,212 |
+| Not fixed yet: `open` or `undetermined` (tracker) | 802 |
+| Records newer than the tracker snapshot: OSV lists Debian 13 as fixed in a later version (`6.12.111-1`) | 133 |
+| Records newer than the tracker snapshot: OSV lists Debian 13 as affected, no fix | 48 |
+| Resolved with fixed version `0`, which means not affected | 1 |
+
+The host is behind on updates, so most kernel CVEs are ones a newer `linux` package already fixes; the last row is a false positive of the same kind as the four below. The 11 boot loader rows are `grub-efi-amd64-signed` (9 CVEs, the tracker has them `open` for trixie) and `shim-signed` and `shim-helpers-amd64-signed` (CVE-2026-19411, `open`).
+
+The comparison the rest of this page makes cannot check these rows against Trivy, because Trivy reports none. They show what the signed-template fix adds, not an agreement between tools.
+
 ## What remains
 
 ### Only Trivy: 11 rows
@@ -102,7 +124,7 @@ The same change lets an Ubuntu or Alpine binary named unlike its source (`libssl
 
 heretix-api takes Debian findings from OSV and uses the tracker only to label them, so an issue that exists only in the tracker cannot be reported from that source.
 
-### Only heretix-api: 10 rows
+### Only heretix-api, other than the kernel and boot loaders: 10 rows from the earlier runs, and 6 more in the 0.5.3 run
 
 | CVE | Packages | Rows | What the tracker says for trixie |
 |---|---|---:|---|
@@ -113,7 +135,9 @@ heretix-api takes Debian findings from OSV and uses the tracker only to label th
 
 For the first 6, heretix-api reports the finding with `fixStatus: under_investigation`, while Trivy leaves out what the tracker has not decided on. That is a difference of policy, not of matching.
 
-The last 4 are false positives in heretix-api's data: OSV's records (last modified on 2026-10-07 and 2026-09-14) still list Debian 13 as affected with no fix, and the tracker has since marked the release not affected. heretix-api follows OSV, and keeps only the tracker's unresolved entries.
+The 6 rows added in the 0.5.3 run are `CVE-2026-114583` on four `python3.13` packages and `CVE-2026-113351` and `CVE-2026-115506` on `libexpat1`. OSV records for them (modified 2026-10-23, after the earlier runs) list Debian 13 as affected with no fix, and the tracker snapshot has no entry for them yet. Trivy's database, downloaded earlier on 2026-10-23, did not have them.
+
+The last 4 of the first 10 are false positives in heretix-api's data: OSV's records (last modified on 2026-10-07 and 2026-09-14) still list Debian 13 as affected with no fix, and the tracker has since marked the release not affected. heretix-api follows OSV, and keeps only the tracker's unresolved entries.
 
 ## How the differences were checked
 
@@ -126,7 +150,8 @@ It is a check against Debian's and OSV's published data, not against the running
 ## Limits
 
 - One host, one release (Debian 13.4), and a small cloud image (337 packages). Results for other releases, or for hosts with more packages, will differ.
-- **Neither tool reports a kernel CVE for this host.** The installed kernel `linux-image-6.12.74+deb13+1-cloud-amd64` is built from the source package `linux-signed-amd64`, while Debian and OSV record kernel CVEs under `linux`, so neither tool connects the two. This is a gap in both tools, not a difference between them.
+- **Trivy reports no kernel or boot loader CVE for this host.** It takes the installed kernel as built from `linux-signed-amd64`, while Debian and OSV record kernel CVEs under `linux`. heretix-cli 0.5.3 maps the signed template to its source; the 6,196 + 11 rows it adds are checked against the tracker and OSV above, and not against Trivy.
+- The 0.5.3 run happened a day after the others, on the same host data and the same Trivy and tracker snapshots but a heretix-api whose OSV data had moved on, which is why 6 non-kernel rows differ from the 10 before.
 - Both tools take the same packages from the status file. Language packages installed outside dpkg (pip, npm) were not part of this comparison.
 - A scan is a snapshot. OSV and the tracker are revised continually and do not always agree; the 4 false positives above come from that alone.
 - Trivy was run once, with the database current on the scan date.
@@ -138,7 +163,7 @@ On the host:
 ```bash
 trivy rootfs --scanners vuln --pkg-types os --format json -o trivy-all.json /                    # unfixed findings included
 trivy rootfs --scanners vuln --pkg-types os --ignore-unfixed --format json -o trivy-fixed.json /
-heretix-cli collect --only dpkg --output sbom.json                                               # 0.5.2 or later
+heretix-cli collect --only dpkg --output sbom.json                                               # 0.5.3 or later
 heretix-cli check sbom.json --api-url <heretix-api> --api-key <key> --severity 0 --format json > heretix.json
 ```
 
