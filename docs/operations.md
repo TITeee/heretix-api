@@ -50,7 +50,7 @@ JOB_DATABASE_POOL_MAX=5     # Optional. Postgres connection pool of each job pro
 NVD_API_KEY=                # Optional. NVD rate limit 10 → 50 requests/min
 CISCO_CLIENT_ID=            # Required for the Cisco import (openVuln API)
 CISCO_CLIENT_SECRET=
-GITHUB_TOKEN=               # Optional. Only needed to run the malware import more than 60 times/hour
+GITHUB_TOKEN=               # Optional. The malware job makes about a hundred GitHub requests a day; without a token it waits out the 60-an-hour limit
 ```
 
 `ALLOWED_ORIGINS` only affects browsers. Server-to-server callers such as heretix-cli are unaffected.
@@ -67,7 +67,7 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 | `kev` | Daily 09:00 | ✅ | Run is enough |
 | `epss` | Daily 10:00 | ✅ | Run is enough |
 | `osv-<ecosystem>` (one per imported ecosystem) | Daily 08:00 | | `pnpm import:osv ecosystem <name>`. The job does not exist until then; Run reads the changes since the last run, or the last 30 days |
-| `osv-mal` (malicious packages) | Daily 08:30 | | `pnpm import:osv malware`. Run reads the changes since the last run, or the last 30 days |
+| `osv-mal` (malicious packages) | Daily 08:30 | | `pnpm import:osv malware`. Run reads the commits made since the last run, or the last 30 days; a few minutes |
 | `debian-source-packages` | Weekly, Sunday 07:00 | | Run is enough |
 | `debian-tracker` | Daily 07:15 | | Run is enough |
 | `ubuntu-tracker` | Daily 07:45 | | Run is enough. Needs `git` (in the Docker image) and a few minutes: it clones a 220 MB repository |

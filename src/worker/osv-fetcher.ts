@@ -295,10 +295,10 @@ function missingBucketError(ecosystem: string, url: string, cause: unknown): Err
 }
 
 /** GET with a few retries: a delta of thousands of single records meets the odd reset or 5xx. */
-async function getWithRetry<T>(url: string, responseType: 'json' | 'text', attempts = 4): Promise<T> {
+async function getWithRetry<T>(url: string, responseType: 'json' | 'text', attempts = 4, headers?: Record<string, string>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return (await axios.get<T>(url, { responseType, timeout: 60000 })).data;
+      return (await axios.get<T>(url, { responseType, timeout: 60000, headers })).data;
     } catch (err) {
       const status = axios.isAxiosError(err) ? err.response?.status : undefined;
       // A 404 is an answer, and so is any other 4xx; only a transport error or a 5xx can pass.
@@ -538,9 +538,94 @@ export async function importMALFromGitHub(): Promise<{
   return { total, succeeded, failed };
 }
 
+const MAL_REPO = 'ossf/malicious-packages';
+const MAL_API = `https://api.github.com/repos/${MAL_REPO}`;
+const MAL_RAW = `https://raw.githubusercontent.com/${MAL_REPO}`;
+/** The cursor is the end of the last run; commits are dated by whoever made them, so start a little before. */
+const MAL_CURSOR_MARGIN_MS = 6 * 60 * 60 * 1000;
+const MAL_PAGE = 100;
+const MAL_FETCH_CHUNK = 16;
+/** Longest a run waits for GitHub's rate limit to reset before giving up (the limit resets hourly). */
+const MAL_RATE_LIMIT_MAX_WAIT_MS = 70 * 60 * 1000;
+
+type MalCommitFile = { filename: string; status: string; previous_filename?: string };
+
 /**
- * Delta import for MAL entries from ossf/malicious-packages.
- * Same as importMALFromGitHub but skips entries not modified after `since`.
+ * One GET of GitHub's API. Without GITHUB_TOKEN the limit is 60 requests an hour, which a run
+ * after a few days away can pass; the run then waits for the limit to reset and goes on,
+ * rather than failing or skipping what it has not read.
+ */
+async function githubGet<T>(url: string, headers: Record<string, string>): Promise<T> {
+  for (let waited = 0; ; ) {
+    try {
+      return await getWithRetry<T>(url, 'json', 4, headers);
+    } catch (err) {
+      const res = axios.isAxiosError(err) ? err.response : undefined;
+      const limited = res && (res.status === 429 || (res.status === 403 && res.headers['x-ratelimit-remaining'] === '0'));
+      if (!limited) throw err;
+      const reset = Number(res.headers['x-ratelimit-reset']) * 1000;
+      const retryAfter = Number(res.headers['retry-after']) * 1000;
+      const waitMs = Math.max(Number.isFinite(retryAfter) ? retryAfter : 0, Number.isFinite(reset) ? reset - Date.now() : 0, 0) + 1000;
+      if (waited + waitMs > MAL_RATE_LIMIT_MAX_WAIT_MS) {
+        throw new Error('GitHub rate limit reached and it does not reset soon enough; set GITHUB_TOKEN (5,000 requests an hour instead of 60)', { cause: err });
+      }
+      logger.warn({ waitSeconds: Math.round(waitMs / 1000) }, 'GitHub rate limit reached, waiting for it to reset');
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      waited += waitMs;
+    }
+  }
+}
+
+/**
+ * The MAL files that exist at the newest commit and changed in the commits made since `from`,
+ * read commit by commit, oldest first, so a file added and then removed (or the reverse) ends
+ * in the state of the last commit that touched it.
+ *
+ * GitHub's comparison of two commits is no use here: it lists at most 300 files however long the
+ * span, and says nothing of the rest. The commit list has no such limit, and each commit lists
+ * its own files (paged, 100 at a time).
+ */
+async function malFilesChangedSince(from: Date, headers: Record<string, string>): Promise<{ head: string | null; paths: string[] }> {
+  const shas: string[] = [];
+  for (let page = 1; ; page++) {
+    const commits = await githubGet<Array<{ sha: string }>>(
+      `${MAL_API}/commits?since=${from.toISOString()}&per_page=${MAL_PAGE}&page=${page}`, headers,
+    );
+    shas.push(...commits.map((c) => c.sha));
+    if (commits.length < MAL_PAGE) break;
+  }
+  if (shas.length === 0) return { head: null, paths: [] };
+
+  const live = new Set<string>();
+  // The commit list is newest first.
+  for (const sha of shas.reverse()) {
+    for (let page = 1; ; page++) {
+      const commit = await githubGet<{ files?: MalCommitFile[] }>(`${MAL_API}/commits/${sha}?per_page=${MAL_PAGE}&page=${page}`, headers);
+      const files = commit.files ?? [];
+      for (const f of files) {
+        if (f.previous_filename) live.delete(f.previous_filename);
+        if (!f.filename.startsWith('osv/malicious/') || !f.filename.endsWith('.json')) continue;
+        if (f.status === 'removed') live.delete(f.filename);
+        else live.add(f.filename);
+      }
+      if (files.length < MAL_PAGE) break;
+    }
+  }
+  return { head: shas[shas.length - 1], paths: [...live] };
+}
+
+/**
+ * Delta import for MAL entries from ossf/malicious-packages: the files changed in the commits
+ * made since `since`.
+ *
+ * It used to fetch every file of the repository's recursive tree to look at its `modified`.
+ * That took about three hours a day for 1 to 100 changed records, and read only part of the
+ * repository: GitHub truncates the tree at 100,000 entries, which left out the PyPI, RubyGems
+ * and NuGet files and a part of the npm ones, and the warning for it was only logged.
+ *
+ * A record imported twice is only written again, so the margin before `since` costs nothing.
+ * A run is one request per commit, a hundred or so a day. GITHUB_TOKEN raises the API limit from
+ * 60 requests an hour to 5,000.
  */
 export async function importMALDelta(since: Date): Promise<{
   total: number;
@@ -551,59 +636,49 @@ export async function importMALDelta(since: Date): Promise<{
   failed: number;
 }> {
   const token = process.env.GITHUB_TOKEN;
-  const apiHeaders: Record<string, string> = { Accept: 'application/vnd.github.v3+json' };
-  if (token) apiHeaders['Authorization'] = `Bearer ${token}`;
+  const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const treeUrl = 'https://api.github.com/repos/ossf/malicious-packages/git/trees/main?recursive=1';
-  logger.info({ since }, 'Fetching ossf/malicious-packages file tree for delta import');
+  logger.info({ since }, 'Finding the ossf/malicious-packages files changed since the last run');
+  const { head, paths } = await malFilesChangedSince(new Date(since.getTime() - MAL_CURSOR_MARGIN_MS), headers);
+  logger.info({ head: head?.slice(0, 8) ?? null, files: paths.length }, 'MAL files changed');
 
-  const treeResp = await axios.get<{ tree: { path: string; type: string }[]; truncated: boolean }>(
-    treeUrl, { headers: apiHeaders, timeout: 60000 },
-  );
-
-  if (treeResp.data.truncated) {
-    logger.warn('GitHub tree response was truncated — some MAL entries may be missing');
-  }
-
-  const malPaths = treeResp.data.tree.filter(
-    item => item.type === 'blob' && item.path.startsWith('osv/malicious/') && item.path.endsWith('.json'),
-  );
-
-  logger.info({ count: malPaths.length, since }, 'MAL files found, applying delta filter...');
-
-  let total = 0;
-  let skipped = 0;
   let inserted = 0;
   let updated = 0;
   let failed = 0;
-
-  for (const item of malPaths) {
-    total++;
-    const rawUrl = `https://raw.githubusercontent.com/ossf/malicious-packages/main/${item.path}`;
-    try {
-      const resp = await axios.get<OSVVulnerability>(rawUrl, { timeout: 30000 });
-      const vuln = resp.data;
-
-      if (vuln.modified && new Date(vuln.modified) <= since) {
-        skipped++;
+  for (let i = 0; i < paths.length; i += MAL_FETCH_CHUNK) {
+    const chunk = paths.slice(i, i + MAL_FETCH_CHUNK);
+    // Fetched together, written one at a time. Pinned to the newest commit, so a file that
+    // moves while the run goes on is not read from two states of the repository.
+    const fetched = await Promise.all(chunk.map(async (path) => {
+      try {
+        return { path, vuln: await getWithRetry<OSVVulnerability>(`${MAL_RAW}/${head}/${path}`, 'json') };
+      } catch (err) {
+        logger.error({ err, path }, 'Failed to fetch MAL entry');
+        return { path, vuln: null };
+      }
+    }));
+    for (const { path, vuln } of fetched) {
+      if (!vuln) {
+        failed++;
         continue;
       }
-
-      const result = await importOSVData(vuln);
-      if (result === 'inserted') inserted++; else updated++;
-    } catch (err) {
-      failed++;
-      logger.error({ err, path: item.path }, 'Failed to import MAL entry');
+      try {
+        const result = await importOSVData(vuln);
+        if (result === 'inserted') inserted++; else updated++;
+      } catch (err) {
+        failed++;
+        logger.error({ err, path }, 'Failed to import MAL entry');
+      }
     }
-
-    if (total % 500 === 0) {
-      logger.info({ total, skipped, inserted, updated, failed }, 'MAL delta import progress');
+    if ((i / MAL_FETCH_CHUNK) % 25 === 0) {
+      logger.info({ done: Math.min(i + MAL_FETCH_CHUNK, paths.length), of: paths.length, inserted, updated, failed }, 'MAL delta import progress');
     }
   }
 
   const succeeded = inserted + updated;
-  logger.info({ since, total, skipped, succeeded, failed }, 'MAL delta import completed');
-  return { total, skipped, succeeded, inserted, updated, failed };
+  logger.info({ since, files: paths.length, succeeded, failed }, 'MAL delta import completed');
+  return { total: paths.length, skipped: 0, succeeded, inserted, updated, failed };
 }
 
 /**
