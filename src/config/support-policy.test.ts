@@ -3,7 +3,7 @@ import { isMaintainedOsvEcosystem } from './support-policy.js';
 
 describe('isMaintainedOsvEcosystem', () => {
   it('keeps ecosystems without a release suffix', () => {
-    for (const eco of ['npm', 'PyPI', 'Go', 'AlmaLinux', 'Rocky Linux', 'Malware']) {
+    for (const eco of ['npm', 'PyPI', 'Go', 'AlmaLinux', 'Rocky Linux']) {
       expect(isMaintainedOsvEcosystem(eco)).toBe(true);
     }
   });

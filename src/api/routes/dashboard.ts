@@ -110,23 +110,6 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       };
     });
 
-    // Append Malware as a special OSV entry (GitHub source, no dedicated ecosystem column)
-    const malJob = latestBySource.get('osv-mal');
-    const malCount = await prisma.vulnerability.count({ where: { osvId: { startsWith: 'MAL-' } } });
-    osvEcosystems.push({
-      ecosystem: 'Malware',
-      source: 'osv-mal',
-      enabled: isSourceEnabled('osv-mal'),
-      maintained: true,
-      recordCount: malCount,
-      status: malJob?.status ?? null,
-      completedAt: malJob?.completedAt ?? null,
-      durationMs: jobDurationMs(malJob),
-      totalInserted: malJob?.totalInserted ?? null,
-      totalUpdated: malJob?.totalUpdated ?? null,
-      errorMessage: malJob?.errorMessage ?? null,
-    });
-
     const [nvdCount, osvCount, kevCount, advisoryCount, epssCount, advisorySourceCounts, rhel9Count, rhel8Count, debianTrackerCount, ubuntuTrackerCount] = await Promise.all([
       prisma.nVDVulnerability.count(),
       prisma.oSVVulnerability.count(),
@@ -159,7 +142,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     }
 
     // Main sources: driven by the registry so every job has a row (even if it
-    // has never run). OSV per-ecosystem entries and Malware are shown separately.
+    // has never run). OSV per-ecosystem entries are shown separately.
     // Split into core sources (NVD/KEV/EPSS) and vendor advisories so the
     // dashboard can render them as two distinct tables.
     const allSources = STATIC_JOBS

@@ -18,7 +18,7 @@ Import only what you scan. Each source adds import time, disk space and requests
 | You scan | Import |
 |---|---|
 | Anything | NVD, CISA KEV and EPSS. They are the baseline, and the only jobs enabled by default |
-| Application dependencies | The OSV ecosystem of each language you use (`npm`, `PyPI`, `Go`, `Maven`, ...), plus `osv-mal` for malicious packages |
+| Application dependencies | The OSV ecosystem of each language you use (`npm`, `PyPI`, `Go`, `Maven`, ...); malicious packages (`MAL-*`) arrive with them |
 | Debian, Ubuntu, Alpine, AlmaLinux or Rocky Linux hosts and images | The OSV ecosystem of each release you run (e.g. `Ubuntu:22.04:LTS`). For Debian, also `debian-tracker` for fix status |
 | RHEL hosts and images | Red Hat OVAL for each major you run (`advisory-redhat-rhel9`, `-rhel8`) and Red Hat VEX (`advisory-redhat-vex`; the only source for RHEL 10) |
 | Oracle Linux | `advisory-oracle-linux` |
@@ -94,13 +94,10 @@ pnpm import:osv ecosystem npm            # Full import of one ecosystem
 pnpm import:osv update npm               # Changes since the last run
 pnpm import:osv package npm lodash       # One package
 pnpm import:osv id GHSA-67hx-6x53-jw92   # One record (OSV or CVE ID)
-pnpm import:osv malware                  # All malicious-package entries (ossf/malicious-packages)
-pnpm import:osv update malware           # Malware changes since the last run
 ```
 
 - Ecosystem names are case-sensitive: `npm`, `PyPI`, `Go`, `RubyGems`, `crates.io`, `Packagist`, `Maven`, `NuGet`, `Hex`, `Pub`, `ConanCenter`, `SwiftURL`, `CRAN`, `Linux`, `Android`, `OSS-Fuzz`, `Bitnami`, and distributions (`Debian`, `Ubuntu`, `Alpine`, `AlmaLinux`, `Rocky Linux`, with or without a release suffix).
-- Malicious packages (`osv-mal`, 08:30 UTC) come from the [ossf/malicious-packages](https://github.com/ossf/malicious-packages) repository itself, not from OSV's files: the job lists the commits made since its last run and reads the MAL files they added or changed (one GitHub request per commit, about a hundred a day). `GITHUB_TOKEN` makes it quicker; without one it waits for GitHub's 60-an-hour limit to reset. OSV's own `npm`, `PyPI`, ... files carry most of the same `MAL-*` records, so an ecosystem job brings those in too. To catch up after the job has been off for a while, run `pnpm import:osv update malware --since=YYYY-MM-DD`.
-- Each ecosystem has its own daily job (`osv-<ecosystem>`, 08:00 UTC) that imports records modified since its last completed run. The releases of AlmaLinux, Rocky Linux, Debian, Alpine and Ubuntu (Pro and FIPS variants included) share one job and one OSV file (`osv-Debian` covers `Debian:12`, `Debian:13`, ...), because OSV serves them that way, and so do `Packagist:https://packages.drupal.org/8` and `Packagist`. Ubuntu's file is 792 MB, so its job reads the bucket's `modified_id.csv` and fetches only the records modified since the last run, instead of downloading the zip. Malware is `osv-mal` (08:30 UTC); it makes one GitHub API call, so set `GITHUB_TOKEN` only if you run it more than 60 times an hour.
+- Each ecosystem has its own daily job (`osv-<ecosystem>`, 08:00 UTC) that imports records modified since its last completed run. The releases of AlmaLinux, Rocky Linux, Debian, Alpine and Ubuntu (Pro and FIPS variants included) share one job and one OSV file (`osv-Debian` covers `Debian:12`, `Debian:13`, ...), because OSV serves them that way, and so do `Packagist:https://packages.drupal.org/8` and `Packagist`. Ubuntu's file is 792 MB, so its job reads the bucket's `modified_id.csv` and fetches only the records modified since the last run, instead of downloading the zip. Malicious-package records (`MAL-*`) are not a job of their own: OSV's `npm`, `PyPI`, `RubyGems`, `NuGet`, `crates.io`, `Go`, `Maven` and `Packagist` files carry them, so enabling those ecosystems is what brings malware detection in.
 - **Adding an ecosystem**: run the full `pnpm import:osv ecosystem <name>` once *before* enabling its daily job. The daily job only picks up records modified after its cursor, so it never backfills older ones. The full import is recorded as an `osv-full-<ecosystem>` job. Check completeness against OSV's live export at any time:
   ```bash
   pnpm validate:osv-coverage            # every tracked ecosystem

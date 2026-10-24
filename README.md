@@ -44,7 +44,7 @@ It can also be used on its own, as a self-hosted vulnerability lookup API.
 
 - **Vendor advisories**: Fortinet, Palo Alto Networks, Cisco, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, Check Point, Ivanti, NetScaler and Microsoft (Windows Server, beta)
 - **Distro-aware matching**: dpkg and RPM version comparison for Linux distributions, and each distro's own rating (`distroPriority`) and fix status (`fixStatus`, e.g. "will not fix") per result
-- **Malware detection**: malicious packages from [ossf/malicious-packages](https://github.com/ossf/malicious-packages) (`MAL-*`), searchable like any vulnerability
+- **Malware detection**: the malicious-package records (`MAL-*`, from [ossf/malicious-packages](https://github.com/ossf/malicious-packages)) that OSV carries in its `npm`, `PyPI`, ... files, searchable like any vulnerability
 - **Simple to run**: PostgreSQL only (no Redis), Docker Compose included, a built-in scheduler and an import dashboard
 
 ## Supported OS releases
@@ -121,7 +121,7 @@ Then open the [dashboard](#dashboard) at `http://localhost:5000/dashboard` and e
 - The NVD row shows `running`, then `completed` when the import finishes.
 - After NVD completes, press **Run** on CISA KEV and EPSS. They only annotate CVEs that are already in the database. Their daily runs keep them current after that.
 - **Switch On the `osv-<ecosystem>` row of each OSV ecosystem you imported.** Without this, the ecosystem is never updated.
-- For each other source you need, switch its job **On** and press **Run** once to load it: vendor advisories (Fortinet, Red Hat, ...), CVE Records (`cna`), malicious packages (`osv-mal`), and the Debian security tracker (`debian-tracker`).
+- For each other source you need, switch its job **On** and press **Run** once to load it: vendor advisories (Fortinet, Red Hat, ...), CVE Records (`cna`), and the Debian security tracker (`debian-tracker`).
 
 Which sources to import: [docs/data-sources.md](docs/data-sources.md#choosing-what-to-import).
 

@@ -3,7 +3,7 @@ import axios from 'axios';
 import AdmZip from 'adm-zip';
 import { prisma } from '../db/client.js';
 import { resetDb } from '../test-utils/db.js';
-import { importOSVData, importOSVEcosystemDelta, importMALDelta } from './osv-fetcher.js';
+import { importOSVData, importOSVEcosystemDelta } from './osv-fetcher.js';
 
 // OSVVulnerability isn't exported from osv-fetcher.ts; a plain object literal
 // satisfies the parameter's structural type without needing that import.
@@ -297,117 +297,5 @@ describe('importOSVEcosystemDelta — a bucket read from its modified-ID list (U
     vi.spyOn(axios, 'isAxiosError').mockReturnValue(true);
 
     await expect(importOSVEcosystemDelta('Ubuntu', new Date(0))).rejects.toThrow(/OSV has no bucket "Ubuntu"/);
-  });
-});
-
-describe('importMALDelta — the files changed in the commits since the last run', () => {
-  const API = 'https://api.github.com/repos/ossf/malicious-packages';
-  const RAW = 'https://raw.githubusercontent.com/ossf/malicious-packages';
-  const mal = (id: string, name: string) => makeOsv({
-    id,
-    modified: '2026-10-23T00:00:00Z',
-    aliases: [],
-    affected: [{ package: { ecosystem: 'npm', name }, versions: ['1.0.0'] }],
-  });
-
-  type Commit = { sha: string; files: Array<{ filename: string; status: string; previous_filename?: string }> };
-
-  /** A repository with these commits, newest first the way GitHub lists them. */
-  function serveRepo(commits: Commit[], records: Record<string, unknown>, rateLimit?: { failures: number }) {
-    let limited = rateLimit?.failures ?? 0;
-    return vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
-      if (limited > 0 && url.startsWith(API)) {
-        limited--;
-        throw Object.assign(new Error('rate limited'), { isAxiosError: true, response: { status: 403, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000)) } } });
-      }
-      if (url.startsWith(`${API}/commits?`)) {
-        const page = Number(new URL(url).searchParams.get('page'));
-        return { data: commits.slice((page - 1) * 100, page * 100).map((c) => ({ sha: c.sha })) };
-      }
-      const commit = url.match(new RegExp(`^${API}/commits/([0-9a-z]+)[?]`));
-      if (commit) {
-        const page = Number(new URL(url).searchParams.get('page'));
-        return { data: { files: commits.find((c) => c.sha === commit[1])!.files.slice((page - 1) * 100, page * 100) } };
-      }
-      const raw = url.match(new RegExp(`^${RAW}/[0-9a-z]+/(.+)$`));
-      if (raw && records[raw[1]]) return { data: records[raw[1]] };
-      throw Object.assign(new Error('Request failed with status code 404'), { isAxiosError: true, response: { status: 404, headers: {} } });
-    });
-  }
-
-  beforeEach(async () => {
-    await resetDb();
-    vi.spyOn(axios, 'isAxiosError').mockImplementation((e: unknown) => !!(e as { isAxiosError?: boolean })?.isAxiosError);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('imports the files the commits added or changed, and no other file of the repository', async () => {
-    const calls = serveRepo(
-      [
-        { sha: 'c3', files: [{ filename: 'osv/malicious/npm/b/MAL-2026-2.json', status: 'modified' }, { filename: 'README.md', status: 'modified' }] },
-        { sha: 'c2', files: [{ filename: 'osv/malicious/pypi/a/MAL-2026-1.json', status: 'added' }] },
-      ],
-      { 'osv/malicious/pypi/a/MAL-2026-1.json': mal('MAL-2026-1', 'a'), 'osv/malicious/npm/b/MAL-2026-2.json': mal('MAL-2026-2', 'b'), 'osv/malicious/npm/c/MAL-2026-3.json': mal('MAL-2026-3', 'c') },
-    );
-
-    const result = await importMALDelta(new Date('2026-10-22T00:00:00Z'));
-
-    expect(result).toMatchObject({ total: 2, inserted: 2, failed: 0 });
-    expect(await prisma.oSVVulnerability.count({ where: { osvId: { in: ['MAL-2026-1', 'MAL-2026-2'] } } })).toBe(2);
-    expect(await prisma.oSVVulnerability.count({ where: { osvId: 'MAL-2026-3' } })).toBe(0);
-    // Pinned to the newest commit, and the repository's file tree is never read.
-    const urls = calls.mock.calls.map((c) => String(c[0]));
-    expect(urls.some((u) => u.includes('/git/trees'))).toBe(false);
-    expect(urls.filter((u) => u.startsWith(RAW)).every((u) => u.includes('/c3/'))).toBe(true);
-  });
-
-  it('leaves out a file that a later commit removed, and follows a rename', async () => {
-    serveRepo(
-      [
-        { sha: 'c3', files: [{ filename: 'osv/malicious/npm/z/MAL-2026-9.json', status: 'renamed', previous_filename: 'osv/malicious/npm/y/MAL-2026-9.json' }] },
-        { sha: 'c2', files: [{ filename: 'osv/malicious/npm/x/MAL-2026-8.json', status: 'removed' }] },
-        { sha: 'c1', files: [{ filename: 'osv/malicious/npm/x/MAL-2026-8.json', status: 'added' }, { filename: 'osv/malicious/npm/y/MAL-2026-9.json', status: 'added' }] },
-      ],
-      { 'osv/malicious/npm/z/MAL-2026-9.json': mal('MAL-2026-9', 'z') },
-    );
-
-    const result = await importMALDelta(new Date('2026-10-22T00:00:00Z'));
-
-    expect(result).toMatchObject({ total: 1, inserted: 1, failed: 0 });
-  });
-
-  it('reads every page of the commit list and of the files of a commit, not the first 100 or 300', async () => {
-    const many = Array.from({ length: 250 }, (_, i) => ({ filename: `osv/malicious/npm/p${i}/MAL-2026-${1000 + i}.json`, status: 'added' }));
-    const records = Object.fromEntries(many.map((f, i) => [f.filename, mal(`MAL-2026-${1000 + i}`, `p${i}`)]));
-    const filler = Array.from({ length: 120 }, (_, i) => ({ sha: `f${i}`, files: [] as Commit['files'] }));
-    serveRepo([...filler, { sha: 'big', files: many }], records);
-
-    const result = await importMALDelta(new Date('2026-10-22T00:00:00Z'));
-
-    expect(result).toMatchObject({ total: 250, inserted: 250, failed: 0 });
-  });
-
-  it('waits out GitHub\'s rate limit and goes on, rather than failing or skipping', async () => {
-    serveRepo(
-      [{ sha: 'c1', files: [{ filename: 'osv/malicious/npm/a/MAL-2026-5.json', status: 'added' }] }],
-      { 'osv/malicious/npm/a/MAL-2026-5.json': mal('MAL-2026-5', 'a') },
-      { failures: 2 },
-    );
-    // The limit "resets" now, so each of the two refusals costs the one second the run adds to be sure.
-    expect(await importMALDelta(new Date('2026-10-22T00:00:00Z'))).toMatchObject({ total: 1, inserted: 1 });
-  });
-
-  it('fails the run when a file cannot be read, and counts it', async () => {
-    serveRepo([{ sha: 'c1', files: [{ filename: 'osv/malicious/npm/a/MAL-2026-6.json', status: 'added' }] }], {});
-
-    expect(await importMALDelta(new Date('2026-10-22T00:00:00Z'))).toMatchObject({ total: 1, inserted: 0, failed: 1 });
-  });
-
-  it('finds nothing to do when no commit was made since', async () => {
-    serveRepo([], {});
-    expect(await importMALDelta(new Date('2026-10-22T00:00:00Z'))).toMatchObject({ total: 0, inserted: 0, failed: 0 });
   });
 });
