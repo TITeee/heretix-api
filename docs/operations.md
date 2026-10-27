@@ -43,6 +43,7 @@ DATABASE_POOL_MAX=20        # Optional. Postgres connection pool size
 RATE_LIMIT_MAX=1200         # Optional. Requests per client address per minute, over 429 (0 = off). /health is never limited
 RATE_LIMIT_BATCH_MAX=30     # Optional. Batch searches per client address per minute (0 = only the limit above)
 BATCH_SEARCH_MAX_CONCURRENT=2  # Optional. Batch searches running at once; more get 429 (0 = no cap)
+BATCH_SEARCH_TIMEOUT_MS=300000  # Optional. A batch search still running after this is answered 503 and its slot freed (0 = no limit)
 JOB_MAX_CONCURRENT=2        # Optional. Collection jobs running at once; the rest wait as "queued"
 JOB_MAX_HEAVY=1             # Optional. Of those, memory-heavy jobs (EPSS, CNA, Red Hat OVAL and VEX) running at once
 JOB_MAX_OLD_SPACE_MB=3072   # Optional. Heap limit of each job process
