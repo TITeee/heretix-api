@@ -8,6 +8,7 @@ import { type FixStatus, type FixStatusInfo, debianTrackerStatus, ubuntuTrackerS
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
 import { createConcurrencyGate, envInt } from '../concurrency-gate.js';
+import { createIndexCache } from '../index-cache.js';
 import { findCatalogEntry } from '../../config/product-catalog.js';
 import { requiredWindowsFeatures } from '../../config/windows-role-features.js';
 import { catalogCnaWhere, catalogNvdWhere } from '../../utils/catalog-search.js';
@@ -39,6 +40,9 @@ import {
   suggestVendorVariants,
   escapeLikePattern,
 } from '../../utils/search-helpers.js';
+
+/** A batch search ran past BATCH_SEARCH_TIMEOUT_MS. */
+class BatchTimeoutError extends Error {}
 
 // The source package an installed binary package was built from, as dpkg records it ("Source:
 // lvm2 (2.03.31-2)" on dmsetup 2:1.02.205-2) or as apk does (origin). Debian, Ubuntu and Alpine
@@ -724,16 +728,17 @@ function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityR
  */
 const RPM_INDEX_TTL_MS = 5 * 60_000;
 const RPM_INDEX_MAX_TOTAL_ROWS = 200_000;
-interface RpmProductIndexEntry { unconditional: RpmAdvisoryRow[]; ranged: RpmAdvisoryRow[]; expiresAt: number }
-// Cache in-flight build promises, not just resolved entries: on a cold cache
-// (e.g. right after a restart), 20 concurrent requests for the same product
-// would otherwise all miss simultaneously and each kick off its own full
-// fetch+split -- exactly the thundering-herd this index exists to avoid.
-// Concurrent callers for the same key instead await the one build in flight.
-const rpmProductIndexCache = new Map<string, Promise<RpmProductIndexEntry>>();
-let rpmProductIndexRowCount = 0;
+interface RpmProductIndexEntry { unconditional: RpmAdvisoryRow[]; ranged: RpmAdvisoryRow[] }
+// The cache also holds the in-flight builds, so 20 concurrent requests on a cold
+// cache (e.g. right after a restart) share one fetch+split per product instead of
+// each starting their own. Eviction never waits on another build; see index-cache.ts.
+const rpmProductIndexCache = createIndexCache<RpmProductIndexEntry>({
+  sizeOf: (e) => e.unconditional.length + e.ranged.length,
+  maxSize: RPM_INDEX_MAX_TOTAL_ROWS,
+  ttlMs: RPM_INDEX_TTL_MS,
+});
 
-async function buildRpmProductIndex(key: string, product: string, vendor: string): Promise<RpmProductIndexEntry> {
+async function buildRpmProductIndex(product: string, vendor: string): Promise<RpmProductIndexEntry> {
   const rows: RpmAdvisoryRow[] = await prisma.advisoryAffectedProduct.findMany({
     where: { product, vendor },
     select: {
@@ -766,30 +771,11 @@ async function buildRpmProductIndex(key: string, product: string, vendor: string
   const ranged: RpmAdvisoryRow[] = [];
   for (const r of rows) (r.versionEnd ? ranged : unconditional).push(r);
 
-  for (const [k, pending] of rpmProductIndexCache) {
-    if (k === key) continue; // our own in-flight promise -- awaiting it here would deadlock
-    if (rpmProductIndexRowCount + rows.length <= RPM_INDEX_MAX_TOTAL_ROWS) break;
-    rpmProductIndexCache.delete(k);
-    const evicted = await pending;
-    rpmProductIndexRowCount -= evicted.unconditional.length + evicted.ranged.length;
-  }
-
-  rpmProductIndexRowCount += rows.length;
-  return { unconditional, ranged, expiresAt: Date.now() + RPM_INDEX_TTL_MS };
+  return { unconditional, ranged };
 }
 
-async function getRpmProductIndex(product: string, vendor: string): Promise<RpmProductIndexEntry> {
-  const key = `${product}\0${vendor}`;
-  const cached = rpmProductIndexCache.get(key);
-  if (cached) {
-    const entry = await cached;
-    if (entry.expiresAt > Date.now()) return entry;
-  }
-
-  const buildPromise = buildRpmProductIndex(key, product, vendor);
-  rpmProductIndexCache.set(key, buildPromise);
-  buildPromise.catch(() => rpmProductIndexCache.delete(key));
-  return buildPromise;
+function getRpmProductIndex(product: string, vendor: string): Promise<RpmProductIndexEntry> {
+  return rpmProductIndexCache.get(`${product}\0${vendor}`, () => buildRpmProductIndex(product, vendor));
 }
 
 /** Search Advisory table for RPM-based distros using rpmvercmp (see getRpmProductIndex() above). */
@@ -1246,6 +1232,11 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
   // after another) tries again.
   const batchGate = createConcurrencyGate(envInt('BATCH_SEARCH_MAX_CONCURRENT', 2));
   const batchRateLimit = envInt('RATE_LIMIT_BATCH_MAX', 30);
+  // A batch that has not finished by now is given up on and its slot freed, so one
+  // that hangs cannot keep every later batch at 429. heretix-management stops
+  // waiting after 5 minutes, so a batch running longer is wasted work anyway.
+  const batchTimeoutMs = envInt('BATCH_SEARCH_TIMEOUT_MS', 300_000);
+  const batchStartedAt = new Map<object, number>();
 
   fastify.post('/vulnerabilities/search/batch', {
     // Per client address and minute, on top of the global limit. 0 leaves only the global one.
@@ -1255,6 +1246,12 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
 
     const release = batchGate.tryAcquire();
     if (!release) {
+      // Full slots with an idle server mean batches that never finish.
+      const now = Date.now();
+      request.log.warn(
+        { active: batchGate.active, runningForMs: [...batchStartedAt.values()].map(t => now - t), packages: packages.length },
+        'batch search refused: all slots are taken',
+      );
       return reply
         .code(429)
         .header('retry-after', '5')
@@ -1268,6 +1265,14 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
       if (!reply.raw.writableFinished) clientGone = true;
     });
 
+    const startedAt = {};
+    batchStartedAt.set(startedAt, Date.now());
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      if (batchTimeoutMs > 0) timer = setTimeout(() => reject(new BatchTimeoutError()), batchTimeoutMs);
+    });
+    timedOut.catch(() => {}); // rejected while no chunk is being awaited: not an unhandled rejection
+
     try {
       // Promise.all over all packages would issue up to 1000×3=3,000 concurrent DB queries and exhaust the pool.
       // Process in chunks of BATCH_CONCURRENCY to cap concurrency.
@@ -1280,7 +1285,7 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
         }
         const chunk = packages.slice(i, i + BATCH_CONCURRENCY);
         results.push(
-          ...await Promise.all(
+          ...await Promise.race([timedOut, Promise.all(
             chunk.map(async (pkg) => {
               const all = await searchAllVulnerabilities(pkg.package, pkg.version, pkg.ecosystem, undefined, {
                 name: pkg.sourcePackage,
@@ -1295,7 +1300,7 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
                 truncated: false,
               };
             }),
-          ),
+          )]),
         );
       }
 
@@ -1333,7 +1338,19 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
       }
 
       return { results };
+    } catch (err) {
+      if (!(err instanceof BatchTimeoutError)) throw err;
+      request.log.error(
+        { packages: packages.length, timeoutMs: batchTimeoutMs },
+        'batch search timed out; its slot is freed',
+      );
+      return reply
+        .code(503)
+        .header('retry-after', '30')
+        .send({ error: 'Batch search timed out' });
     } finally {
+      clearTimeout(timer);
+      batchStartedAt.delete(startedAt);
       release();
     }
   });

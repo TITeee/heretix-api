@@ -5,7 +5,7 @@ import { createServer } from './server.js';
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
 const headers = { 'x-api-key': API_KEY, 'content-type': 'application/json' };
 
-const LIMIT_ENV = ['RATE_LIMIT_MAX', 'RATE_LIMIT_BATCH_MAX', 'BATCH_SEARCH_MAX_CONCURRENT'];
+const LIMIT_ENV = ['RATE_LIMIT_MAX', 'RATE_LIMIT_BATCH_MAX', 'BATCH_SEARCH_MAX_CONCURRENT', 'BATCH_SEARCH_TIMEOUT_MS'];
 
 function batchOf(n: number) {
   return { packages: Array.from({ length: n }, (_, i) => ({ package: `pkg-${i}`, version: '1.0.0' })) };
@@ -66,6 +66,22 @@ describe('request limits', () => {
     expect(refused.headers['retry-after']).toBe('5');
 
     expect((await batch(1)).statusCode).toBe(200);
+  });
+
+  it('answers 503 to a batch that runs past BATCH_SEARCH_TIMEOUT_MS and frees its slot', async () => {
+    process.env.BATCH_SEARCH_MAX_CONCURRENT = '1';
+    process.env.BATCH_SEARCH_TIMEOUT_MS = '1';
+    app = await createServer();
+
+    // Names not searched before: a repeat is answered from the 30 s result cache without waiting on the database,
+    // too fast for a timer to fire.
+    const fresh = () => ({ packages: Array.from({ length: 400 }, (_, i) => ({ package: `timeout-${Date.now()}-${i}`, version: '1.0.0' })) });
+    const send = () => app!.inject({ method: 'POST', url: '/api/v1/vulnerabilities/search/batch', headers, payload: fresh() });
+    const timedOut = await send();
+    expect(timedOut.statusCode).toBe(503);
+    expect(timedOut.headers['retry-after']).toBeDefined();
+    // A slot still held would answer the next batch with 429.
+    expect((await send()).statusCode).toBe(503);
   });
 
   it('releases the slot when a batch is rejected as invalid', async () => {
