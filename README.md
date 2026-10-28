@@ -86,7 +86,8 @@ cp .env.example .env
 ```
 
 Edit `.env` and set:
-- `API_KEY`: any secret string. Every API request must send it as the `x-api-key` header.
+- `API_KEY`: a secret string (`openssl rand -hex 32`). Every API request must send it as the `x-api-key` header.
+- `ADMIN_API_KEY`: a second secret string, for the dashboard and for running and switching jobs. Keep it to administrators: the clients only need `API_KEY`.
 - `POSTGRES_PASSWORD` (add the line): the password of the bundled database. Set your own: the default, `changeme`, is only for a local trial.
 - `NVD_API_KEY` (optional, recommended): a [free NVD key](https://nvd.nist.gov/developers/request-an-api-key) makes the NVD import faster.
 
@@ -117,7 +118,7 @@ docker compose exec app pnpm import:osv ecosystem Go
 docker compose exec app pnpm import:osv ecosystem "Ubuntu:22.04:LTS"
 ```
 
-Then open the [dashboard](#dashboard) at `http://localhost:5000/dashboard` and enter your API key:
+Then open the [dashboard](#dashboard) at `http://localhost:5000/dashboard` and enter your admin key (`ADMIN_API_KEY`):
 - The NVD row shows `running`, then `completed` when the import finishes.
 - After NVD completes, press **Run** on CISA KEV and EPSS. They only annotate CVEs that are already in the database. Their daily runs keep them current after that.
 - **Switch On the `osv-<ecosystem>` row of each OSV ecosystem you imported.** Without this, the ecosystem is never updated.
@@ -178,7 +179,7 @@ Full reference, including every response field: [docs/api.md](docs/api.md).
 
 ## Dashboard
 
-`http://localhost:5000/dashboard` shows each source's import status and record count. From the dashboard you can switch scheduled jobs on and off and run them on demand. To see the data, enter your API key in the top-right field.
+`http://localhost:5000/dashboard` shows each source's import status and record count. From the dashboard you can switch scheduled jobs on and off and run them on demand. The page opens on a sign-in screen: enter your admin key (`ADMIN_API_KEY`) to see the data. The key is kept for the open tab only; **Sign out** forgets it.
 
 ![Import Status Dashboard](docs/dashboard.png)
 

@@ -5,6 +5,7 @@ import {
   parseAffectedVersionCell,
   productVersionsFromRows,
   collectAdvisoryPages,
+  isBroadcomUrl,
   type MatrixRawRow,
 } from './broadcom-fetcher.js';
 
@@ -383,5 +384,22 @@ describe('collectAdvisoryPages', () => {
     });
     expect(result.items.map(i => i.documentId)).toEqual(['A']);
     expect(result.truncated).toBe(true);
+  });
+});
+
+describe('isBroadcomUrl', () => {
+  // The detail URL comes from the list API, and the browser opens it as given.
+  it('accepts an https page on broadcom.com or a subdomain', () => {
+    expect(isBroadcomUrl('https://support.broadcom.com/web/ecx/security-advisory/-/securityadvisory/VMSA-2026-0006')).toBe(true);
+    expect(isBroadcomUrl('https://broadcom.com/x')).toBe(true);
+  });
+
+  it('refuses another host, one that only ends in the same letters, http, and what is not a URL', () => {
+    expect(isBroadcomUrl('https://169.254.169.254/latest/meta-data/')).toBe(false);
+    expect(isBroadcomUrl('https://evilbroadcom.com/')).toBe(false);
+    expect(isBroadcomUrl('https://support.broadcom.com.evil.example/')).toBe(false);
+    expect(isBroadcomUrl('http://support.broadcom.com/')).toBe(false);
+    expect(isBroadcomUrl('file:///etc/passwd')).toBe(false);
+    expect(isBroadcomUrl('not a url')).toBe(false);
   });
 });

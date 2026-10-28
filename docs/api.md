@@ -4,7 +4,9 @@ Base URL: `http://localhost:5000`.
 
 ## Authentication
 
-Every endpoint requires the `x-api-key` header to match the `API_KEY` environment variable, except these public routes: `/health`, `/dashboard` and `/icon.png`. `/dashboard` serves only the HTML page. The data it loads (`/api/v1/import-status`) is authenticated like everything else.
+Every endpoint requires the `x-api-key` header to match the `API_KEY` environment variable, except these public routes: `/health`, and the dashboard's page and files (`/dashboard`, `/dashboard.js`, `/dashboard.css`, `/icon.png`). The [import status](#import-status) and the [job](#jobs) endpoints take the admin key instead: `x-api-key` must match `ADMIN_API_KEY` (`API_KEY` is refused there, and with `ADMIN_API_KEY` unset they answer `401`).
+
+**Errors.** A request that fails the input check is answered `400 { "error": "Invalid request", "issues": [{ "path": "package", "message": "..." }] }`. Text parameters are limited in length (package names and versions 256 characters, `ecosystem` 128, `cpe` 512, `q` 200) and must not contain a NUL character. An unexpected error is answered `500 { "error": "Internal Server Error" }`, with the details in the server log.
 
 Browser cross-origin access is limited to `ALLOWED_ORIGINS` (see [operations.md](operations.md#environment-variables)).
 
@@ -324,7 +326,7 @@ GET /api/v1/vulnerabilities/stats
 
 ## Import status
 
-The JSON behind the dashboard: the latest job per source, record counts, and per-OSV-ecosystem status. `osvEcosystems[].maintained` is `false` for distro releases outside the [support policy](../README.md#supported-os-releases). Per-ecosystem record counts are cached for 5 minutes.
+Takes the admin key (`ADMIN_API_KEY`). The JSON behind the dashboard: the latest job per source, record counts, and per-OSV-ecosystem status. `osvEcosystems[].maintained` is `false` for distro releases outside the [support policy](../README.md#supported-os-releases). Per-ecosystem record counts are cached for 5 minutes.
 
 ```
 GET /api/v1/import-status
@@ -332,7 +334,7 @@ GET /api/v1/import-status
 
 ## Jobs
 
-`:source` is the job's source key (`nvd`, `kev`, `advisory-fortinet`, `osv-npm`, ...).
+Takes the admin key (`ADMIN_API_KEY`). `:source` is the job's source key (`nvd`, `kev`, `advisory-fortinet`, `osv-npm`, ...).
 
 ```
 POST  /api/v1/jobs/:source/run    # Run now (fire-and-forget), regardless of the enabled state
@@ -346,7 +348,7 @@ PATCH /api/v1/jobs/:source        # Enable/disable the scheduled run. Body: { "e
 | Unknown source | `404` |
 
 ```bash
-curl -X POST -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/jobs/nvd/run"
-curl -X PATCH -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+curl -X POST -H "x-api-key: $ADMIN_API_KEY" "http://localhost:5000/api/v1/jobs/nvd/run"
+curl -X PATCH -H "x-api-key: $ADMIN_API_KEY" -H "Content-Type: application/json" \
   -d '{"enabled": false}' "http://localhost:5000/api/v1/jobs/osv-npm"
 ```

@@ -39,8 +39,14 @@ export default async function jobsRoute(fastify: FastifyInstance) {
     if (!parsed.success) {
       return reply.status(400).send({ error: 'Body must be { enabled: boolean }' });
     }
+    // Only a job that exists gets a JobConfig row; any name was stored before.
+    const def = await resolveJob(source);
+    if (!def) {
+      return reply.status(404).send({ error: `Unknown job source: ${source}` });
+    }
 
-    await setEnabled(source, parsed.data.enabled);
-    return reply.send({ source, enabled: parsed.data.enabled });
+    // Under the job's own name: "osv-Debian:13" switches the job "osv-Debian".
+    await setEnabled(def.source, parsed.data.enabled);
+    return reply.send({ source: def.source, enabled: parsed.data.enabled });
   });
 }

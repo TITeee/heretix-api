@@ -38,6 +38,8 @@ DATABASE_URL="postgresql://postgres:password@localhost:5432/vulndb?schema=public
 PORT=5000
 NODE_ENV=development        # "production" in production
 API_KEY=your-api-key-here   # Required. Requests without a matching x-api-key get 401
+ADMIN_API_KEY=              # Required for the dashboard and the job endpoints, which take only this key (401 when unset)
+TRUST_PROXY=                # Optional. Address(es) of a reverse proxy in front, comma-separated, CIDR allowed (default: none)
 ALLOWED_ORIGINS=            # Optional, comma-separated browser origins allowed to read responses (default: none)
 DATABASE_POOL_MAX=20        # Optional. Postgres connection pool size
 RATE_LIMIT_MAX=1200         # Optional. Requests per client address per minute, over 429 (0 = off). /health is never limited
@@ -52,6 +54,10 @@ NVD_API_KEY=                # Optional. NVD rate limit 10 → 50 requests/min
 CISCO_CLIENT_ID=            # Required for the Cisco import (openVuln API)
 CISCO_CLIENT_SECRET=
 ```
+
+Generate each key with `openssl rand -hex 32`; a key shorter than 32 characters is logged as a warning at startup. `API_KEY` sits on every client (heretix-management, heretix-cli), so it only searches: running and switching jobs and the dashboard's data take `ADMIN_API_KEY`.
+
+`TRUST_PROXY`: behind a TLS reverse proxy every request comes from the proxy's address, and the per-address limits below would count all clients as one. Set it to the proxy's address so they read the client from `X-Forwarded-For`. Leave it unset without a proxy: a client could otherwise pick its own address with that header.
 
 `ALLOWED_ORIGINS` only affects browsers. Server-to-server callers such as heretix-cli are unaffected.
 

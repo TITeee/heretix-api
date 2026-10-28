@@ -1,7 +1,7 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { readFile } from 'fs/promises';
 import path from 'path';
-import { requireApiKey } from '../auth.js';
+import { requireAdminKey } from '../auth.js';
 import { prisma } from '../../db/client.js';
 import { STATIC_JOBS } from '../../jobs/registry.js';
 import { getEnabledMap, defaultEnabled } from '../../jobs/config.js';
@@ -73,7 +73,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
   // Enforced per-route rather than by the scope hook in server.ts: the HTML
   // shell below stays public, but the data it renders (job history, failure
   // messages, per-ecosystem counts) does not.
-  fastify.get('/api/v1/import-status', { onRequest: requireApiKey }, async () => {
+  fastify.get('/api/v1/import-status', { onRequest: requireAdminKey }, async () => {
     const allJobs = await prisma.collectionJob.findMany({
       orderBy: { createdAt: 'desc' },
     });
@@ -177,10 +177,15 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get('/icon.png', async (_req, reply) => {
-    const icon = await readFile(path.join(process.cwd(), 'public', 'icon.png'));
-    reply.type('image/png').send(icon);
-  });
+  // The dashboard's own files. Served from here rather than a CDN or inline, so the
+  // page's CSP below can allow its own origin and nothing else.
+  const staticFile = (name: string, type: string) => async (_req: FastifyRequest, reply: FastifyReply) => {
+    const body = await readFile(path.join(process.cwd(), 'public', name));
+    return reply.type(type).send(body);
+  };
+  fastify.get('/icon.png', staticFile('icon.png', 'image/png'));
+  fastify.get('/dashboard.css', staticFile('dashboard.css', 'text/css; charset=utf-8'));
+  fastify.get('/dashboard.js', staticFile('dashboard.js', 'text/javascript; charset=utf-8'));
 
   fastify.get('/dashboard', async (_req, reply) => {
     const html = `<!DOCTYPE html>
@@ -190,170 +195,74 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Heretix - Import Dashboard</title>
   <link rel="icon" type="image/png" href="/icon.png" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    :root {
-      --background: oklch(0.145 0 0);
-      --foreground: oklch(0.985 0 0);
-      --card: oklch(0.205 0 0);
-      --card-foreground: oklch(0.985 0 0);
-      --border: oklch(1 0 0 / 10%);
-      --muted: oklch(0.269 0 0);
-      --muted-foreground: oklch(0.708 0 0);
-      --accent: oklch(0.371 0 0);
-      --primary: oklch(0.87 0 0);
-      --primary-foreground: oklch(0.205 0 0);
-      --secondary: oklch(0.269 0 0);
-      --secondary-foreground: oklch(0.985 0 0);
-      --destructive: oklch(0.704 0.191 22.216);
-      --radius: 0.625rem;
-    }
-  </style>
+  <link rel="stylesheet" href="/dashboard.css" />
 </head>
-<body class="bg-[var(--background)] text-[var(--foreground)] min-h-screen font-sans">
-  <!-- Top navbar -->
-  <nav class="border-b border-[var(--border)] bg-[var(--background)]">
-    <div class="max-w-6xl mx-auto px-6 py-3 flex items-center gap-2">
-      <img src="/icon.png" alt="Heretix" class="w-6 h-6 rounded-sm" />
-      <span class="text-[var(--foreground)] font-bold text-lg tracking-tight">Heretix</span>
+<body>
+  <nav class="nav">
+    <div class="nav-inner">
+      <img src="/icon.png" alt="Heretix" />
+      <span class="brand">Heretix</span>
     </div>
   </nav>
 
-  <div class="max-w-6xl mx-auto px-6 py-8">
-    <!-- Header -->
-    <div class="flex items-center justify-between mb-8">
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- Shown first: the dashboard opens once the server accepts the key. -->
+  <main id="sign-in" class="sign-in hidden">
+    <form id="sign-in-form" class="sign-in-card" novalidate>
+      <h1>Import Dashboard</h1>
+      <p class="subtitle">Enter the admin key (ADMIN_API_KEY) to view import status and run jobs.</p>
+      <label for="admin-key" class="field-label">Admin key</label>
+      <input id="admin-key" class="key-input key-input-wide" type="password" autocomplete="off" required />
+      <p id="sign-in-error" class="field-error hidden" role="alert"></p>
+      <button id="sign-in-submit" type="submit" class="btn-primary btn-wide">Sign in</button>
+      <p class="hint">The key is kept for this tab only, and forgotten when it closes.</p>
+    </form>
+  </main>
+
+  <div id="dashboard" class="page hidden">
+    <div class="header">
       <div>
-        <h1 class="text-2xl font-bold text-[var(--foreground)]">Import Dashboard</h1>
-        <p class="text-[var(--muted-foreground)] text-sm mt-1">Data source status and import history</p>
+        <h1>Import Dashboard</h1>
+        <p class="subtitle">Data source status and import history</p>
       </div>
-      <div class="flex items-center gap-4">
-        <span id="last-updated" class="text-[var(--muted-foreground)] text-sm"></span>
-        <input
-          id="api-key-input"
-          type="password"
-          placeholder="API key"
-          class="px-3 py-2 bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] text-sm rounded-md w-56 placeholder:text-[var(--muted-foreground)] focus:outline-none focus:border-[var(--primary)]"
-        />
-        <button
-          onclick="loadData()"
-          class="px-4 py-2 bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 text-sm font-medium rounded-md transition-opacity"
-        >Refresh</button>
+      <div class="controls">
+        <span id="last-updated" class="muted small"></span>
+        <button id="refresh" class="btn-primary">Refresh</button>
+        <button id="sign-out" class="btn-secondary">Sign out</button>
       </div>
     </div>
 
-    <!-- Toast -->
-    <div id="toast" class="hidden fixed bottom-6 right-6 px-4 py-3 rounded-md text-sm font-medium shadow-lg z-50"></div>
-
-    <!-- Summary Cards -->
-    <div id="summary-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-pulse h-24"></div>
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-pulse h-24"></div>
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-pulse h-24"></div>
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 animate-pulse h-24"></div>
+    <div id="summary-cards" class="cards">
+      <div class="card card-loading"></div>
+      <div class="card card-loading"></div>
+      <div class="card card-loading"></div>
+      <div class="card card-loading"></div>
     </div>
 
-    <!-- Core Sources Table -->
-    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl mb-8 overflow-hidden">
-      <div class="px-4 py-4 border-b border-[var(--border)]">
-        <h2 class="text-lg font-semibold text-[var(--card-foreground)]">Core Sources</h2>
-        <p class="text-[var(--muted-foreground)] text-xs mt-0.5">NVD, CISA KEV, and FIRST.org EPSS</p>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
-              <th class="px-4 py-3 font-medium">Source</th>
-              <th class="px-4 py-3 font-medium">Status</th>
-              <th class="px-4 py-3 font-medium">Last Completed</th>
-              <th class="px-4 py-3 font-medium text-right">Duration</th>
-              <th class="px-4 py-3 font-medium text-right">Records</th>
-              <th class="px-4 py-3 font-medium text-right">Inserted</th>
-              <th class="px-4 py-3 font-medium text-right">Updated</th>
-              <th class="px-4 py-3 font-medium">Error</th>
-              <th class="px-4 py-3 font-medium text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="core-tbody">
-            <tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+${statusPanel('Core Sources', 'NVD, CISA KEV, and FIRST.org EPSS', 'Source', 'core-tbody')}
 
-    <!-- Vendor Advisories Table -->
-    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl mb-8 overflow-hidden">
-      <div class="px-4 py-4 border-b border-[var(--border)]">
-        <h2 class="text-lg font-semibold text-[var(--card-foreground)]">Vendor Advisories</h2>
-        <p class="text-[var(--muted-foreground)] text-xs mt-0.5">Per-vendor advisory feed import status</p>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
-              <th class="px-4 py-3 font-medium">Vendor</th>
-              <th class="px-4 py-3 font-medium">Status</th>
-              <th class="px-4 py-3 font-medium">Last Completed</th>
-              <th class="px-4 py-3 font-medium text-right">Duration</th>
-              <th class="px-4 py-3 font-medium text-right">Records</th>
-              <th class="px-4 py-3 font-medium text-right">Inserted</th>
-              <th class="px-4 py-3 font-medium text-right">Updated</th>
-              <th class="px-4 py-3 font-medium">Error</th>
-              <th class="px-4 py-3 font-medium text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="advisory-tbody">
-            <tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+${statusPanel('Vendor Advisories', 'Per-vendor advisory feed import status', 'Vendor', 'advisory-tbody')}
 
-    <!-- OSV Ecosystems -->
-    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
-      <div class="px-4 py-4 border-b border-[var(--border)]">
-        <h2 class="text-lg font-semibold text-[var(--card-foreground)]">OSV Ecosystems</h2>
-        <p class="text-[var(--muted-foreground)] text-xs mt-0.5">Per-ecosystem import status and record counts</p>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>OSV Ecosystems</h2>
+        <p>Per-ecosystem import status and record counts</p>
       </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
-              <th class="px-4 py-3 font-medium">Ecosystem</th>
-              <th class="px-4 py-3 font-medium">Status</th>
-              <th class="px-4 py-3 font-medium">Last Completed</th>
-              <th class="px-4 py-3 font-medium text-right">Duration</th>
-              <th class="px-4 py-3 font-medium text-right">Records</th>
-              <th class="px-4 py-3 font-medium text-right">Inserted</th>
-              <th class="px-4 py-3 font-medium text-right">Updated</th>
-              <th class="px-4 py-3 font-medium">Error</th>
-              <th class="px-4 py-3 font-medium text-right">Actions</th>
-            </tr>
-          </thead>
+      <div class="table-wrap">
+        <table>
+          ${tableHead('Ecosystem')}
           <tbody id="osv-tbody">
-            <tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">Loading...</td></tr>
+            <tr><td colspan="9" class="message">Loading...</td></tr>
           </tbody>
         </table>
       </div>
       <!-- Releases outside src/config/support-policy.ts: data is kept but not maintained -->
-      <details id="osv-legacy" class="hidden border-t border-[var(--border)]">
-        <summary class="px-4 py-3 text-sm text-[var(--muted-foreground)] cursor-pointer select-none hover:bg-[var(--accent)]/40">
-          Outside support policy (<span id="osv-legacy-count">0</span>): data kept, best effort
-        </summary>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-[var(--muted-foreground)] text-xs uppercase tracking-wide text-left border-b border-[var(--border)]">
-                <th class="px-4 py-3 font-medium">Ecosystem</th>
-                <th class="px-4 py-3 font-medium">Status</th>
-                <th class="px-4 py-3 font-medium">Last Completed</th>
-                <th class="px-4 py-3 font-medium text-right">Duration</th>
-                <th class="px-4 py-3 font-medium text-right">Records</th>
-                <th class="px-4 py-3 font-medium text-right">Inserted</th>
-                <th class="px-4 py-3 font-medium text-right">Updated</th>
-                <th class="px-4 py-3 font-medium">Error</th>
-                <th class="px-4 py-3 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
+      <details id="osv-legacy" class="legacy hidden">
+        <summary>Outside support policy (<span id="osv-legacy-count">0</span>): data kept, best effort</summary>
+        <div class="table-wrap">
+          <table>
+            ${tableHead('Ecosystem')}
             <tbody id="osv-legacy-tbody"></tbody>
           </table>
         </div>
@@ -361,265 +270,56 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     </div>
   </div>
 
-  <script>
-    const REFRESH_INTERVAL_MS = 60000;
-
-    // Everything rendered below goes through innerHTML, and several of the
-    // values are not ours: OSV ecosystem names come from upstream OSV data,
-    // and errorMessage is whatever a failing fetcher produced -- an axios
-    // error, for instance, can carry an upstream response body. Without this
-    // an injected script would run with access to the API key in localStorage.
-    function esc(v) {
-      if (v == null) return '';
-      return String(v)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
-    function fmt(n) {
-      if (n == null) return '-';
-      return n.toLocaleString();
-    }
-
-    function relativeTime(iso) {
-      if (!iso) return '-';
-      const diff = Date.now() - new Date(iso).getTime();
-      const minutes = Math.floor(diff / 60000);
-      if (minutes < 1) return 'just now';
-      if (minutes < 60) return minutes + 'm ago';
-      const hours = Math.floor(minutes / 60);
-      if (hours < 24) return hours + 'h ago';
-      const days = Math.floor(hours / 24);
-      return days + 'd ago';
-    }
-
-    function formatDuration(ms) {
-      if (ms == null || ms < 0) return '-';
-      const totalSeconds = Math.round(ms / 1000);
-      const h = Math.floor(totalSeconds / 3600);
-      const m = Math.floor((totalSeconds % 3600) / 60);
-      const s = totalSeconds % 60;
-      if (h > 0) return h + 'h ' + m + 'm';
-      if (m > 0) return m + 'm ' + s + 's';
-      return s + 's';
-    }
-
-    function statusBadge(status) {
-      const base = 'inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 rounded-4xl border px-2 py-0.5 text-xs font-medium whitespace-nowrap';
-      if (!status) return '<span class="' + base + ' border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]">no jobs</span>';
-      const map = {
-        completed: 'border-[var(--border)] bg-transparent text-[var(--foreground)]',
-        failed:    'border-transparent bg-[var(--destructive)]/20 text-[var(--destructive)]',
-        running:   'border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]',
-        queued:    'border-[var(--border)] bg-transparent text-[var(--muted-foreground)]',
-        pending:   'border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]',
-      };
-      const cls = map[status] || 'border-transparent bg-[var(--secondary)] text-[var(--secondary-foreground)]';
-      const dot = status === 'running'
-        ? '<span class="inline-block w-2 h-2 rounded-full bg-current animate-pulse mr-1"></span>'
-        : '';
-      return '<span class="' + base + ' ' + cls + '">' + dot + esc(status) + '</span>';
-    }
-
-    function fetchFailedBadge(n) {
-      if (!n) return '';
-      return ' <span class="inline-flex h-5 items-center gap-1 rounded-4xl border border-transparent bg-amber-500/20 text-amber-400 px-2 py-0.5 text-xs font-medium whitespace-nowrap" title="' +
-        n + ' item(s) failed to fetch this run and are missing from the results">⚠ ' + n + '</span>';
-    }
-
-    function errorCell(msg) {
-      if (!msg) return '<span class="text-[var(--muted-foreground)]">-</span>';
-      return '<span class="text-[var(--destructive)] font-mono text-xs block truncate max-w-[140px]" title="' +
-        esc(msg) + '">' +
-        esc(msg.substring(0, 60)) + (msg.length > 60 ? '…' : '') +
-      '</span>';
-    }
-
-    // ─── API key & actions ────────────────────────────────────────
-    const API_KEY_STORAGE = 'heretix_api_key';
-
-    function getApiKey() {
-      return localStorage.getItem(API_KEY_STORAGE) || '';
-    }
-    function saveApiKey(value) {
-      localStorage.setItem(API_KEY_STORAGE, value.trim());
-      showToast('API key saved', 'ok');
-    }
-
-    let toastTimer = null;
-    function showToast(msg, kind) {
-      const el = document.getElementById('toast');
-      el.textContent = msg;
-      el.className = 'fixed bottom-6 right-6 px-4 py-3 rounded-md text-sm font-medium shadow-lg z-50 ' +
-        (kind === 'error'
-          ? 'bg-[var(--destructive)] text-white'
-          : 'bg-[var(--primary)] text-[var(--primary-foreground)]');
-      if (toastTimer) clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => { el.className = 'hidden'; }, 3000);
-    }
-
-    // Handlers are attached by delegation (see below) rather than inlined as
-    // onclick="...". The source name is upstream-derived for OSV rows, and an
-    // inline handler would need it escaped for the HTML attribute *and* the JS
-    // string literal inside it -- a data attribute has only the one context.
-    function actionCell(row) {
-      // A queued job waits for a free slot in the job runner; it runs once one opens.
-      const busy = row.status === 'running' || row.status === 'queued';
-      const runBtn = '<button data-action="run" data-source="' + esc(row.source) + '" ' +
-        (busy ? 'disabled ' : '') +
-        'class="w-[72px] px-2.5 py-1 text-xs font-medium rounded-md border border-[var(--border)] text-center ' +
-        (busy ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[var(--accent)]') + '">' +
-        (row.status === 'queued' ? 'Queued…' : busy ? 'Running…' : 'Run') + '</button>';
-      const enabled = row.enabled !== false;
-      const toggleBtn = '<button data-action="toggle" data-source="' + esc(row.source) + '" ' +
-        'data-enabled="' + (!enabled) + '" ' +
-        'class="w-[52px] px-2.5 py-1 text-xs font-medium rounded-md border text-center ' +
-        (enabled
-          ? 'border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--accent)]'
-          : 'border-transparent bg-[var(--destructive)]/20 text-[var(--destructive)]') +
-        '">' + (enabled ? 'On' : 'Off') + '</button>';
-      return '<div class="flex items-center justify-end gap-2">' + toggleBtn + runBtn + '</div>';
-    }
-
-    document.addEventListener('click', (ev) => {
-      const btn = ev.target.closest('button[data-action]');
-      if (!btn) return;
-      if (btn.dataset.action === 'run') void runJob(btn.dataset.source);
-      if (btn.dataset.action === 'toggle') void toggleJob(btn.dataset.source, btn.dataset.enabled === 'true');
-    });
-
-    async function runJob(source) {
-      const key = getApiKey();
-      if (!key) { showToast('API key required for actions', 'error'); return; }
-      try {
-        const res = await fetch('/api/v1/jobs/' + encodeURIComponent(source) + '/run', {
-          method: 'POST',
-          headers: { 'x-api-key': key },
-        });
-        if (res.status === 401) { showToast('Invalid API key', 'error'); return; }
-        if (res.status === 409) { showToast(source + ' is already queued or running', 'error'); return; }
-        if (!res.ok) { showToast('Failed: HTTP ' + res.status, 'error'); return; }
-        const body = await res.json().catch(() => ({}));
-        showToast((body.status === 'queued' ? 'Queued ' : 'Started ') + source, 'ok');
-        setTimeout(loadData, 800);
-      } catch (err) {
-        showToast('Failed: ' + err.message, 'error');
-      }
-    }
-
-    async function toggleJob(source, enabled) {
-      const key = getApiKey();
-      if (!key) { showToast('API key required for actions', 'error'); return; }
-      try {
-        const res = await fetch('/api/v1/jobs/' + encodeURIComponent(source), {
-          method: 'PATCH',
-          headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled }),
-        });
-        if (res.status === 401) { showToast('Invalid API key', 'error'); return; }
-        if (!res.ok) { showToast('Failed: HTTP ' + res.status, 'error'); return; }
-        showToast(source + (enabled ? ' enabled' : ' disabled'), 'ok');
-        loadData();
-      } catch (err) {
-        showToast('Failed: ' + err.message, 'error');
-      }
-    }
-
-    function renderCards(counts) {
-      const cards = [
-        { label: 'NVD',        value: fmt(counts.nvd) },
-        { label: 'OSV',        value: fmt(counts.osv) },
-        { label: 'KEV',        value: fmt(counts.kev) },
-        { label: 'Advisories', value: fmt(counts.advisories) },
-      ];
-      document.getElementById('summary-cards').innerHTML = cards.map(c =>
-        '<div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">' +
-          '<p class="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider mb-2">' + c.label + '</p>' +
-          '<p class="text-3xl font-bold text-[var(--card-foreground)]">' + c.value + '</p>' +
-        '</div>'
-      ).join('');
-    }
-
-    // Shared renderer for the three status tables (Core Sources, Vendor
-    // Advisories, OSV Ecosystems) — all share the same 8-column layout.
-    function renderTable(tbodyId, rows, getName, options) {
-      options = options || {};
-      const tbody = document.getElementById(tbodyId);
-      if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">' +
-          esc(options.emptyMessage || 'No data found.') + '</td></tr>';
-        return;
-      }
-      const ordered = options.sort ? [...rows].sort((a, b) => getName(a).localeCompare(getName(b))) : rows;
-      tbody.innerHTML = ordered.map(r =>
-        '<tr class="border-t border-[var(--border)] hover:bg-[var(--accent)]/40 transition-colors' +
-          (r.enabled === false ? ' opacity-50' : '') + '">' +
-          '<td class="px-4 py-4 font-medium text-[var(--foreground)]">' + esc(getName(r)) + '</td>' +
-          '<td class="px-4 py-4">' + statusBadge(r.status) + fetchFailedBadge(r.fetchFailed) + '</td>' +
-          '<td class="px-4 py-4 text-[var(--muted-foreground)]">' + relativeTime(r.completedAt) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--muted-foreground)] font-mono">' + formatDuration(r.durationMs) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(r.recordCount) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(r.totalInserted) + '</td>' +
-          '<td class="px-4 py-4 text-right text-[var(--foreground)] font-mono">' + fmt(r.totalUpdated) + '</td>' +
-          '<td class="px-4 py-4">' + errorCell(r.errorMessage) + '</td>' +
-          '<td class="px-4 py-4">' + actionCell(r) + '</td>' +
-        '</tr>'
-      ).join('');
-    }
-
-    function tableMessage(html) {
-      const msg = '<tr><td colspan="9" class="px-6 py-8 text-center text-[var(--muted-foreground)]">' + html + '</td></tr>';
-      document.getElementById('core-tbody').innerHTML = msg;
-      document.getElementById('advisory-tbody').innerHTML = msg;
-      document.getElementById('osv-tbody').innerHTML = msg;
-    }
-
-    async function loadData() {
-      const key = getApiKey();
-      if (!key) {
-        tableMessage('Enter the API key above to load import status.');
-        return;
-      }
-      try {
-        const res = await fetch('/api/v1/import-status', { headers: { 'x-api-key': key } });
-        if (res.status === 401) {
-          tableMessage('Invalid API key.');
-          return;
-        }
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const data = await res.json();
-        renderCards(data.recordCounts);
-        renderTable('core-tbody', data.coreSources, s => s.label, { sort: true, emptyMessage: 'No import jobs found.' });
-        renderTable('advisory-tbody', data.advisorySources, s => s.label, { sort: true, emptyMessage: 'No vendor advisories found.' });
-        renderTable('osv-tbody', data.osvEcosystems.filter(e => e.maintained), e => e.ecosystem, { emptyMessage: 'No OSV ecosystems imported yet.' });
-        const legacy = data.osvEcosystems.filter(e => !e.maintained);
-        document.getElementById('osv-legacy').classList.toggle('hidden', legacy.length === 0);
-        document.getElementById('osv-legacy-count').textContent = legacy.length;
-        renderTable('osv-legacy-tbody', legacy, e => e.ecosystem, {});
-        document.getElementById('last-updated').textContent =
-          'Updated ' + new Date().toLocaleTimeString();
-      } catch (err) {
-        tableMessage('<span class="text-[var(--destructive)]">Failed to load: ' + esc(err.message) + '</span>');
-      }
-    }
-
-    // Prefill API key input from localStorage. The key is required to load any
-    // data now, not just to run actions, so saving one reloads immediately.
-    const apiKeyInput = document.getElementById('api-key-input');
-    apiKeyInput.value = getApiKey();
-    apiKeyInput.addEventListener('change', () => {
-      saveApiKey(apiKeyInput.value);
-      void loadData();
-    });
-
-    loadData();
-    setInterval(loadData, REFRESH_INTERVAL_MS);
-  </script>
+  <script src="/dashboard.js"></script>
 </body>
 </html>`;
-    return reply.type('text/html').send(html);
+    return reply
+      .type('text/html; charset=utf-8')
+      // Scripts, styles and images from this API only; no inline script or handler runs,
+      // so markup injected through a data value cannot read the admin key.
+      .header('content-security-policy', [
+        "default-src 'none'",
+        "script-src 'self'",
+        "style-src 'self'",
+        "img-src 'self'",
+        "connect-src 'self'",
+        "base-uri 'none'",
+        "form-action 'none'",
+        "frame-ancestors 'none'",
+      ].join('; '))
+      .send(html);
   });
+}
+
+function tableHead(nameColumn: string): string {
+  return `<thead>
+            <tr>
+              <th>${nameColumn}</th>
+              <th>Status</th>
+              <th>Last Completed</th>
+              <th class="num">Duration</th>
+              <th class="num">Records</th>
+              <th class="num">Inserted</th>
+              <th class="num">Updated</th>
+              <th>Error</th>
+              <th class="num">Actions</th>
+            </tr>
+          </thead>`;
+}
+
+function statusPanel(title: string, description: string, nameColumn: string, tbodyId: string): string {
+  return `    <div class="panel">
+      <div class="panel-head">
+        <h2>${title}</h2>
+        <p>${description}</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          ${tableHead(nameColumn)}
+          <tbody id="${tbodyId}">
+            <tr><td colspan="9" class="message">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`;
 }

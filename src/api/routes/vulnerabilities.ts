@@ -9,6 +9,7 @@ import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
 import { createConcurrencyGate, envInt } from '../concurrency-gate.js';
 import { createIndexCache } from '../index-cache.js';
+import { clientText } from '../input.js';
 import { findCatalogEntry } from '../../config/product-catalog.js';
 import { requiredWindowsFeatures } from '../../config/windows-role-features.js';
 import { catalogCnaWhere, catalogNvdWhere } from '../../utils/catalog-search.js';
@@ -44,25 +45,29 @@ import {
 /** A batch search ran past BATCH_SEARCH_TIMEOUT_MS. */
 class BatchTimeoutError extends Error {}
 
+// Bounds on what a client sends (see clientText).
+const NAME_MAX = 256;
+const ECOSYSTEM_MAX = 128;
+
 // The source package an installed binary package was built from, as dpkg records it ("Source:
 // lvm2 (2.03.31-2)" on dmsetup 2:1.02.205-2) or as apk does (origin). Debian, Ubuntu and Alpine
 // advisories name source packages and source versions, so these, when given, are what an
 // installed package is matched by on those distros; see searchOSV(). Optional: a client that
 // does not send them gets the binary name and version compared, as before.
 const sourceFields = {
-  sourcePackage: z.string().min(1).optional(),
-  sourceVersion: z.string().min(1).optional(),
+  sourcePackage: clientText(NAME_MAX).min(1).optional(),
+  sourceVersion: clientText(NAME_MAX).min(1).optional(),
 };
 
 const searchSchema = z.object({
-  package: z.string().min(1),
-  version: z.string().optional(),
-  ecosystem: z.string().min(1).optional(),
+  package: clientText(NAME_MAX).min(1),
+  version: clientText(NAME_MAX).optional(),
+  ecosystem: clientText(ECOSYSTEM_MAX).min(1).optional(),
   ...sourceFields,
   // Fastify's query parser only arrays a repeated key (?severity=A&severity=B);
   // a single occurrence (?severity=A) comes through as a bare string, which
   // z.array() alone would reject outright. Accept either shape and normalize.
-  severity: z.union([z.string(), z.array(z.string())]).optional()
+  severity: z.union([clientText(32), z.array(clientText(32)).max(10)]).optional()
     .transform(v => v === undefined ? undefined : (Array.isArray(v) ? v : [v])),
   limit: z.coerce.number().int().positive().max(500).default(500),
   offset: z.coerce.number().int().nonnegative().default(0),
@@ -70,9 +75,9 @@ const searchSchema = z.object({
 
 const batchSearchSchema = z.object({
   packages: z.array(z.object({
-    package: z.string().min(1),
-    version: z.string().min(1),
-    ecosystem: z.string().min(1).optional(),
+    package: clientText(NAME_MAX).min(1),
+    version: clientText(NAME_MAX).min(1),
+    ecosystem: clientText(ECOSYSTEM_MAX).min(1).optional(),
     ...sourceFields,
   })).min(1).max(1000),
 });
@@ -189,7 +194,7 @@ async function searchOSV(
   const packageNameFilter = names.length > 1 ? { in: names } : packageName;
 
   const ecosystemFilter = ecosystem
-    ? { ecosystem: { startsWith: ecosystem } }
+    ? { ecosystem: { startsWith: escapeLikePattern(ecosystem) } }
     : { NOT: { OR: DISTRO_ECOSYSTEM_PREFIXES.map(p => ({ ecosystem: { startsWith: p } })) } };
 
   // distro ecosystem: exact match against the versions field
@@ -354,7 +359,7 @@ async function searchNVD(
   versionInt: bigint | null,
   ecosystem: string | undefined,
 ): Promise<VulnerabilityResult[]> {
-  const ecosystemFilter = ecosystem ? { ecosystem: { startsWith: ecosystem } } : {};
+  const ecosystemFilter = ecosystem ? { ecosystem: { startsWith: escapeLikePattern(ecosystem) } } : {};
   const approximate = versionInt === null;
   // Rows with `exactVersion` set carry a real, specific CPE version (e.g. Huawei's
   // "v200r007c00spcb00", a Jenkins plugin build id) that normalizeVersion() can't
@@ -961,19 +966,24 @@ async function searchAllVulnerabilities(
 }
 
 const cpeSearchSchema = z.object({
-  cpe: z.string().min(1),
+  cpe: clientText(512).min(1),
   limit: z.coerce.number().int().positive().max(100).default(50),
   offset: z.coerce.number().int().nonnegative().default(0),
 });
 
 const suggestSchema = z.object({
-  q: z.string().min(1),
-  ecosystem: z.string().optional(),
+  q: clientText(200).min(1),
+  ecosystem: clientText(ECOSYSTEM_MAX).optional(),
   limit: z.coerce.number().int().positive().max(50).default(10),
 });
 
 const cpeForCveSchema = z.object({
-  product: z.string().min(1),
+  product: clientText(NAME_MAX).min(1),
+});
+
+// A CVE, OSV or vendor advisory id in the path.
+const idParamsSchema = z.object({
+  id: clientText(NAME_MAX).min(1),
 });
 
 /**
@@ -1195,7 +1205,7 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
   });
 
   fastify.get('/vulnerabilities/:id/cpe', async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const { id } = idParamsSchema.parse(request.params);
     const { product } = cpeForCveSchema.parse(request.query);
     const result = await findCpeForCve(id, product);
     if (!result) return reply.status(404).send({ error: 'No matching CPE found for this CVE and product' });
@@ -1368,7 +1378,7 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
   } as const;
 
   fastify.get('/vulnerabilities/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const { id } = idParamsSchema.parse(request.params);
 
     // Search master table by canonicalId (cveId, osvId, or advisoryId)
     const master = await prisma.vulnerability.findFirst({

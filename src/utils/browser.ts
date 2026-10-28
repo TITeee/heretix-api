@@ -18,6 +18,11 @@ async function getBrowser(): Promise<Browser> {
       // targets glibc and isn't supported on Alpine (musl). Left unset in
       // local dev, which uses Playwright's normal managed browser download.
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+      // Chromium's own sandbox needs user namespaces or setuid, which a container
+      // does not give without extra privileges (SYS_ADMIN, a custom seccomp profile)
+      // that would weaken the container more than the sandbox protects. The browser
+      // runs in the container as the unprivileged user, and only opens https pages
+      // (see withPage).
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -39,6 +44,11 @@ export async function withPage<T>(
   fn: (page: Page) => Promise<T>,
   { timeout = 30000 }: { timeout?: number } = {},
 ): Promise<T> {
+  // Every page scraped is a vendor's https site. Anything else (http://, file:, an
+  // address taken from a feed that was not what it should be) is not opened.
+  if (!url.startsWith('https://')) {
+    throw new Error(`Refusing to open a non-https URL in the browser: ${url}`);
+  }
   const b = await getBrowser();
   const context = await b.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
