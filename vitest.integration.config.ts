@@ -12,7 +12,7 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['src/**/*.integration.test.ts'],
-    env: { DATABASE_URL: testDbUrl, API_KEY: 'test-api-key' },
+    env: { DATABASE_URL: testDbUrl, API_KEY: 'test-api-key', ADMIN_API_KEY: 'test-admin-key' },
     // All integration test files share one truncated DB — running them
     // concurrently would race on beforeEach() resets.
     fileParallelism: false,

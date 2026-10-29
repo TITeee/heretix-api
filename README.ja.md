@@ -208,6 +208,7 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-
 | [docs/api.md](docs/api.md) | API リファレンス、検索の動作 |
 | [docs/data-sources.md](docs/data-sources.md) | データソースごとの取り込み方法、コマンド、注意点 |
 | [docs/operations.md](docs/operations.md) | セットアップ、環境変数、スケジューラ、バックフィル、トラブルシューティング |
+| [docs/tls-proxy.md](docs/tls-proxy.md) | HTTPS で公開する手順: リバースプロキシ、HSTS、`TRUST_PROXY`、DB のパスワード |
 | [docs/architecture.md](docs/architecture.md) | データモデル、重複排除、バージョンの照合 |
 | [docs/known-issues.md](docs/known-issues.md) | 既知の制約 |
 | [ACCURACY.md](ACCURACY.md) | 公式アドバイザリを正解データとした適合率・再現率の測定結果 |

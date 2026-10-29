@@ -129,6 +129,22 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     expect(atFixedBoundary.body.results).toHaveLength(0);
   });
 
+  it('matches the ecosystem by prefix, with a typed % or _ taken as itself', async () => {
+    // A "%" made the prefix match every row (all 4M in production), compared
+    // with the wrong version scheme for the distro rows among them.
+    const master = await prisma.vulnerability.create({ data: { osvId: 'GHSA-like-0001' } });
+    const osv = await prisma.oSVVulnerability.create({
+      data: { osvId: 'GHSA-like-0001', source: 'osv', rawData: {}, masterVulnId: master.id },
+    });
+    await prisma.oSVAffectedPackage.create({
+      data: { vulnerabilityId: osv.id, ecosystem: 'npm', packageName: 'like-pkg', introducedInt: 0n },
+    });
+
+    expect((await search(app, 'package=like-pkg&version=1.0.0&ecosystem=np')).body.results).toHaveLength(1);
+    expect((await search(app, 'package=like-pkg&version=1.0.0&ecosystem=%25')).body.results).toHaveLength(0);
+    expect((await search(app, 'package=like-pkg&version=1.0.0&ecosystem=n_m')).body.results).toHaveLength(0);
+  });
+
   it('resolves a Debian binary package name to its source name via DebianSourcePackage', async () => {
     // OSVAffectedPackage is keyed by the Debian source name ("gnupg2"), but
     // the query below uses the installed binary name ("gpgv") -- the two

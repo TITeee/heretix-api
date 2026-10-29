@@ -432,6 +432,18 @@ export async function fetchAdvisoryList(segment: string): Promise<{ items: Broad
   );
 }
 
+/** Whether `url` is an https page on broadcom.com or one of its subdomains. */
+export function isBroadcomUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  return parsed.protocol === 'https:' && (host === 'broadcom.com' || host.endsWith('.broadcom.com'));
+}
+
 /**
  * Fetch detail page and extract product/fixed-version pairs from the Response Matrix table.
  * Runs in browser context via page.evaluate() to avoid innerText multiline cell issues.
@@ -440,6 +452,12 @@ export async function fetchAdvisoryList(segment: string): Promise<{ items: Broad
  *   0: VMware Product | 1: Version | ... | 6: Fixed Version | ...
  */
 async function fetchDetailVersions(notificationUrl: string): Promise<{ versions: ProductVersion[]; failed: boolean }> {
+  // The URL comes from the list API's response, and the browser would open whatever it
+  // names, an address inside our own network included.
+  if (!isBroadcomUrl(notificationUrl)) {
+    logger.warn({ notificationUrl }, 'Broadcom advisory detail URL is not an https page on broadcom.com; skipped');
+    return { versions: [], failed: true };
+  }
   try {
     // page.evaluate() only extracts raw cell text — it runs serialized inside the
     // browser, so it can't call back into parseResponseMatrixRow() /
