@@ -12,4 +12,18 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
   },
+  {
+    // The dashboard's script runs in the browser, not in Node.
+    files: ['public/**/*.js'],
+    languageOptions: {
+      globals: {
+        document: 'readonly',
+        sessionStorage: 'readonly',
+        fetch: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+      },
+    },
+  },
 );
