@@ -207,6 +207,7 @@ Per-source details, import commands and limitations: [docs/data-sources.md](docs
 | [docs/api.md](docs/api.md) | API reference and search behavior |
 | [docs/data-sources.md](docs/data-sources.md) | Each data source: how it is imported, commands, caveats |
 | [docs/operations.md](docs/operations.md) | Setup, environment variables, scheduler, backfills, troubleshooting |
+| [docs/tls-proxy.md](docs/tls-proxy.md) | Serving the API over HTTPS: reverse proxy, HSTS, `TRUST_PROXY`, database password |
 | [docs/architecture.md](docs/architecture.md) | Data model, deduplication, version matching |
 | [docs/known-issues.md](docs/known-issues.md) | Current limitations |
 | [ACCURACY.md](ACCURACY.md) | Precision / recall measurements against official advisories |

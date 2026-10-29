@@ -41,7 +41,8 @@ services:
       CISCO_CLIENT_ID: ${CISCO_CLIENT_ID:-}
       CISCO_CLIENT_SECRET: ${CISCO_CLIENT_SECRET:-}
     ports:
-      - "${PORT:-5000}:5000"
+      # BIND_ADDRESS=127.0.0.1 leaves the port to a reverse proxy on this host (docs/tls-proxy.md).
+      - "${BIND_ADDRESS:-0.0.0.0}:${PORT:-5000}:5000"
     logging:
       driver: json-file
       options:

@@ -57,7 +57,7 @@ CISCO_CLIENT_SECRET=
 
 Generate each key with `openssl rand -hex 32`; a key shorter than 32 characters is logged as a warning at startup. `API_KEY` sits on every client (heretix-management, heretix-cli), so it only searches: running and switching jobs and the dashboard's data take `ADMIN_API_KEY`.
 
-`TRUST_PROXY`: behind a TLS reverse proxy every request comes from the proxy's address, and the per-address limits below would count all clients as one. Set it to the proxy's address so they read the client from `X-Forwarded-For`. Leave it unset without a proxy: a client could otherwise pick its own address with that header.
+`TRUST_PROXY`: behind a TLS reverse proxy every request comes from the proxy's address, and the per-address limits below would count all clients as one. Set it to the proxy's address so they read the client from `X-Forwarded-For`. Leave it unset without a proxy: a client could otherwise pick its own address with that header. Setup, with Caddy and nginx examples: [tls-proxy.md](tls-proxy.md).
 
 `ALLOWED_ORIGINS` only affects browsers. Server-to-server callers such as heretix-cli are unaffected.
 
