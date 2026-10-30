@@ -7,18 +7,18 @@ datasource db {
   provider = "postgresql"
 }
 
-// ─── マスター（正規化・重複排除） ────────────────────────────
+// ─── Master (normalized, deduplicated) ───────────────────────
 
 model Vulnerability {
   id          String   @id @default(cuid())
 
-  // 重複排除キー（いずれか一つが必ず設定される）
-  // 優先度: cveId > osvId > advisoryId
+  // Deduplication keys (exactly one is always set)
+  // Precedence: cveId > osvId > advisoryId
   cveId       String?  @unique   // "CVE-YYYY-NNNNN"
-  osvId       String?  @unique   // OSV ID（GHSA-xxx, PYSEC-xxx 等、CVE なしの場合のみ）
-  advisoryId  String?  @unique   // ベンダーアドバイザリ ID（FG-IR-xx-xxx 等、CVE/OSV なしの場合のみ）
+  osvId       String?  @unique   // OSV ID (GHSA-xxx, PYSEC-xxx, ...), only when there is no CVE
+  advisoryId  String?  @unique   // Vendor advisory ID (FG-IR-xx-xxx, ...), only when there is no CVE or OSV ID
 
-  // 最良品質フィールド（NVD > OSV の優先度でマージ）
+  // Best-quality fields (merged with NVD taking precedence over OSV)
   severity    String?            // "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
   cvssScore   Float?
   cvssVector  String?
@@ -26,7 +26,7 @@ model Vulnerability {
   publishedAt DateTime?
   modifiedAt  DateTime?
 
-  // CISA KEV（Known Exploited Vulnerabilities）
+  // CISA KEV (Known Exploited Vulnerabilities)
   isKev             Boolean  @default(false)
   kevDateAdded      DateTime?
   kevDueDate        DateTime?
@@ -35,9 +35,9 @@ model Vulnerability {
   kevShortDesc      String?
   kevRequiredAction String?
 
-  // EPSS（Exploit Prediction Scoring System）
-  epssScore      Float?     // 0.0–1.0 悪用確率
-  epssPercentile Float?     // 0.0–1.0 パーセンタイル
+  // EPSS (Exploit Prediction Scoring System)
+  epssScore      Float?     // 0.0–1.0 probability of exploitation
+  epssPercentile Float?     // 0.0–1.0 percentile
   epssUpdatedAt  DateTime?
 
   // CISA Vulnrichment -- raw SSVC axes only. Deriving a final decision needs a
@@ -51,7 +51,7 @@ model Vulnerability {
   fetchedAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  // ソーステーブルへのバックリレーション（FK はソース側が保持）
+  // Back-relations to the source tables (the FK lives on the source side)
   osvVulnerabilities     OSVVulnerability[]
   nvdVulnerability       NVDVulnerability?
   advisoryVulnerabilities AdvisoryVulnerability[]
@@ -69,17 +69,17 @@ model Vulnerability {
 model OSVVulnerability {
   id            String   @id @default(cuid())
 
-  // 識別子
+  // Identifiers
   osvId         String   @unique
-  cveId         String?                   // aliases から抽出した CVE ID（参照用）
-  aliases       Json?                     // 全エイリアス配列
+  cveId         String?                   // CVE ID extracted from aliases (for reference)
+  aliases       Json?                     // All aliases, as an array
   source        String   @default("osv")
   ecosystem     String?
 
-  // 生データ（JSONB）
+  // Raw data (JSONB)
   rawData       Json
 
-  // 検索用の正規化フィールド
+  // Normalized fields for search
   packageName   String?
   severity      String?
   cvssScore     Float?
@@ -91,17 +91,17 @@ model OSVVulnerability {
   distroPriority String?
   summary       String?
 
-  // タイムスタンプ
+  // Timestamps
   publishedAt   DateTime?
   modifiedAt    DateTime?
   fetchedAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  // マスターテーブルへの参照（FK）
+  // Reference to the master table (FK)
   masterVulnId  String?
   masterVuln    Vulnerability? @relation(fields: [masterVulnId], references: [id])
 
-  // リレーション
+  // Relations
   affectedPackages OSVAffectedPackage[]
 
   @@index([osvId])
@@ -119,24 +119,24 @@ model OSVAffectedPackage {
   vulnerabilityId String
   vulnerability   OSVVulnerability @relation(fields: [vulnerabilityId], references: [id], onDelete: Cascade)
 
-  // パッケージ情報
+  // Package info
   ecosystem       String
   packageName     String
 
-  // バージョン範囲（正規化済み）
+  // Version range (normalized)
   versionType     String   @default("semver")
 
-  // 範囲表現（文字列）
+  // Range as strings
   introducedVersion   String?
   fixedVersion        String?
   lastAffectedVersion String?
 
-  // 数値化されたバージョン（高速検索用）
+  // Versions as numbers (for fast search)
   introducedInt   BigInt?
   fixedInt        BigInt?
   lastAffectedInt BigInt?
 
-  // OSV rawData の versions フィールド（distro ecosystem 向け exact match 検索用）
+  // The versions field of the OSV rawData (for exact-match search on distro ecosystems)
   affectedVersions String[]
 
   // The distro's own rating of this CVE for this (release, package), verbatim,
@@ -222,30 +222,30 @@ model DebianTrackerStatus {
 model NVDVulnerability {
   id          String   @id @default(cuid())
 
-  // 識別子
+  // Identifiers
   cveId       String   @unique          // "CVE-2024-XXXX"
   source      String   @default("nvd")
 
-  // 生データ（JSONB）
+  // Raw data (JSONB)
   rawData     Json
 
-  // 検索用の正規化フィールド
+  // Normalized fields for search
   severity    String?                   // "CRITICAL", "HIGH", "MEDIUM", "LOW"
   cvssScore   Float?
-  cvssVector  String?                   // 完全な CVSS ベクター文字列
+  cvssVector  String?                   // The full CVSS vector string
   summary     String?
 
-  // タイムスタンプ
+  // Timestamps
   publishedAt DateTime?
   modifiedAt  DateTime?
   fetchedAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  // マスターテーブルへの参照（FK、1対1）
+  // Reference to the master table (FK, one-to-one)
   masterVulnId  String?  @unique
   masterVuln    Vulnerability? @relation(fields: [masterVulnId], references: [id])
 
-  // リレーション
+  // Relations
   affectedPackages NVDAffectedPackage[]
 
   @@index([cveId])
@@ -259,27 +259,28 @@ model NVDAffectedPackage {
   vulnerabilityId String
   vulnerability   NVDVulnerability @relation(fields: [vulnerabilityId], references: [id], onDelete: Cascade)
 
-  // CPE 由来フィールド（ベストエフォート）
-  cpe             String?           // 元の CPE 文字列
-  vendor          String?           // cpe の <vendor> 部分
-  packageName     String            // cpe の <product> 部分
-  ecosystem       String?           // vendor から推定
+  // Fields derived from the CPE (best effort)
+  cpe             String?           // The original CPE string
+  vendor          String?           // The <vendor> part of the cpe
+  packageName     String            // The <product> part of the cpe
+  ecosystem       String?           // Inferred from vendor
 
-  // バージョン範囲（NVD 形式）
+  // Version range (NVD format)
   versionStartIncluding String?
   versionStartExcluding String?
   versionEndIncluding   String?
   versionEndExcluding   String?
 
-  // 正規化 BigInt（ベストエフォート）
+  // Normalized BigInt (best effort)
   introducedInt   BigInt?
   fixedInt        BigInt?
   lastAffectedInt BigInt?
 
-  // CPEのバージョン欄が「*」「-」（真のワイルドカード）ではなく実在する特定バージョンだが、
-  // normalizeVersion()では数値化できない場合（Huawei機器のV/R/C形式、Jenkinsのビルドid等）の
-  // 生文字列。この場合 introducedInt/fixedInt/lastAffectedInt は全てnullになり真のワイルドカード
-  // 行と区別がつかなくなる（=無条件マッチしてしまう）ため、完全一致検索用に別途保持する。
+  // The raw string when the CPE's version field is a specific version rather than
+  // "*" or "-" (a true wildcard), but normalizeVersion() cannot turn it into a
+  // number (Huawei's V/R/C format, Jenkins build ids, ...). Then introducedInt,
+  // fixedInt and lastAffectedInt are all null, so the row looks like a true
+  // wildcard and would match unconditionally; this is kept for exact-match search.
   exactVersion    String?
 
   createdAt       DateTime @default(now())
@@ -291,20 +292,20 @@ model NVDAffectedPackage {
   @@index([cpe])
 }
 
-// ─── ベンダーセキュリティアドバイザリ ────────────────────────
+// ─── Vendor security advisories ──────────────────────────────
 
 model AdvisoryVulnerability {
   id          String   @id @default(cuid())
 
-  // 識別子
+  // Identifiers
   source      String                    // "fortinet" | "f5" | "cisco" | "paloalto" | ...
-  externalId  String                    // ベンダー固有のアドバイザリID（例: "FG-IR-24-001"）
-  cveId       String?                   // 関連する CVE ID（あれば）
+  externalId  String                    // The vendor's own advisory ID (e.g. "FG-IR-24-001")
+  cveId       String?                   // The related CVE ID, if any
 
-  // 生データ（JSONB）
+  // Raw data (JSONB)
   rawData     Json
 
-  // 検索用の正規化フィールド
+  // Normalized fields for search
   severity    String?                   // "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
   cvssScore   Float?
   cvssVector  String?
@@ -323,26 +324,27 @@ model AdvisoryVulnerability {
   // role (see config/windows-role-features.ts).
   component String?
 
-  // アドバイザリ固有フィールド
-  url         String?                   // 元のアドバイザリURL
-  workaround  String?                   // 緩和策
-  solution    String?                   // 修正方法
+  // Advisory-specific fields
+  url         String?                   // URL of the original advisory
+  workaround  String?                   // Workaround
+  solution    String?                   // Solution
 
-  // タイムスタンプ
+  // Timestamps
   publishedAt DateTime?
   fetchedAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  // 消失検知用（全件スナップショット方式のfetcherのみ対象）
-  // フェッチ結果に含まれなかった連続回数。再度見つかれば0にリセットされる。
-  // 閾値（PRUNE_THRESHOLD、advisory-fetcher.ts）に達すると削除される。
+  // For detecting advisories that have disappeared (only for fetchers that take a
+  // full snapshot). The number of runs in a row that did not return this one; reset
+  // to 0 when it is found again. It is deleted at the threshold (PRUNE_THRESHOLD,
+  // advisory-fetcher.ts).
   missingRunCount Int @default(0)
 
-  // マスターテーブルへの参照（FK）
+  // Reference to the master table (FK)
   masterVulnId  String?
   masterVuln    Vulnerability? @relation(fields: [masterVulnId], references: [id])
 
-  // リレーション
+  // Relations
   affectedProducts AdvisoryAffectedProduct[]
 
   @@unique([source, externalId])
@@ -359,22 +361,22 @@ model AdvisoryAffectedProduct {
   advisoryId String
   advisory   AdvisoryVulnerability @relation(fields: [advisoryId], references: [id], onDelete: Cascade)
 
-  // プロダクト情報
-  vendor     String                    // "fortinet", "f5", "cisco" 等
-  product    String                    // "FortiOS", "BIG-IP" 等
+  // Product info
+  vendor     String                    // "fortinet", "f5", "cisco", ...
+  product    String                    // "FortiOS", "BIG-IP", ...
 
-  // バージョン範囲（文字列）
-  versionStart  String?               // 影響開始バージョン（inclusive）
-  versionEnd    String?               // 影響終了バージョン（exclusive）
-  versionFixed  String?               // 修正済みバージョン
-  lastAffected  String?               // 影響終了バージョン（inclusive、versionEnd がない場合用）
+  // Version range (strings)
+  versionStart  String?               // First affected version (inclusive)
+  versionEnd    String?               // End of the affected range (exclusive)
+  versionFixed  String?               // Fixed version
+  lastAffected  String?               // End of the affected range (inclusive), for when there is no versionEnd
 
-  // 数値化されたバージョン（semver 互換の場合のみ、高速検索用）
+  // Versions as numbers (only when semver-compatible, for fast search)
   versionStartInt BigInt?
   versionEndInt   BigInt?
   lastAffectedInt BigInt?
 
-  // 非semver対応: 個別バージョンのリスト（例: ["7.0.1", "7.0.2", "7.2.0"]）
+  // For non-semver versions: a list of individual versions (e.g. ["7.0.1", "7.0.2", "7.2.0"])
   affectedVersions String[]
 
   patchAvailable Boolean?
@@ -474,7 +476,7 @@ model CnaAffectedProduct {
   @@index([vulnerabilityId])
 }
 
-// ─── ジョブ管理 ───────────────────────────────────────────────
+// ─── Job management ──────────────────────────────────────────
 
 model CollectionJob {
   id          String   @id @default(cuid())
@@ -503,7 +505,7 @@ model CollectionJob {
   @@index([completedAt])
 }
 
-// 収集ジョブの有効/無効フラグ（行がなければデフォルト有効）
+// Enabled/disabled flag of a collection job (enabled by default when there is no row)
 model JobConfig {
   source    String   @id
   enabled   Boolean  @default(true)
