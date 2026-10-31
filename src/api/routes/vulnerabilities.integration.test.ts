@@ -914,6 +914,27 @@ describe('search by source package and source version (Debian, Ubuntu, Alpine)',
     expect(results.map((r) => r.total)).toEqual([0, 1, 1]);
   });
 
+  // The meta package linux-aws (built from linux-meta-aws-7.0) shares its name with the source
+  // linux-aws, the 6.8-series kernel. Naming the source keeps the unrelated records off it.
+  it('does not search the binary name as a source when the client names a different source', async () => {
+    await importOSVData({
+      id: 'UBUNTU-CVE-2026-0505',
+      modified: '2026-01-01T00:00:00Z',
+      aliases: [],
+      upstream: ['CVE-2026-0505'],
+      affected: [{ package: { ecosystem: 'Ubuntu:24.04:LTS', name: 'linux-aws' }, ranges: [{ type: 'ECOSYSTEM', events: [{ introduced: '0' }] }] }],
+    });
+    const meta = { package: 'linux-aws', version: '7.0.0-1014.14~24.04.1', ecosystem: 'Ubuntu:24.04:LTS' };
+
+    const results = await batch([
+      { ...meta, sourcePackage: 'linux-meta-aws-7.0', sourceVersion: '7.0.0-1014.14~24.04.1' },
+      meta,
+      { ...meta, sourcePackage: 'linux-aws', sourceVersion: '7.0.0-1014.14~24.04.1' },
+    ]);
+
+    expect(results.map((r) => r.total)).toEqual([0, 1, 1]);
+  });
+
   it('leaves RPM distros alone: a subpackage carries its source RPM version already', async () => {
     await importOSVData({
       id: 'ALSA-2026:0404',

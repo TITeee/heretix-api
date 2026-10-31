@@ -190,8 +190,11 @@ async function searchOSV(
   // from lvm2 2.03.31-2). RPM subpackages carry their source's version, so RPM is left alone.
   const sourceName = isDpkgStyle ? source.name : undefined;
   const matchVersion = isDpkgStyle && source.version ? source.version : version;
-  const names = [...new Set([packageName, debianSourceName, sourceName].filter((n): n is string => !!n))];
-  const packageNameFilter = names.length > 1 ? { in: names } : packageName;
+  // A client that names the source has said which records apply, so the binary's own name is
+  // left out then: it can belong to an unrelated source (the meta package linux-aws is built
+  // from linux-meta-aws-7.0, while linux-aws is the 6.8-series kernel source).
+  const names = [...new Set([sourceName ? null : packageName, debianSourceName, sourceName].filter((n): n is string => !!n))];
+  const packageNameFilter = names.length > 1 ? { in: names } : names[0];
 
   const ecosystemFilter = ecosystem
     ? { ecosystem: { startsWith: escapeLikePattern(ecosystem) } }
