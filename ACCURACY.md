@@ -2,7 +2,7 @@
 
 Scripts to measure Precision / Recall against official security advisories. This file grows as more products get boundary-value coverage — see [README.md](README.md) for everything else.
 
-For a comparison of heretix-api with another scanner on a real host, see [docs/detection-comparison-rhel9.md](docs/detection-comparison-rhel9.md) (RHEL 9.8) and [docs/detection-comparison-debian13.md](docs/detection-comparison-debian13.md) (Debian 13).
+For a comparison of heretix-api with another scanner on a real host, see [docs/detection-comparison-rhel9.md](docs/detection-comparison-rhel9.md) (RHEL 9.8) and [docs/detection-comparison-debian13.md](docs/detection-comparison-debian13.md) (Debian 13) and [docs/detection-comparison-ubuntu2404.md](docs/detection-comparison-ubuntu2404.md) (Ubuntu 24.04).
 
 ```bash
 pnpm validate:tomcat 9.0.100      # vs tomcat.apache.org
