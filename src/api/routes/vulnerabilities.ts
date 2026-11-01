@@ -5,6 +5,7 @@ import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { compareRpmVersions } from '../../utils/rpm-version.js';
 import { compareDpkgVersions } from '../../utils/dpkg-version.js';
+import { parseGoVersion } from '../../utils/go-version.js';
 import { VENDORS_WITH_OWN_VERSION_ORDER, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
 import { type FixStatus, type FixStatusInfo, debianTrackerStatus, ubuntuTrackerStatus } from '../../utils/fix-status.js';
 import { parseCPE } from '../../utils/cpe.js';
@@ -29,6 +30,8 @@ import {
   rpmAdvisoryVendor,
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
+  matchesGoVersion,
+  compareGoOrEncoded,
   matchesRpmVersionRange,
   fixAboveInstalled,
   orderByEncoding,
@@ -189,6 +192,9 @@ async function searchOSV(
   const isDpkgStyle = !!(ecosystem && isDpkgStyleDistro(ecosystem));
   const useDpkgRangeFallback = !!(version && isDpkgStyle);
   const useRpmRangeFallback = !!(ecosystem && version && isRpmStyleOsvDistro(ecosystem));
+  // Go ranges are compared as Go versions, not by the *Int columns, which cannot
+  // order pseudo-versions (see go-version.ts). Only when the queried version is one.
+  const useGoRange = ecosystem === 'Go' && !!version && parseGoVersion(version) !== null;
   const debianSourceName = ecosystem ? await resolveDebianSourceName(ecosystem, packageName) : null;
   // Debian, Ubuntu and Alpine records name the source package and give source versions. The
   // client's source package joins the names searched (it is the only way to find an Ubuntu or
@@ -221,6 +227,10 @@ async function searchOSV(
     versionFilter = version && !useDpkgRangeFallback && !useRpmRangeFallback
       ? { affectedVersions: { has: version } }
       : {};
+  } else if (useGoRange) {
+    // Fetched by package only, then filtered in JS below, like the distro fallbacks.
+    approximate = false;
+    versionFilter = {};
   } else {
     approximate = versionInt === null;
     if (versionInt !== null) {
@@ -262,12 +272,15 @@ async function searchOSV(
     ? rows.filter(r => matchesDpkgStyleVersion(r, matchVersion!))
     : useRpmRangeFallback
       ? rows.filter(r => matchesRpmStyleOsvVersion(r, version!))
-      : rows;
+      : useGoRange
+        ? rows.filter(r => (r.versionType === 'versions' ? r.affectedVersions.includes(version!) : matchesGoVersion(r, version!)))
+        : rows;
 
   const trackerStatus = await trackerStatusFor(filteredRows);
   const fixOrder: VersionOrder = isDpkgStyle
     ? compareDpkgVersions
-    : ecosystem && isRpmStyleOsvDistro(ecosystem) ? compareRpmVersions : PLAIN_VERSION_ORDER;
+    : ecosystem && isRpmStyleOsvDistro(ecosystem) ? compareRpmVersions
+      : ecosystem === 'Go' ? compareGoOrEncoded : PLAIN_VERSION_ORDER;
 
   return filteredRows.map(r => {
     const v = r.vulnerability;
@@ -972,7 +985,8 @@ async function searchAllVulnerabilities(
 
     const fixOrder: VersionOrder = normalizedEcosystem && isDpkgStyleDistro(normalizedEcosystem)
       ? compareDpkgVersions
-      : rpmVendor || (normalizedEcosystem && isRpmStyleOsvDistro(normalizedEcosystem)) ? compareRpmVersions : PLAIN_VERSION_ORDER;
+      : rpmVendor || (normalizedEcosystem && isRpmStyleOsvDistro(normalizedEcosystem)) ? compareRpmVersions
+        : normalizedEcosystem === 'Go' ? compareGoOrEncoded : PLAIN_VERSION_ORDER;
     all = dedup([...osvResults, ...nvdResults, ...advisoryResults, ...cnaResults], version, fixOrder);
     cacheSearchResults(cacheKey, all);
   }

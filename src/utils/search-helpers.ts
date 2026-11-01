@@ -4,6 +4,8 @@
  */
 import { compareDpkgVersions } from './dpkg-version.js';
 import { compareRpmVersions, rpmReleaseStream } from './rpm-version.js';
+import { compareGoVersions } from './go-version.js';
+import { normalizeVersion } from './version.js';
 import type { FixStatus } from './fix-status.js';
 
 export type VulnerabilityResult = {
@@ -624,6 +626,44 @@ export function matchesRpmStyleOsvVersion(
   if (row.introducedVersion && compareRpmVersions(version, row.introducedVersion) < 0) return false;
   if (row.fixedVersion && compareRpmVersions(version, row.fixedVersion) >= 0) return false;
   if (row.lastAffectedVersion && compareRpmVersions(version, row.lastAffectedVersion) > 0) return false;
+
+  return true;
+}
+
+/**
+ * Go module order (compareGoVersions), falling back to normalizeVersion() for a
+ * bound that is not a Go module version: a few OSV Go records carry one ("1.13",
+ * "9.6.0b1"), and those rows matched by the encoding until now. Null when neither
+ * can order the two.
+ */
+export function compareGoOrEncoded(a: string, b: string): number | null {
+  const go = compareGoVersions(a, b);
+  if (go !== null) return go;
+  const x = normalizeVersion(a);
+  const y = normalizeVersion(b);
+  if (x === null || y === null) return null;
+  return x > y ? 1 : x < y ? -1 : 0;
+}
+
+/**
+ * Same shape as matchesRpmStyleOsvVersion(), for OSV's Go ranges: the *Int
+ * columns put every pseudo-version of a release on one value (see
+ * go-version.ts), so these are compared as Go versions instead. A bound that
+ * cannot be compared at all does not exclude the version, as a null *Int did not.
+ */
+export function matchesGoVersion(
+  row: { affectedVersions: string[]; introducedVersion: string | null; fixedVersion: string | null; lastAffectedVersion: string | null },
+  version: string,
+): boolean {
+  if (row.affectedVersions.includes(version)) return true;
+
+  const hasRange = row.introducedVersion !== null || row.fixedVersion !== null || row.lastAffectedVersion !== null;
+  if (!hasRange) return false;
+
+  const cmp = (bound: string) => compareGoOrEncoded(version, bound);
+  if (row.introducedVersion && (cmp(row.introducedVersion) ?? 0) < 0) return false;
+  if (row.fixedVersion && (cmp(row.fixedVersion) ?? -1) >= 0) return false;
+  if (row.lastAffectedVersion && (cmp(row.lastAffectedVersion) ?? 0) > 0) return false;
 
   return true;
 }

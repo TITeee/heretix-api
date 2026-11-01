@@ -10,6 +10,8 @@ import {
   isRpmAdvisoryVendor,
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
+  matchesGoVersion,
+  compareGoOrEncoded,
   matchesRpmVersionRange,
   fixAboveInstalled,
   orderByEncoding,
@@ -460,6 +462,49 @@ describe('matchesDpkgStyleVersion', () => {
     expect(matchesDpkgStyleVersion(
       row({ introducedVersion: '0', fixedVersion: '1.0' }), '1.0~rc1',
     )).toBe(true);
+  });
+});
+
+describe('matchesGoVersion', () => {
+  const row = (o: Partial<Parameters<typeof matchesGoVersion>[0]> = {}) => ({
+    affectedVersions: [],
+    introducedVersion: null,
+    fixedVersion: null,
+    lastAffectedVersion: null,
+    ...o,
+  });
+
+  it('matches an untagged module up to its fixed pseudo-version (minio)', () => {
+    const r = row({ introducedVersion: '0', fixedVersion: '0.0.0-20240527191746-e0fe7cc39172' });
+    expect(matchesGoVersion(r, 'v0.0.0-20240101000000-aaaaaaaaaaaa')).toBe(true);
+    expect(matchesGoVersion(r, 'v0.0.0-20240527191746-e0fe7cc39172')).toBe(false);
+    expect(matchesGoVersion(r, 'v0.0.0-20240601000000-bbbbbbbbbbbb')).toBe(false);
+  });
+
+  it('matches between two pseudo-versions of one release (Nginx-UI)', () => {
+    const r = row({ introducedVersion: '1.9.10-0.20250517140552-daee3ac7ade1', fixedVersion: '1.9.10-0.20260728074433-a3999bd78a3b' });
+    expect(matchesGoVersion(r, 'v1.9.10-0.20251005005631-6de168c94540')).toBe(true);
+    expect(matchesGoVersion(r, 'v1.9.9')).toBe(false);
+    expect(matchesGoVersion(r, 'v1.9.10')).toBe(false);
+  });
+
+  it('matches between two pre-releases (stdlib 1.27.0-0 to 1.27.0-rc.3)', () => {
+    const r = row({ introducedVersion: '1.27.0-0', fixedVersion: '1.27.0-rc.3' });
+    expect(matchesGoVersion(r, '1.27.0-rc.1')).toBe(true);
+    expect(matchesGoVersion(r, '1.27.0-rc.3')).toBe(false);
+  });
+
+  it('keeps tagged ranges as they were, and honours last_affected', () => {
+    expect(matchesGoVersion(row({ introducedVersion: '0', fixedVersion: '0.33.0' }), 'v0.32.0')).toBe(true);
+    expect(matchesGoVersion(row({ introducedVersion: '0', fixedVersion: '0.33.0' }), 'v0.33.0')).toBe(false);
+    expect(matchesGoVersion(row({ introducedVersion: '1.0.0', lastAffectedVersion: '1.2.0' }), 'v1.2.0')).toBe(true);
+    expect(matchesGoVersion(row({ introducedVersion: '1.0.0', lastAffectedVersion: '1.2.0' }), 'v1.2.1')).toBe(false);
+  });
+
+  it('falls back to the encoding for a bound that is not a module version', () => {
+    expect(compareGoOrEncoded('1.12.5', '1.13')).toBe(-1);
+    expect(matchesGoVersion(row({ introducedVersion: '0', fixedVersion: '1.13' }), '1.12.5')).toBe(true);
+    expect(matchesGoVersion(row({ introducedVersion: '0', fixedVersion: '1.13' }), '1.13.1')).toBe(false);
   });
 });
 
