@@ -419,6 +419,31 @@ describe('GET /api/v1/vulnerabilities/search — distroPriority', () => {
     });
   });
 
+  // RHEL 9 kernel known_affected, fixed only in 9.2 E4S: the row is bounded by that older build,
+  // which a 9.8 host cannot update to.
+  it('gives no fixed version older than the installed build for an unfixed RHEL row', async () => {
+    await importAdvisoryData({
+      externalId: 'CVE-2026-6262',
+      cveId: 'CVE-2026-6262',
+      rawData: {},
+      affectedProducts: [{
+        vendor: 'red-hat-9', product: 'demo-kernel', versionEnd: '0:5.14.0-284.200.1.el9_2',
+        streamFixes: ['0:5.14.0-284.200.1.el9_2'], patchAvailable: false,
+        fixStatus: 'affected', fixStatusDetail: 'Affected',
+      }],
+    }, 'red-hat-vex');
+
+    const [current, eus] = await Promise.all([
+      search(app, 'package=demo-kernel&version=5.14.0-687.58.1.el9_8&ecosystem=Red%20Hat:9'),
+      search(app, 'package=demo-kernel&version=5.14.0-284.190.1.el9_2&ecosystem=Red%20Hat:9'),
+    ]);
+    expect(current.body.results).toHaveLength(1);
+    expect(current.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6262', fixedVersion: null, fixStatus: 'affected' });
+    // A build behind the fix of its own stream still gets that fix.
+    expect(eus.body.results).toHaveLength(1);
+    expect(eus.body.results[0]).toMatchObject({ fixedVersion: '0:5.14.0-284.200.1.el9_2' });
+  });
+
   it('returns Red Hat\'s per-CVE impact for an RHEL match', async () => {
     await importAdvisoryData({
       externalId: 'RHSA-2026:0001/CVE-2026-6363',
