@@ -88,10 +88,61 @@ export function buildAliases(
   return [...new Set([master.cveId, master.osvId, master.advisoryId, sourceOwnId].filter((v): v is string => !!v))];
 }
 
-/** Deduplicate by master ID (merge sources and aliases, keep first non-null fixedVersion) */
-export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
+/**
+ * How far a source's fixed version is trusted, lowest first: the vendor's or distribution's
+ * own advisory, OSV (the package ecosystem's), the CNA's CVE record, then NVD's reading of it.
+ */
+function fixSourceRank(source: string): number {
+  if (source === 'nvd') return 3;
+  if (source === 'cna') return 2;
+  if (source === 'osv') return 1;
+  return 0;
+}
+
+/** How many leading numbers two versions share ("9.4.5" and "9.4.6": 2). */
+function sharedLeadingNumbers(a: string, b: string): number {
+  const nums = (v: string) => v.match(/^\d+(?:\.\d+)*/)?.[0].split('.') ?? [];
+  const x = nums(a), y = nums(b);
+  let n = 0;
+  while (n < x.length && n < y.length && x[n] === y[n]) n++;
+  return n;
+}
+
+/**
+ * The fixed version to report when several sources or rows name one for the same finding:
+ * the most trusted source; then the fix on the installed version's own release line (9.4.6
+ * for 9.4.5, not 10.0.2); then the nearest, lowest one; then the first.
+ */
+function pickFix(candidates: Array<{ fix: string; source: string }>, installed: string | undefined, order: VersionOrder | undefined): string {
+  let best = candidates[0];
+  for (const c of candidates.slice(1)) {
+    const rank = fixSourceRank(c.source) - fixSourceRank(best.source);
+    if (rank !== 0) { if (rank < 0) best = c; continue; }
+    if (installed) {
+      const line = sharedLeadingNumbers(c.fix, installed) - sharedLeadingNumbers(best.fix, installed);
+      if (line !== 0) { if (line > 0) best = c; continue; }
+    }
+    if (order && (order(c.fix, best.fix) ?? 0) < 0) best = c;
+  }
+  return best.fix;
+}
+
+/**
+ * Deduplicate by master ID, merging sources and aliases. When more than one result names a
+ * fixed version, pickFix() chooses it from all of them; `installed` and `order` let it prefer
+ * the installed version's release line and the nearest fix.
+ */
+export function dedup(items: VulnerabilityResult[], installed?: string, order?: VersionOrder): VulnerabilityResult[] {
   const seen = new Map<string, VulnerabilityResult>();
+  const fixes = new Map<string, Array<{ fix: string; source: string }>>();
   for (const item of items) {
+    if (item.fixedVersion) {
+      const list = fixes.get(item.id) ?? [];
+      // sources[0] is the source this result came from; `source` is the master's kind ("nvd"
+      // for anything with a CVE id).
+      list.push({ fix: item.fixedVersion, source: item.sources[0] ?? item.source });
+      fixes.set(item.id, list);
+    }
     const existing = seen.get(item.id);
     if (existing) {
       for (const s of item.sources) {
@@ -102,9 +153,6 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
       // consumer needs to follow a finding across a rename.
       for (const a of item.aliases) {
         if (!existing.aliases.includes(a)) existing.aliases.push(a);
-      }
-      if (!existing.fixedVersion && item.fixedVersion) {
-        existing.fixedVersion = item.fixedVersion;
       }
       if (!existing.distroPriority && item.distroPriority) {
         existing.distroPriority = item.distroPriority;
@@ -122,6 +170,9 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
     } else {
       seen.set(item.id, { ...item, sources: [...item.sources], aliases: [...item.aliases] });
     }
+  }
+  for (const [id, list] of fixes) {
+    seen.get(id)!.fixedVersion = pickFix(list, installed, order);
   }
   return [...seen.values()];
 }

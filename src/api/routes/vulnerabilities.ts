@@ -970,7 +970,10 @@ async function searchAllVulnerabilities(
       isDistro || isLanguage || isAdvisoryOnly ? Promise.resolve([]) : searchCna(packageName, version),
     ]);
 
-    all = dedup([...osvResults, ...nvdResults, ...advisoryResults, ...cnaResults]);
+    const fixOrder: VersionOrder = normalizedEcosystem && isDpkgStyleDistro(normalizedEcosystem)
+      ? compareDpkgVersions
+      : rpmVendor || (normalizedEcosystem && isRpmStyleOsvDistro(normalizedEcosystem)) ? compareRpmVersions : PLAIN_VERSION_ORDER;
+    all = dedup([...osvResults, ...nvdResults, ...advisoryResults, ...cnaResults], version, fixOrder);
     cacheSearchResults(cacheKey, all);
   }
 

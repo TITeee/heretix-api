@@ -82,12 +82,20 @@ describe('dedup', () => {
     expect(dedup(items)[0].sources).toEqual(['nvd']);
   });
 
-  it('keeps the first non-null fixedVersion without overwriting it', () => {
+  it('keeps the first non-null fixedVersion when nothing else tells two apart', () => {
+    const items = [
+      makeResult({ id: 'v1', sources: ['nvd'], fixedVersion: '1.2.3' }),
+      makeResult({ id: 'v1', sources: ['nvd'], fixedVersion: '9.9.9' }),
+    ];
+    expect(dedup(items)[0].fixedVersion).toBe('1.2.3');
+  });
+
+  it("takes OSV's fixedVersion over NVD's", () => {
     const items = [
       makeResult({ id: 'v1', sources: ['nvd'], fixedVersion: '1.2.3' }),
       makeResult({ id: 'v1', sources: ['osv'], fixedVersion: '9.9.9' }),
     ];
-    expect(dedup(items)[0].fixedVersion).toBe('1.2.3');
+    expect(dedup(items)[0].fixedVersion).toBe('9.9.9');
   });
 
   it('fills in fixedVersion from a later item when the first is null', () => {
@@ -813,5 +821,56 @@ describe('orderByEncoding with plainOnly', () => {
   it('cannot tell once either side has a suffix, so a build like 7.0.1-R1456 is not read as older', () => {
     expect(plain('7.0.1-R1456', '7.0.1')).toBeNull();
     expect(fixAboveInstalled('7.0.1-R1456', '7.0.1', plain)).toBe('7.0.1-R1456');
+  });
+});
+
+describe('dedup choosing among fixed versions', () => {
+  const plain = orderByEncoding(v => { const p = v.split('.').map(Number); return p.some(Number.isNaN) ? null : BigInt(p[0] ?? 0) * 1_000_000n + BigInt(p[1] ?? 0) * 1_000n + BigInt(p[2] ?? 0); }, true);
+  const fixOf = (items: VulnerabilityResult[], installed?: string) => dedup(items, installed, plain)[0].fixedVersion;
+
+  it("prefers the vendor's fix over NVD's, whichever came first", () => {
+    expect(fixOf([
+      makeResult({ source: 'nvd', sources: ['nvd'], fixedVersion: '10.1.37' }),
+      makeResult({ sources: ['advisory-tomcat'], fixedVersion: '10.1.39' }),
+    ], '10.1.36')).toBe('10.1.39');
+  });
+
+  it('ranks OSV above the CNA record and the CNA record above NVD', () => {
+    expect(fixOf([
+      makeResult({ source: 'nvd', sources: ['nvd'], fixedVersion: '1.0.3' }),
+      makeResult({ source: 'cna', sources: ['cna'], fixedVersion: '1.0.2' }),
+    ], '1.0.0')).toBe('1.0.2');
+    expect(fixOf([
+      makeResult({ source: 'cna', sources: ['cna'], fixedVersion: '1.0.2' }),
+      makeResult({ source: 'osv', sources: ['osv'], fixedVersion: '1.0.4' }),
+    ], '1.0.0')).toBe('1.0.4');
+  });
+
+  it("prefers the fix on the installed version's release line", () => {
+    expect(fixOf([
+      makeResult({ source: 'advisory-splunk', sources: ['advisory-splunk'], fixedVersion: '10.0.2' }),
+      makeResult({ source: 'advisory-splunk', sources: ['advisory-splunk'], fixedVersion: '9.4.6' }),
+    ], '9.4.5')).toBe('9.4.6');
+  });
+
+  it('takes the nearest fix on the same line', () => {
+    expect(fixOf([
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '8.18.7' }),
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '8.18.6' }),
+    ], '8.18.5')).toBe('8.18.6');
+  });
+
+  it('keeps the first when nothing tells them apart', () => {
+    expect(fixOf([
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '6.5.4.8-89n' }),
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '6.5.4.9-1n' }),
+    ], '6.5.4.7')).toBe('6.5.4.8-89n');
+  });
+
+  it('keeps a lone fix whichever source gave it', () => {
+    expect(fixOf([
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: null }),
+      makeResult({ source: 'nvd', sources: ['nvd'], fixedVersion: '2.0.0' }),
+    ], '1.0.0')).toBe('2.0.0');
   });
 });
