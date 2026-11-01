@@ -3,6 +3,7 @@ import { panVersionToInt } from './pan-version.js';
 import { ivantiVersionToInt } from './ivanti-version.js';
 import { citrixVersionToInt } from './citrix-version.js';
 import { microsoftVersionToInt } from './microsoft-version.js';
+import { sonicWallVersionToInt } from './sonicwall-version.js';
 
 /** AdvisoryAffectedProduct.vendor for Palo Alto Networks rows (pan-fetcher.ts). */
 export const PAN_VENDOR = 'paloalto';
@@ -12,6 +13,8 @@ export const IVANTI_VENDOR = 'ivanti';
 export const CITRIX_VENDOR = 'citrix';
 /** AdvisoryAffectedProduct.vendor for Windows Server rows (msrc-fetcher.ts). */
 export const MICROSOFT_VENDOR = 'microsoft';
+/** AdvisoryAffectedProduct.vendor for SonicWall rows (sonicwall-fetcher.ts). */
+export const SONICWALL_VENDOR = 'sonicwall';
 
 /**
  * Vendors whose rows are encoded with their own version order instead of
@@ -23,6 +26,7 @@ const VENDOR_VERSION_ENCODERS: Record<string, (version: string) => bigint | null
   [IVANTI_VENDOR]: ivantiVersionToInt,
   [CITRIX_VENDOR]: citrixVersionToInt,
   [MICROSOFT_VENDOR]: microsoftVersionToInt,
+  [SONICWALL_VENDOR]: sonicWallVersionToInt,
 };
 
 export const VENDORS_WITH_OWN_VERSION_ORDER = Object.keys(VENDOR_VERSION_ENCODERS);
@@ -38,7 +42,9 @@ export const VENDORS_WITH_OWN_VERSION_ORDER = Object.keys(VENDOR_VERSION_ENCODER
  * branch-plus-build versions ("14.1-73.32"), of which normalizeVersion() keeps only
  * the 73 -- see citrix-version.ts -- and Windows builds ("10.0.20348.5761"),
  * whose build normalizeVersion() caps and whose update revision it drops -- see
- * microsoft-version.ts. Writer
+ * microsoft-version.ts -- and SonicWall's release-plus-build versions
+ * ("7.0.1-5161"), whose build normalizeVersion() caps -- see
+ * sonicwall-version.ts. Writer
  * (advisory-fetcher.ts) and reader (routes/vulnerabilities.ts) must both go
  * through here so the stored bound and the queried version are always encoded
  * the same way.
