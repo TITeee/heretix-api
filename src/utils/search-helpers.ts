@@ -625,6 +625,43 @@ export function matchesRpmVersionRange(
   return true;
 }
 
+/** Orders two versions, or says it cannot (null). */
+export type VersionOrder = (a: string, b: string) => number | null;
+
+const PLAIN_VERSION_RE = /^\d+(\.\d+)*$/;
+
+/**
+ * Order by an integer encoding (normalizeVersion(), encodeAdvisoryVersion()). The encoding
+ * folds versions together (a component over 999 is clamped, so 9.3.2408.100 and
+ * 9.3.2408.110 encode alike), so equal codes for different strings are "cannot tell".
+ *
+ * `plainOnly` limits it to dotted numbers. A suffix means different things to different
+ * vendors, and normalizeVersion() reads most as a pre-release: SonicWall's build
+ * 7.0.1-R1456 would sort below 7.0.1, Magento's patch 2.4.7-p3 below 2.4.7.
+ */
+export function orderByEncoding(encode: (v: string) => bigint | null, plainOnly = false): VersionOrder {
+  return (a, b) => {
+    if (plainOnly && (!PLAIN_VERSION_RE.test(a) || !PLAIN_VERSION_RE.test(b))) return null;
+    const x = encode(a), y = encode(b);
+    if (x === null || y === null || (x === y && a !== b)) return null;
+    return x > y ? 1 : x < y ? -1 : 0;
+  };
+}
+
+/**
+ * The fixed version to report for an installed version, or null when it is no update for
+ * it. An update is a newer build, so a fix at or below the installed version cannot be the
+ * one to install, whichever source named it: an older release line's fix (SonicWall 6.2.7.10
+ * on 6.5.2.2), or a row that lists the installed version as affected past its own fix.
+ * Dropped only when `order` is sure; with no installed version the fix is kept.
+ */
+export function fixAboveInstalled(fixed: string | null, installed: string | undefined, order: VersionOrder): string | null {
+  if (!fixed || !installed) return fixed;
+  if (fixed === installed) return null;
+  const c = order(fixed, installed);
+  return c !== null && c <= 0 ? null : fixed;
+}
+
 /**
  * The lowercase patterns a typed prefix is matched under when suggesting product
  * names, against lower(name): as typed, and with its spaces as "_" or "-" (NVD's

@@ -444,6 +444,28 @@ describe('GET /api/v1/vulnerabilities/search — distroPriority', () => {
     expect(eus.body.results[0]).toMatchObject({ fixedVersion: '0:5.14.0-284.200.1.el9_2' });
   });
 
+  // One SonicWall row lists affected versions from two release lines but names the older
+  // line's fix, which is below a 6.5 installation.
+  it('gives no vendor fixed version below the installed version', async () => {
+    await importAdvisoryData({
+      externalId: 'CVE-2026-6161',
+      cveId: 'CVE-2026-6161',
+      rawData: {},
+      affectedProducts: [{
+        vendor: 'sonicwall', product: 'demo-sonicos', affectedVersions: ['6.2.7.9', '6.5.2.2'],
+        versionFixed: '6.2.7.10', patchAvailable: true,
+      }],
+    }, 'advisory-sonicwall');
+
+    const [newer, older] = await Promise.all([
+      search(app, 'package=demo-sonicos&version=6.5.2.2'),
+      search(app, 'package=demo-sonicos&version=6.2.7.9'),
+    ]);
+    expect(newer.body.results).toHaveLength(1);
+    expect(newer.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6161', fixedVersion: null });
+    expect(older.body.results[0]).toMatchObject({ fixedVersion: '6.2.7.10' });
+  });
+
   it('returns Red Hat\'s per-CVE impact for an RHEL match', async () => {
     await importAdvisoryData({
       externalId: 'RHSA-2026:0001/CVE-2026-6363',

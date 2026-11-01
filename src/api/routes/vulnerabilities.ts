@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { compareRpmVersions } from '../../utils/rpm-version.js';
+import { compareDpkgVersions } from '../../utils/dpkg-version.js';
 import { VENDORS_WITH_OWN_VERSION_ORDER, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
 import { type FixStatus, type FixStatusInfo, debianTrackerStatus, ubuntuTrackerStatus } from '../../utils/fix-status.js';
 import { parseCPE } from '../../utils/cpe.js';
@@ -29,6 +30,9 @@ import {
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
   matchesRpmVersionRange,
+  fixAboveInstalled,
+  orderByEncoding,
+  type VersionOrder,
   buildAliases,
   filterBySeverity,
   summaryBudgetChars,
@@ -170,6 +174,9 @@ async function resolveDebianSourceName(ecosystem: string, packageName: string): 
 /** The source package of an installed package, when the client knows it (see sourceFields). */
 export type SourcePackageRef = { name?: string; version?: string };
 
+/** Orders dotted-number versions by normalizeVersion(); see orderByEncoding(). */
+const PLAIN_VERSION_ORDER = orderByEncoding(normalizeVersion, true);
+
 /** Search master via OSV table */
 async function searchOSV(
   packageName: string,
@@ -258,6 +265,9 @@ async function searchOSV(
       : rows;
 
   const trackerStatus = await trackerStatusFor(filteredRows);
+  const fixOrder: VersionOrder = isDpkgStyle
+    ? compareDpkgVersions
+    : ecosystem && isRpmStyleOsvDistro(ecosystem) ? compareRpmVersions : PLAIN_VERSION_ORDER;
 
   return filteredRows.map(r => {
     const v = r.vulnerability;
@@ -266,8 +276,9 @@ async function searchOSV(
       ? trackerStatus.get(`${r.ecosystem} ${r.packageName} ${v.cveId}`) ?? null
       : null;
     const fixFields = { fixStatus: fix?.fixStatus ?? null, fixStatusDetail: fix?.fixStatusDetail ?? null };
+    const fixedVersion = fixAboveInstalled(r.fixedVersion ?? null, matchVersion, fixOrder);
     if (v.masterVuln) {
-      return { ...masterToResult(v.masterVuln, approximate, 'osv', r.fixedVersion ?? null, v.osvId), distroPriority: r.distroPriority ?? v.distroPriority, ...fixFields };
+      return { ...masterToResult(v.masterVuln, approximate, 'osv', fixedVersion, v.osvId), distroPriority: r.distroPriority ?? v.distroPriority, ...fixFields };
     }
     // Fallback before backfill
     return {
@@ -284,7 +295,7 @@ async function searchOSV(
       isKev: false,
       epssScore: null,
       epssPercentile: null,
-      fixedVersion: r.fixedVersion ?? null,
+      fixedVersion,
       distroPriority: r.distroPriority ?? v.distroPriority,
       ...fixFields,
       aliases: buildAliases({ cveId: v.cveId }, v.osvId),
@@ -401,7 +412,7 @@ async function searchNVD(
 
   return rows.map(r => {
     const v = r.vulnerability;
-    const fixedVersion = r.versionEndExcluding ?? null;
+    const fixedVersion = fixAboveInstalled(r.versionEndExcluding ?? null, version, PLAIN_VERSION_ORDER);
     if (v.masterVuln) {
       return masterToResult(v.masterVuln, approximate, 'nvd', fixedVersion, v.cveId);
     }
@@ -526,7 +537,7 @@ async function searchAdvisory(
 
   return rows.map(r => {
     const adv = r.advisory;
-    const fixedVersion = r.versionFixed ?? null;
+    const fixedVersion = fixAboveInstalled(r.versionFixed ?? null, version, orderByEncoding(v => encodeAdvisoryVersion(r.vendor, v), !ownOrderInts.has(r.vendor)));
     const approximateMatch = version === undefined
       || (ownOrderInts.has(r.vendor) ? ownOrderInts.get(r.vendor) === null : approximate);
     const requiresFeatures = requiredWindowsFeatures(adv.component);
@@ -659,7 +670,7 @@ async function searchCna(
     // versionEnd is the exclusive upper bound the CNA declared, i.e. the
     // version the fix landed in. lastAffected is inclusive and therefore is
     // *not* a fixed version.
-    return [masterToResult(master, approximate, 'cna', r.versionEnd, r.vulnerability.cveId)];
+    return [masterToResult(master, approximate, 'cna', fixAboveInstalled(r.versionEnd, version, PLAIN_VERSION_ORDER), r.vulnerability.cveId)];
   });
 }
 
@@ -693,11 +704,9 @@ function rowFixStatus(r: { fixStatus: string | null; fixStatusDetail: string | n
 
 function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean, version: string | undefined): VulnerabilityResult {
   const adv = r.advisory;
-  const bound = r.versionEnd ?? r.versionFixed ?? null;
-  // An update is a newer build, so a fix at or below the installed one is no fix for it. An
-  // unfixed Red Hat VEX row is bounded by the newest fix any release stream received, which can
-  // be an older stream's (kernel 5.14.0-284.200.1.el9_2, E4S only, on a 687.58.1.el9_8 host).
-  const fixedVersion = bound && version && compareRpmVersions(bound, version) <= 0 ? null : bound;
+  // An unfixed Red Hat VEX row is bounded by the newest fix any release stream received, which
+  // can be an older stream's (kernel 5.14.0-284.200.1.el9_2, E4S only, on a 687.58.1.el9_8 host).
+  const fixedVersion = fixAboveInstalled(r.versionEnd ?? r.versionFixed ?? null, version, compareRpmVersions);
   if (adv.masterVuln) {
     return { ...masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority, ...rowFixStatus(r) };
   }

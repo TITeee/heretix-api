@@ -11,6 +11,8 @@ import {
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
   matchesRpmVersionRange,
+  fixAboveInstalled,
+  orderByEncoding,
   isRpmStyleOsvDistro,
   isAdvisoryOnlyEcosystem,
   cnaVersionWhere,
@@ -758,5 +760,58 @@ describe('escapeLikePattern', () => {
   it('escapes the wildcards and the escape character', () => {
     expect(escapeLikePattern('big_ip%')).toBe('big\\_ip\\%');
     expect(escapeLikePattern('a\\b')).toBe('a\\\\b');
+  });
+});
+
+describe('fixAboveInstalled', () => {
+  const byInt = orderByEncoding(v => (/^\d+$/.test(v) ? BigInt(v) : null));
+
+  it('keeps a fix newer than the installed version', () => {
+    expect(fixAboveInstalled('11', '10', byInt)).toBe('11');
+  });
+
+  it('drops a fix older than or equal to the installed version', () => {
+    expect(fixAboveInstalled('9', '10', byInt)).toBeNull();
+    expect(fixAboveInstalled('10', '10', byInt)).toBeNull();
+  });
+
+  it('keeps the fix when the order cannot tell', () => {
+    expect(fixAboveInstalled('9', '10-beta', byInt)).toBe('9');
+  });
+
+  it('keeps the fix when no installed version is known', () => {
+    expect(fixAboveInstalled('9', undefined, byInt)).toBe('9');
+  });
+
+  it('passes a missing fix through', () => {
+    expect(fixAboveInstalled(null, '10', byInt)).toBeNull();
+  });
+});
+
+describe('orderByEncoding', () => {
+  // Like normalizeVersion(): 9.3.2408.100 and 9.3.2408.110 encode alike.
+  const clamped = orderByEncoding(v => (v.startsWith('9.3.2408.') ? 9003999000n : null));
+
+  it('cannot tell two different versions apart when they encode alike', () => {
+    expect(clamped('9.3.2408.107', '9.3.2408.110')).toBeNull();
+  });
+
+  it('reads the same string as equal', () => {
+    expect(clamped('9.3.2408.107', '9.3.2408.107')).toBe(0);
+  });
+});
+
+describe('orderByEncoding with plainOnly', () => {
+  // Reads a suffix as a pre-release, like normalizeVersion() does for most of them.
+  const encode = (v: string) => { const m = v.match(/^(\d+)\.(\d+)\.(\d+)(-.+)?$/); return m ? BigInt(m[1]) * 1_000_000n + BigInt(m[2]) * 1_000n + BigInt(m[3]) - (m[4] ? 1n : 0n) : null; };
+  const plain = orderByEncoding(encode, true);
+
+  it('orders dotted numbers', () => {
+    expect(plain('6.2.7', '6.5.2')).toBe(-1);
+  });
+
+  it('cannot tell once either side has a suffix, so a build like 7.0.1-R1456 is not read as older', () => {
+    expect(plain('7.0.1-R1456', '7.0.1')).toBeNull();
+    expect(fixAboveInstalled('7.0.1-R1456', '7.0.1', plain)).toBe('7.0.1-R1456');
   });
 });
