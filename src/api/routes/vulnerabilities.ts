@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
 import { normalizeVersion } from '../../utils/version.js';
+import { compareRpmVersions } from '../../utils/rpm-version.js';
 import { VENDORS_WITH_OWN_VERSION_ORDER, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
 import { type FixStatus, type FixStatusInfo, debianTrackerStatus, ubuntuTrackerStatus } from '../../utils/fix-status.js';
 import { parseCPE } from '../../utils/cpe.js';
@@ -690,9 +691,13 @@ function rowFixStatus(r: { fixStatus: string | null; fixStatusDetail: string | n
   return { fixStatus: r.fixStatus as FixStatus | null, fixStatusDetail: r.fixStatusDetail };
 }
 
-function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean): VulnerabilityResult {
+function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean, version: string | undefined): VulnerabilityResult {
   const adv = r.advisory;
-  const fixedVersion = r.versionEnd ?? r.versionFixed ?? null;
+  const bound = r.versionEnd ?? r.versionFixed ?? null;
+  // An update is a newer build, so a fix at or below the installed one is no fix for it. An
+  // unfixed Red Hat VEX row is bounded by the newest fix any release stream received, which can
+  // be an older stream's (kernel 5.14.0-284.200.1.el9_2, E4S only, on a 687.58.1.el9_8 host).
+  const fixedVersion = bound && version && compareRpmVersions(bound, version) <= 0 ? null : bound;
   if (adv.masterVuln) {
     return { ...masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority, ...rowFixStatus(r) };
   }
@@ -796,7 +801,7 @@ async function searchAdvisoryRpm(
   const { unconditional, ranged } = await getRpmProductIndex(product, vendor);
 
   const matchedRanged = version ? ranged.filter(r => matchesRpmVersionRange(r, version)) : ranged;
-  return [...unconditional, ...matchedRanged].map(r => rpmRowToResult(r, approximate));
+  return [...unconditional, ...matchedRanged].map(r => rpmRowToResult(r, approximate, version));
 }
 
 /** Search NVD table by CPE */
