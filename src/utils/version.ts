@@ -163,8 +163,10 @@ export function normalizeVersion(version: string): bigint | null {
   // updates; "24.0.0-IF006", an IBM interim fix) comes after its release, like the "-N"
   // release it stands in for. The pre-release check below would read the letter as
   // "1.0.0-beta" and put it one below the release, so a range from 7.4.13 to 7.4.13-u92
-  // ended before it began.
-  const hyphenPost = withoutEpoch.match(/^(.*\d)-(?:u|update|sp|if|ifix)(\d{1,3})$/i);
+  // ended before it began. A patch level is the same: Composer's "2.4.7-p3" (Magento's
+  // patch releases) and Ruby's "1.8.7-p21" come after 2.4.7 and 1.8.7, and read as
+  // pre-releases they put 2.4.7-p3 inside a range fixed in 2.4.7.
+  const hyphenPost = withoutEpoch.match(/^(.*\d)-(?:u|update|sp|if|ifix|p|pl|patch)(\d{1,3})$/i);
   if (hyphenPost) return normalizeVersion(`${hyphenPost[1]}-${Number(hyphenPost[2])}`);
 
   // Detect pre-release (only when character after hyphen is a letter)

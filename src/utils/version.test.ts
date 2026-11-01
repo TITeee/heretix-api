@@ -156,6 +156,16 @@ describe('normalizeVersion', () => {
       expect(normalizeVersion('7.4.13-update5')).toBe(normalizeVersion('7.4.13-5'));
     });
 
+    it('puts a hyphen-joined patch level after its release (Magento "2.4.7-p3", Ruby "1.8.7-p21")', () => {
+      ordered('2.4.7-beta1', '2.4.7', '2.4.7-p1', '2.4.7-p3', '2.4.8');
+      ordered('1.8.7', '1.8.7-p21', '1.8.7-p374', '1.9.0');
+      ordered('3.0.7', '3.0.7-pl1', '3.0.8');
+      expect(normalizeVersion('2.4.7-patch2')).toBe(normalizeVersion('2.4.7-p2'));
+      // magento/community-edition 2.4.7-p3 is past a range fixed in 2.4.7.
+      expect(isVersionInRange('2.4.7-p3', '2.4.0', '2.4.7')).toBe(false);
+      expect(isVersionInRange('2.4.7-p3', '2.4.7', '2.4.7-p4')).toBe(true);
+    });
+
     it('still reads other hyphenated letters as pre-releases and leaves RPM releases alone', () => {
       expect(normalizeVersion('1.0.0-beta')).toBe((normalizeVersion('1.0.0') as bigint) - 1n);
       expect(normalizeVersion('2.9.13-6.el9')).toBe(normalizeVersion('2.9.13-6'));

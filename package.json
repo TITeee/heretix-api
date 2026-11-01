@@ -45,6 +45,7 @@
     "migrate:cna-dotted-wildcard-ranges": "node dist/scripts/migrate-cna-dotted-wildcard-ranges.js",
     "migrate:underscore-labelled-versions": "node dist/scripts/migrate-underscore-labelled-versions.js",
     "migrate:hyphen-update-versions": "node dist/scripts/migrate-hyphen-update-versions.js",
+    "migrate:hyphen-patch-versions": "node dist/scripts/migrate-hyphen-patch-versions.js",
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
     "migrate:module-version-start": "node dist/scripts/migrate-module-version-start.js",
     "migrate:fix-implausible-module-floor": "node dist/scripts/migrate-fix-implausible-module-floor.js",
