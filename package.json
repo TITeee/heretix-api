@@ -47,6 +47,7 @@
     "migrate:hyphen-update-versions": "node dist/scripts/migrate-hyphen-update-versions.js",
     "migrate:hyphen-patch-versions": "node dist/scripts/migrate-hyphen-patch-versions.js",
     "migrate:hyphen-pre-release-versions": "node dist/scripts/migrate-hyphen-pre-release-versions.js",
+    "migrate:recompute-version-ints": "node dist/scripts/migrate-recompute-version-ints.js",
     "migrate:version-end": "node dist/scripts/migrate-version-end-from-fixed.js",
     "migrate:module-version-start": "node dist/scripts/migrate-module-version-start.js",
     "migrate:fix-implausible-module-floor": "node dist/scripts/migrate-fix-implausible-module-floor.js",
