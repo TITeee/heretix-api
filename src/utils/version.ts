@@ -51,6 +51,41 @@ function labelledVersion(version: string):
   return null;
 }
 
+// Pre-release words after a hyphen, by stage (PRE_RELEASE_STAGES' numbering).
+// Whole words only, plus Maven's "M": the single letters of PRE_RELEASE_STAGES
+// mean other things after a hyphen -- ISC's "9.11.3-S1", Palo Alto's "6.0.10-c823"
+// and "6.3.6-b10", Alpine's "-r0" -- so they keep the generic reading.
+const HYPHEN_PRE_RELEASE_STAGES: Record<string, number> = {
+  dev: 0, canary: 0, next: 0,
+  alpha: 1, ea: 1,
+  beta: 2, pre: 2, preview: 2, m: 2, milestone: 2,
+  rc: 3, cr: 3,
+};
+
+/**
+ * Split a hyphen-joined pre-release: a dotted base of up to three numbers (a
+ * fourth only when it is 0, Shopware's "6.7.0.0-rc1"), a word above, and an
+ * optional number joined by a dot, a hyphen or nothing ("-beta.13", "-alpha-1",
+ * "-RC1", "-beta00017"). Dotted numbers after it are ignored
+ * ("-preview.1.24080.9").
+ */
+function hyphenPreRelease(version: string): { base: string; stage: number; num: number } | null {
+  const m = version.match(/^[vV]?(\d+(?:\.\d+){0,2})(?:\.0)?-([A-Za-z]+)(?:[.-]?(\d+)(?:\.\d+)*)?$/);
+  if (!m) return null;
+  const stage = HYPHEN_PRE_RELEASE_STAGES[m[2].toLowerCase()];
+  if (stage === undefined) return null;
+  return { base: m[1], stage, num: Number(m[3] ?? 0) };
+}
+
+/** A pre-release's value: below its release, by stage and then by number. */
+function preReleaseValue(base: string, stage: number, num: number): bigint | null {
+  const baseInt = normalizeVersion(base);
+  if (baseInt === null) return null;
+  const rank = stage * PRE_RELEASE_STAGE_WIDTH + Math.min(num, PRE_RELEASE_STAGE_WIDTH - 1);
+  const value = baseInt - 1n - BigInt(PRE_RELEASE_MAX_RANK - rank);
+  return value > 0n ? value : 0n;
+}
+
 /**
  * Convert a semantic version string to a numeric value
  * "1.2.3"       -> 1002003000  (major * 1_000_000_000 + minor * 1_000_000 + patch * 1_000 + release)
@@ -150,14 +185,19 @@ export function normalizeVersion(version: string): bigint | null {
   // and far past the release the label belongs to. See labelledVersion().
   const labelled = labelledVersion(withoutEpoch);
   if (labelled) {
-    const base = normalizeVersion(labelled.base);
-    if (base === null) return null;
-    if (labelled.kind === 'post') return normalizeVersion(`${labelled.base}-${labelled.num}`);
-    const rank = PRE_RELEASE_STAGES[labelled.label] * PRE_RELEASE_STAGE_WIDTH
-      + Math.min(labelled.num, PRE_RELEASE_STAGE_WIDTH - 1);
-    const value = base - 1n - BigInt(PRE_RELEASE_MAX_RANK - rank);
-    return value > 0n ? value : 0n;
+    if (labelled.kind === 'post') {
+      return normalizeVersion(labelled.base) === null ? null : normalizeVersion(`${labelled.base}-${labelled.num}`);
+    }
+    return preReleaseValue(labelled.base, PRE_RELEASE_STAGES[labelled.label], labelled.num);
   }
+
+  // A pre-release joined by a hyphen ("1.0.0-beta.13", "42.0.0-alpha.3", Tomcat's
+  // "10.0.0-M1", NuGet's "9.0.0-preview.1.24080.9") is ordered the same way. The
+  // pre-release check below puts every one of a release's pre-releases on the same
+  // value, so a range from 1.0.0-beta.10 to 1.0.0-beta.13 ended before it began and
+  // matched nothing.
+  const hyphenPre = hyphenPreRelease(withoutEpoch);
+  if (hyphenPre) return preReleaseValue(hyphenPre.base, hyphenPre.stage, hyphenPre.num);
 
   // An update, service pack or interim fix joined by a hyphen ("7.4.13-u92", Liferay's DXP
   // updates; "24.0.0-IF006", an IBM interim fix) comes after its release, like the "-N"

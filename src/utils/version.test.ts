@@ -44,7 +44,7 @@ describe('normalizeVersion', () => {
 
     it('does not mistake an ordinary RPM release or pre-release for a pseudo-version', () => {
       expect(normalizeVersion('2.9.13-6.el9')).toBe(2009013006n);
-      expect(normalizeVersion('2.0.0-beta.1')).toBe((normalizeVersion('2.0.0') as bigint) - 1n);
+      expect(normalizeVersion('2.0.0-beta.1')).toBe(normalizeVersion('2.0.0b1'));
     });
   });
 
@@ -52,10 +52,10 @@ describe('normalizeVersion', () => {
     expect(normalizeVersion('2.9.13-6.el9')).toBe(2009013006n);
   });
 
-  it('treats a pre-release as slightly less than the release version', () => {
-    const release = normalizeVersion('2.0.0');
-    const pre = normalizeVersion('2.0.0-beta.1');
-    expect(pre).toBe((release as bigint) - 1n);
+  it('treats a pre-release as less than the release version, but above the previous one', () => {
+    const pre = normalizeVersion('2.0.0-beta.1') as bigint;
+    expect(pre).toBeLessThan(normalizeVersion('2.0.0') as bigint);
+    expect(pre).toBeGreaterThan(normalizeVersion('1.9.999') as bigint);
   });
 
   it('does not treat a numeric RPM revision as a pre-release', () => {
@@ -167,14 +167,36 @@ describe('normalizeVersion', () => {
     });
 
     it('still reads other hyphenated letters as pre-releases and leaves RPM releases alone', () => {
-      expect(normalizeVersion('1.0.0-beta')).toBe((normalizeVersion('1.0.0') as bigint) - 1n);
       expect(normalizeVersion('2.9.13-6.el9')).toBe(normalizeVersion('2.9.13-6'));
       expect(normalizeVersion('1.2.3-usb')).toBe((normalizeVersion('1.2.3') as bigint) - 1n);
+      // Single letters mean other things after a hyphen (ISC "-S1", Palo Alto "-c823").
+      expect(normalizeVersion('9.11.3-S1')).toBe((normalizeVersion('9.11.3') as bigint) - 1n);
+      expect(normalizeVersion('6.0.10-c823')).toBe((normalizeVersion('6.0.10') as bigint) - 1n);
+      expect(normalizeVersion('1.0.0-b1')).toBe((normalizeVersion('1.0.0') as bigint) - 1n);
     });
 
-    it('keeps a hyphenated pre-release at release - 1, above every attached one', () => {
-      expect(normalizeVersion('1.0.0-rc1')).toBe((normalizeVersion('1.0.0') as bigint) - 1n);
-      ordered('1.0.0rc1', '1.0.0-rc1', '1.0.0');
+    it('orders a hyphenated pre-release by stage and number, the same as an attached one', () => {
+      expect(normalizeVersion('1.0.0-rc1')).toBe(normalizeVersion('1.0.0rc1'));
+      expect(normalizeVersion('1.0.0-beta.13')).toBe(normalizeVersion('1.0.0b13'));
+      ordered('0.9.9', '1.0.0-dev', '1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.27', '1.0.0-beta',
+        '1.0.0-beta.10', '1.0.0-beta.13', '1.0.0-rc.0', '1.0.0-rc.2', '1.0.0');
+    });
+
+    it('reads the hyphenated pre-release shapes of npm, Maven, NuGet, Go and Shopware', () => {
+      ordered('4.0.0-canary.0', '4.0.0-canary.34', '4.0.0-rc.1', '4.0.0');
+      ordered('15.0.0-next.1', '15.0.0-next.5');
+      ordered('10.0.0-M1', '10.0.0-M10', '10.0.0-RC1', '10.0.0');
+      ordered('1.1-milestone-3', '1.1-RC1', '1.1');
+      ordered('9.0.0-preview.1.24080.9', '9.0.0-preview.7.24405.7', '9.0.0-rc.2.24473.5', '9.0.0');
+      ordered('4.8.0-beta00005', '4.8.0-beta00017', '4.8.0');
+      ordered('0.0.1-alpha-1', '0.0.1-alpha-2', '0.0.1');
+      ordered('v1.24.0-rc.1', 'v1.24.0-rc.2', 'v1.24.0');
+      ordered('6.6.10.0', '6.7.0.0-rc1', '6.7.0.0-rc2', '6.7.0.0');
+    });
+
+    it('finds electron 42.0.0-alpha.3 inside a range of alpha releases', () => {
+      expect(isVersionInRange('42.0.0-alpha.3', '42.0.0-alpha.1', '42.0.0-alpha.5')).toBe(true);
+      expect(isVersionInRange('42.0.0-alpha.5', '42.0.0-alpha.1', '42.0.0-alpha.5')).toBe(false);
     });
 
     it('puts a post-release label number in the release slot', () => {
