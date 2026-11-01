@@ -410,6 +410,33 @@ describe('matchesDpkgStyleVersion', () => {
     expect(matchesDpkgStyleVersion(r, '15.7-1')).toBe(false);
   });
 
+  describe('a range that starts at or above its own fixed version', () => {
+    // Alpine:v3.21 openssl: {introduced 3.4.0} {fixed 3.3.7-r1}. As written it matches nothing.
+    const inverted = row({ introducedVersion: '3.4.0', fixedVersion: '3.3.7-r1' });
+
+    it('is read as starting from the beginning, so versions below the fix match', () => {
+      expect(matchesDpkgStyleVersion(inverted, '3.3.3-r0')).toBe(true);
+    });
+
+    it('still excludes the fixed version and anything after it', () => {
+      expect(matchesDpkgStyleVersion(inverted, '3.3.7-r1')).toBe(false);
+      expect(matchesDpkgStyleVersion(inverted, '3.5.0-r0')).toBe(false);
+    });
+
+    it('also covers a start equal to the fix', () => {
+      const r = row({ introducedVersion: '1.2.3-r0', fixedVersion: '1.2.3-r0' });
+      expect(matchesDpkgStyleVersion(r, '1.2.2-r0')).toBe(true);
+      expect(matchesDpkgStyleVersion(r, '1.2.3-r0')).toBe(false);
+    });
+
+    it('leaves a coherent range alone, so a version below its start is still excluded', () => {
+      // Alpine:v3.21 curl CVE-2025-5399: introduced 8.13.0, fixed 8.14.1-r0; 8.12.1-r1 predates the bug.
+      const r = row({ introducedVersion: '8.13.0', fixedVersion: '8.14.1-r0' });
+      expect(matchesDpkgStyleVersion(r, '8.12.1-r1')).toBe(false);
+      expect(matchesDpkgStyleVersion(r, '8.13.5-r0')).toBe(true);
+    });
+  });
+
   it('prefers the exact-match list over the range, so already-correct results are unaffected', () => {
     // Listed as affected even though it sits at/above the fixed version.
     expect(matchesDpkgStyleVersion(

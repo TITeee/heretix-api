@@ -935,6 +935,26 @@ describe('search by source package and source version (Debian, Ubuntu, Alpine)',
     expect(results.map((r) => r.total)).toEqual([0, 1, 1]);
   });
 
+  // Alpine:v3.21 openssl records carry {introduced 3.4.0} {fixed 3.3.7-r1}: a start above the fix,
+  // which matched nothing. The release's own fix still bounds the range.
+  it('finds an Alpine package through a range that starts above its fixed version', async () => {
+    await importOSVData({
+      id: 'ALPINE-CVE-2026-0606',
+      modified: '2026-01-01T00:00:00Z',
+      aliases: [],
+      upstream: ['CVE-2026-0606'],
+      affected: [{ package: { ecosystem: 'Alpine:v3.21', name: 'openssl' }, ranges: [{ type: 'ECOSYSTEM', events: [{ introduced: '3.4.0' }, { fixed: '3.3.7-r1' }] }] }],
+    });
+    const libssl = { package: 'libssl3', ecosystem: 'Alpine:v3.21', sourcePackage: 'openssl' };
+
+    const results = await batch([
+      { ...libssl, version: '3.3.3-r0', sourceVersion: '3.3.3-r0' },
+      { ...libssl, version: '3.3.7-r1', sourceVersion: '3.3.7-r1' },
+    ]);
+
+    expect(results.map((r) => r.total)).toEqual([1, 0]);
+  });
+
   it('leaves RPM distros alone: a subpackage carries its source RPM version already', async () => {
     await importOSVData({
       id: 'ALSA-2026:0404',
