@@ -537,7 +537,14 @@ export function matchesDpkgStyleVersion(
   const hasRange = row.introducedVersion !== null || row.fixedVersion !== null || row.lastAffectedVersion !== null;
   if (!hasRange) return false;
 
-  if (row.introducedVersion && compareDpkgVersions(version, row.introducedVersion) < 0) return false;
+  // A range whose start is not below its own end matches nothing, whichever version is asked
+  // about. Some Alpine records carry one (openssl introduced 3.4.0, fixed 3.3.7-r1 in v3.21),
+  // where the start was taken from the upstream CVE and does not fit the release's branch. The
+  // distro still names the fix, so the start is treated as unknown and the fix bounds the range.
+  const startsAboveEnd = !!row.introducedVersion && !!row.fixedVersion
+    && compareDpkgVersions(row.introducedVersion, row.fixedVersion) >= 0;
+
+  if (row.introducedVersion && !startsAboveEnd && compareDpkgVersions(version, row.introducedVersion) < 0) return false;
   if (row.fixedVersion && compareDpkgVersions(version, row.fixedVersion) >= 0) return false;
   if (row.lastAffectedVersion && compareDpkgVersions(version, row.lastAffectedVersion) > 0) return false;
 
