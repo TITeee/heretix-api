@@ -214,6 +214,7 @@ Per-source details, import commands and limitations: [docs/data-sources.md](docs
 | [docs/detection-comparison-rhel9.md](docs/detection-comparison-rhel9.md) | One RHEL 9.8 host scanned with heretix-api and Trivy, every difference checked against Red Hat's VEX data |
 | [docs/detection-comparison-debian13.md](docs/detection-comparison-debian13.md) | One Debian 13 host scanned with heretix-api and Trivy, every difference checked against the Debian security tracker and OSV |
 | [docs/detection-comparison-ubuntu2404.md](docs/detection-comparison-ubuntu2404.md) | One Ubuntu 24.04 host scanned with heretix-api and Trivy, every difference checked against the Ubuntu CVE Tracker statuses, OSV and the host's upgradable packages |
+| [docs/detection-comparison-alpine321.md](docs/detection-comparison-alpine321.md) | One Alpine 3.21 container image scanned with heretix-api and Trivy, every difference checked against OSV, Alpine's security database and NVD |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development, tests, adding a vendor |
 
 ## License
