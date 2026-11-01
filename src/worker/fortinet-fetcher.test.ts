@@ -108,6 +108,15 @@ describe('parseCsaf with an exactly-listed affected version', () => {
     ]);
   });
 
+  it('takes the fix from the same product only', () => {
+    const adv = parseCsaf(csaf(
+      ['FortiManager', 'FortiAnalyzer'],
+      { known_affected: ['FortiManager 7.4.4'], known_not_affected: ['FortiAnalyzer-7.4.5', 'FortiManager-7.4.6'] },
+      '',
+    ), 'FG-IR-24-020');
+    expect(adv!.affectedProducts[0].versionFixed).toBe('7.4.6');
+  });
+
   it('picks the numerically lowest later release, not the lexicographically lowest', () => {
     const adv = parseCsaf(csaf(
       ['FortiOS'],
@@ -138,5 +147,45 @@ describe('extractWorkaround', () => {
         { category: 'general', title: 'Workarounds', text: 'N/A' },
       ],
     }])).toBeUndefined();
+  });
+});
+
+describe('parseCsaf with an affected range', () => {
+  it('gives each range the first fix past its last affected version', () => {
+    // FG-IR-24-463: the FortiManager Cloud ranges are labelled FortiManager too.
+    const adv = parseCsaf(csaf(
+      ['FortiManager'],
+      { known_affected: ['FortiManager >=7.4.0|<=7.4.4', 'FortiManager >=7.4.0|<=7.4.5'], known_not_affected: ['FortiManager-7.4.5', 'FortiManager-7.4.6'] },
+      'FortiManager Cloud 7.4: Upgrade to 7.4.5 or above\nFortiManager 7.4: Upgrade to 7.4.6 or above',
+    ), 'FG-IR-24-463');
+    expect(adv!.affectedProducts).toMatchObject([
+      { versionStart: '7.4.0', lastAffected: '7.4.4', versionFixed: '7.4.5' },
+      { versionStart: '7.4.0', lastAffected: '7.4.5', versionFixed: '7.4.6' },
+    ]);
+  });
+
+  it('gives no fix when the only one listed is not past the range', () => {
+    // FG-IR-23-446: 7.2.12 to 7.2.16 affected, 7.2.11 the only fixed release named.
+    const adv = parseCsaf(csaf(
+      ['FortiProxy'],
+      { known_affected: ['FortiProxy >=7.2.12|<=7.2.16'], known_not_affected: ['FortiProxy-7.2.11'] },
+      '',
+    ), 'FG-IR-23-446');
+    expect(adv!.affectedProducts).toMatchObject([
+      { versionStart: '7.2.12', lastAffected: '7.2.16', versionFixed: undefined, patchAvailable: false },
+    ]);
+  });
+
+  it('ends an "all versions" branch at its fix when it has one, and at the next branch otherwise', () => {
+    // FG-IR-22-255: "FortiOS 6.2 all versions" with FortiOS-6.2.13 not affected.
+    const adv = parseCsaf(csaf(
+      ['FortiOS'],
+      { known_affected: ['FortiOS 6.2 all versions', 'FortiOS 6.0 all versions'], known_not_affected: ['FortiOS-6.2.13'] },
+      'FortiOS 6.2: Upgrade to 6.2.13 or above\nFortiOS 6.0: Migrate to a fixed release',
+    ), 'FG-IR-22-255');
+    expect(adv!.affectedProducts).toMatchObject([
+      { versionStart: '6.2.0', versionEnd: undefined, versionFixed: '6.2.13' },
+      { versionStart: '6.0.0', versionEnd: '6.1.0', versionFixed: undefined },
+    ]);
   });
 });

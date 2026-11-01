@@ -136,20 +136,6 @@ function parseVersionSpec(productId: string, productName: string): {
   return { exactVersions: [spec] };
 }
 
-/**
- * Match a fixed version by branch
- * For branch "7.6" derived from "7.6.0", find a fixed version like "7.6.2"
- */
-function findFixVersion(
-  versionStart: string | undefined,
-  notAffectedVersions: string[],
-): string | undefined {
-  if (!versionStart) return undefined;
-  const branch = versionStart.split('.').slice(0, 2).join('.');
-  const matching = notAffectedVersions.filter(v => v.startsWith(branch + '.'));
-  return matching.sort()[0];
-}
-
 /** Numeric comparison of dotted versions ("7.4.2" < "7.4.10"). */
 function compareDotted(a: string, b: string): number {
   const pa = a.split('.').map(Number);
@@ -162,15 +148,21 @@ function compareDotted(a: string, b: string): number {
 }
 
 /**
- * Fixed version for one exactly-listed affected version ("FortiOS 7.4.1").
+ * Fixed version for the last affected version of a branch: the exactly-listed
+ * one ("FortiOS 7.4.1"), or a range's last ("FortiOS >=7.4.0|<=7.4.5" -> 7.4.5,
+ * "7.4 all versions" -> 7.4.0).
  *
  * known_not_affected usually names it ("FortiOS-7.4.2"), but not always: a
  * cloud service's fix can appear only in the remediation text ("FortiSandbox
  * Cloud 5.0: Fortinet remediated this issue in 5.0.5 ..."). Either way it must
- * be a later release of the same branch -- a fix on another branch says nothing
- * about this version.
+ * be a later release of the same product and branch, past the last affected
+ * version. known_not_affected lists every product's fixed versions together,
+ * and one product can have two ranges on a branch: FG-IR-24-463 labels its
+ * FortiManager Cloud ranges FortiManager too, so FortiManager 7.4 has fixes
+ * 7.4.5 and 7.4.6, and taking the branch's lowest gave the range up to 7.4.5 the
+ * fix 7.4.5. A fix on another branch says nothing about this version.
  */
-function findFixForExactVersion(
+function findFixAfter(
   affected: string,
   productName: string,
   notAffectedVersions: string[],
@@ -178,7 +170,7 @@ function findFixForExactVersion(
 ): string | undefined {
   if (!/^\d+\.\d+\.\d+$/.test(affected)) return undefined;
   const branch = affected.split('.').slice(0, 2).join('.');
-  const isLaterOnBranch = (v: string) => v.startsWith(branch + '.') && compareDotted(v, affected) > 0;
+  const isLaterOnBranch = (v: string) => /^\d+\.\d+\.\d+$/.test(v) && v.startsWith(branch + '.') && compareDotted(v, affected) > 0;
 
   const fromStatus = notAffectedVersions.filter(isLaterOnBranch).sort(compareDotted)[0];
   if (fromStatus) return fromStatus;
@@ -227,16 +219,16 @@ export function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdv
   const seenRanges = new Set<string>();
 
   for (const v of vulns) {
-    // Fixed version list for this vulnerability entry (semver-like only)
-    const notAffectedVersions = (v.product_status?.known_not_affected ?? [])
-      .map(pid => {
-        const name = extractProductName(pid, knownProducts);
-        if (!name) return null;
-        const spec = parseVersionSpec(pid, name);
-        return spec?.exactVersions?.filter(ev => /^\d+\.\d+\.\d+/.test(ev)) ?? [];
-      })
-      .flat()
-      .filter(Boolean) as string[];
+    // Fixed versions of this vulnerability entry, by product (semver-like only)
+    const notAffectedByProduct = new Map<string, string[]>();
+    for (const pid of v.product_status?.known_not_affected ?? []) {
+      const name = extractProductName(pid, knownProducts);
+      if (!name) continue;
+      const spec = parseVersionSpec(pid, name);
+      const versions = spec?.exactVersions?.filter(ev => /^\d+\.\d+\.\d+/.test(ev)) ?? [];
+      notAffectedByProduct.set(name, [...(notAffectedByProduct.get(name) ?? []), ...versions]);
+    }
+    const anyNotAffected = [...notAffectedByProduct.values()].some(vs => vs.length > 0);
 
     for (const pid of v.product_status?.known_affected ?? []) {
       // Deduplicate
@@ -248,12 +240,13 @@ export function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdv
 
       const spec = parseVersionSpec(pid, name);
       if (!spec) continue;
+      const notAffectedVersions = notAffectedByProduct.get(name) ?? [];
 
       if (spec.exactVersions?.length) {
         // Single version specification
         const exact = spec.exactVersions[0];
         const exactFixed = spec.exactVersions.length === 1
-          ? findFixForExactVersion(exact, name, notAffectedVersions, fixRemediation?.details)
+          ? findFixAfter(exact, name, notAffectedVersions, fixRemediation?.details)
           : undefined;
         affectedProducts.push({
           vendor:          'fortinet',
@@ -263,16 +256,21 @@ export function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdv
           versionStart:    exactFixed ? exact : undefined,
           versionFixed:    exactFixed,
           affectedVersions: spec.exactVersions,
-          patchAvailable:  notAffectedVersions.length > 0 || !!exactFixed,
+          patchAvailable:  anyNotAffected || !!exactFixed,
         });
       } else {
-        // Version range specification (one record per branch)
-        const versionFixed = findFixVersion(spec.versionStart, notAffectedVersions);
+        // Version range specification (one record per branch). Past the range's
+        // last version; for "all versions", past its first.
+        const last = spec.lastAffected ?? spec.versionStart;
+        const versionFixed = last ? findFixAfter(last, name, notAffectedVersions, fixRemediation?.details) : undefined;
         affectedProducts.push({
           vendor:        'fortinet',
           product:       name,
           versionStart:  spec.versionStart,
-          versionEnd:    spec.versionEnd,      // "all versions" → exclusive end (heuristic)
+          // "all versions" → exclusive end at the next branch (heuristic), unless
+          // the branch has a fix: "7.4 all versions" with "Upgrade to 7.4.11" is
+          // affected up to 7.4.11, not through 7.4.11 and later.
+          versionEnd:    versionFixed ? undefined : spec.versionEnd,
           lastAffected:  spec.lastAffected,    // inclusive end of ">=X|<=Y" range
           versionFixed,
           patchAvailable: !!versionFixed,
