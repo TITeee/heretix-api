@@ -1,6 +1,7 @@
 /**
- * Import CNA-declared affected products, and CISA Vulnrichment (SSVC)
- * assessments, from CVE Records (cvelistV5).
+ * Import CNA-declared affected products, the CNA's workaround and solution
+ * text, and CISA Vulnrichment (SSVC) assessments, from CVE Records (cvelistV5).
+ * The text, like SSVC, is stored for every year in the bundle.
  *
  * The first run bootstraps from the ~600MB full bundle: CNA-affected-products
  * storage is restricted to BOOTSTRAP_YEARS, but SSVC has no such restriction
@@ -54,7 +55,7 @@ async function main() {
         totalFailed: result.failed,
         metadata: {
           bootstrap, rows: result.rows, usable: result.usable, pruned: result.pruned,
-          dropped: result.dropped, ssvcUpdated: result.ssvcUpdated,
+          dropped: result.dropped, ssvcUpdated: result.ssvcUpdated, textsUpdated: result.textsUpdated,
         },
       },
     });
@@ -62,7 +63,8 @@ async function main() {
     console.log(
       `Done: ${result.scanned} records scanned, ${result.usable} usable, ` +
       `${result.inserted} inserted, ${result.updated} updated, ${result.pruned} pruned, ${result.failed} failed ` +
-      `(${result.rows} affected-product rows, ${result.ssvcUpdated} SSVC assessments)`,
+      `(${result.rows} affected-product rows, ${result.ssvcUpdated} SSVC assessments, ` +
+      `${result.textsUpdated} workaround/solution texts)`,
     );
     console.log('Dropped by rule:', JSON.stringify(result.dropped));
   } catch (err) {

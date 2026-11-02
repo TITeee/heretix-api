@@ -48,6 +48,14 @@ model Vulnerability {
   ssvcTechnicalImpact String?    // "partial" | "total"
   ssvcTimestamp       DateTime?
 
+  // The CNA's own workarounds and solutions from the CVE Record
+  // (containers.cna.workarounds / solutions), verbatim, with the CNA that
+  // wrote them. Kept here like SSVC, for every CVE year and whether or not the
+  // record has usable affected data, unlike CnaVulnerability.
+  cnaWorkaround String?
+  cnaSolution   String?
+  cnaProvider   String?                 // containers.cna.providerMetadata.shortName
+
   fetchedAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

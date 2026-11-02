@@ -3,6 +3,7 @@ import { prisma } from '../db/client.js';
 import { createManyChunked } from '../db/bulk-insert.js';
 import { normalizeVersion } from '../utils/version.js';
 import {
+  type CnaTexts,
   type CveRecord,
   type DropReason,
   type ParsedCveRecord,
@@ -12,6 +13,7 @@ import {
   findDeltaBundles,
   findFullBundle,
   listReleases,
+  parseCnaTexts,
   parseCveRecord,
   parseSsvc,
   recordsFromZip,
@@ -115,6 +117,29 @@ export async function importSsvcAssessment(cveId: string, ssvc: SsvcAssessment):
   });
 }
 
+/**
+ * Store one CVE's CNA workaround and solution text on the master row, the same
+ * way as SSVC: for every record, whatever its year and whether or not it has
+ * usable affected data. A record without either clears what an earlier
+ * revision left, without creating a master row just to hold nothing.
+ * Returns whether a row was written.
+ */
+export async function importCnaTexts(cveId: string, texts: CnaTexts): Promise<boolean> {
+  if (texts.workaround || texts.solution) {
+    await prisma.vulnerability.upsert({
+      where: { cveId },
+      create: { cveId, cnaWorkaround: texts.workaround, cnaSolution: texts.solution, cnaProvider: texts.provider },
+      update: { cnaWorkaround: texts.workaround, cnaSolution: texts.solution, cnaProvider: texts.provider },
+    });
+    return true;
+  }
+  const { count } = await prisma.vulnerability.updateMany({
+    where: { cveId, OR: [{ cnaWorkaround: { not: null } }, { cnaSolution: { not: null } }] },
+    data: { cnaWorkaround: null, cnaSolution: null, cnaProvider: null },
+  });
+  return count > 0;
+}
+
 function cveYear(cveId: string): string | undefined {
   return cveId.match(/^CVE-(\d{4})-/)?.[1];
 }
@@ -128,11 +153,13 @@ export interface CnaImportResult {
   failed: number;
   rows: number;
   ssvcUpdated: number;
+  /** Master rows whose CNA workaround / solution text was written or cleared. */
+  textsUpdated: number;
   dropped: Partial<Record<DropReason, number>>;
 }
 
 function emptyResult(): CnaImportResult {
-  return { scanned: 0, usable: 0, inserted: 0, updated: 0, pruned: 0, failed: 0, rows: 0, ssvcUpdated: 0, dropped: {} };
+  return { scanned: 0, usable: 0, inserted: 0, updated: 0, pruned: 0, failed: 0, rows: 0, ssvcUpdated: 0, textsUpdated: 0, dropped: {} };
 }
 
 /**
@@ -179,6 +206,15 @@ export async function importCveRecords(records: Iterable<CveRecord>, cnaYears: S
       } catch (err) {
         result.failed++;
         logger.error({ err, cveId }, 'Failed to import SSVC assessment');
+      }
+    }
+
+    if (cveId) {
+      try {
+        if (await importCnaTexts(cveId, parseCnaTexts(record))) result.textsUpdated++;
+      } catch (err) {
+        result.failed++;
+        logger.error({ err, cveId }, 'Failed to import CNA workaround and solution');
       }
     }
 
@@ -273,6 +309,7 @@ export async function importCnaDelta(since: Date): Promise<CnaImportResult> {
     total.failed += result.failed;
     total.rows += result.rows;
     total.ssvcUpdated += result.ssvcUpdated;
+    total.textsUpdated += result.textsUpdated;
     mergeDropped(total, result.dropped);
   }
 
