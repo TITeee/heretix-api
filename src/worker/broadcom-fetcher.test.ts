@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildBroadcomAdvisories,
+  classifyTablelessPage,
   parseResponseMatrixRow,
   parseAffectedVersionCell,
   productVersionsFromRows,
@@ -223,6 +224,21 @@ describe('parseResponseMatrixRow', () => {
   it('returns null when the fixed-version cell is entirely blank', () => {
     expect(parseResponseMatrixRow('VMware vCenter', '')).toBeNull();
     expect(parseResponseMatrixRow('VMware vCenter', '   ')).toBeNull();
+  });
+});
+
+describe('classifyTablelessPage', () => {
+  it('reads a pre-2019 prose advisory as having no matrix to read', () => {
+    // VMSA-2019-0006's page: an Advisory ID header, then prose; no Response Matrix
+    expect(classifyTablelessPage('VMware Security Advisory Advisory ID: VMSA-2019-0006 VMware Security Advisory Severity: Important 1. Summary ...'))
+      .toBe('no-matrix');
+  });
+
+  it('reads anything else as a page this run failed to read', () => {
+    expect(classifyTablelessPage('')).toBe('failed');
+    expect(classifyTablelessPage('Just a moment... Verifying you are human.')).toBe('failed');
+    // A current VMSA names its matrix: no table means it did not render in time
+    expect(classifyTablelessPage('Advisory ID: VMSA-2026-0006 ... Workarounds: See the Response Matrix.')).toBe('failed');
   });
 });
 

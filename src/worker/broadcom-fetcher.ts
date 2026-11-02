@@ -468,11 +468,25 @@ export function isBroadcomUrl(url: string): boolean {
 }
 
 /**
+ * What a detail page that never showed a table is, from its text. A VMSA from before
+ * 2019 is prose with no Response Matrix (its "Advisory ID" header is there, the matrix is
+ * not), every run: 'no-matrix', nothing to read. Anything else -- a page that did not
+ * load, Cloudflare's challenge, a matrix the page names but did not render in time -- is
+ * a failure of this run: 'failed'.
+ */
+export function classifyTablelessPage(text: string): 'no-matrix' | 'failed' {
+  return /advisory\s+id/i.test(text) && !/response\s+matrix/i.test(text) ? 'no-matrix' : 'failed';
+}
+
+/**
  * Fetch detail page and extract product/fixed-version pairs from the Response Matrix table.
  * Runs in browser context via page.evaluate() to avoid innerText multiline cell issues.
  *
  * VMSA "Response Matrix" columns:
  *   0: VMware Product | 1: Version | ... | 6: Fixed Version | ...
+ *
+ * `failed` is a page this run could not read (see classifyTablelessPage); a page with no
+ * matrix to read is not one.
  */
 async function fetchDetailVersions(notificationUrl: string): Promise<{ versions: ProductVersion[]; failed: boolean }> {
   // The URL comes from the list API's response, and the browser would open whatever it
@@ -488,7 +502,12 @@ async function fetchDetailVersions(notificationUrl: string): Promise<{ versions:
     // dedup all happen below instead, in plain Node code that's actually
     // unit-testable.
     const rawRows = await withPage(notificationUrl, async (page) => {
-      await page.waitForSelector('table', { timeout: 20000 });
+      const hasTable = await page.waitForSelector('table', { timeout: 20000 }).then(() => true, () => false);
+      if (!hasTable) {
+        const text = await page.evaluate(() => document.body?.innerText ?? '');
+        if (classifyTablelessPage(text) === 'no-matrix') return [];
+        throw new Error('No Response Matrix table on the advisory page');
+      }
       return page.evaluate(() => {
         const rows: MatrixRawRow[] = [];
 
@@ -570,9 +589,12 @@ export class BroadcomFetcher implements AdvisoryFetcher {
       // Fetch detail page for version table (uses the direct notificationUrl)
       await new Promise(r => setTimeout(r, DELAY_MS));
       const { versions: productVersions, failed: detailFailed } = await fetchDetailVersions(item.notificationUrl);
+      // A page this run could not read says nothing about the products: the rows the last
+      // good run imported are kept, rather than replaced with the version-less fallback.
       if (detailFailed) this.fetchFailed++;
 
-      const built = buildBroadcomAdvisories(item, productVersions);
+      const built = buildBroadcomAdvisories(item, productVersions)
+        .map(adv => (detailFailed ? { ...adv, keepAffectedProducts: true } : adv));
       results.push(...built);
 
       logger.debug(
