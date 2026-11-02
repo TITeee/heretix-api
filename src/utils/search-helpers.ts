@@ -113,9 +113,16 @@ function sharedLeadingNumbers(a: string, b: string): number {
 /**
  * The fixed version to report when several sources or rows name one for the same finding:
  * the most trusted source; then the fix on the installed version's own release line (9.4.6
- * for 9.4.5, not 10.0.2); then the nearest, lowest one; then the first.
+ * for 9.4.5, not 10.0.2); then the nearest, lowest one; then the first. Two fixes from the
+ * same source are ordered the source's way when `sourceOrders` has one: VMware's
+ * "ESXi70U2e-19290878" and "ESXi70U3c-19193900" are no dotted numbers to `order`.
  */
-function pickFix(candidates: Array<{ fix: string; source: string }>, installed: string | undefined, order: VersionOrder | undefined): string {
+function pickFix(
+  candidates: Array<{ fix: string; source: string }>,
+  installed: string | undefined,
+  order: VersionOrder | undefined,
+  sourceOrders: ReadonlyMap<string, VersionOrder> | undefined,
+): string {
   let best = candidates[0];
   for (const c of candidates.slice(1)) {
     const rank = fixSourceRank(c.source) - fixSourceRank(best.source);
@@ -124,17 +131,23 @@ function pickFix(candidates: Array<{ fix: string; source: string }>, installed: 
       const line = sharedLeadingNumbers(c.fix, installed) - sharedLeadingNumbers(best.fix, installed);
       if (line !== 0) { if (line > 0) best = c; continue; }
     }
-    if (order && (order(c.fix, best.fix) ?? 0) < 0) best = c;
+    const by = (c.source === best.source && sourceOrders?.get(c.source)) || order;
+    if (by && (by(c.fix, best.fix) ?? 0) < 0) best = c;
   }
   return best.fix;
 }
 
 /**
  * Deduplicate by master ID, merging sources and aliases. When more than one result names a
- * fixed version, pickFix() chooses it from all of them; `installed` and `order` let it prefer
- * the installed version's release line and the nearest fix.
+ * fixed version, pickFix() chooses it from all of them; `installed`, `order` and
+ * `sourceOrders` let it prefer the installed version's release line and the nearest fix.
  */
-export function dedup(items: VulnerabilityResult[], installed?: string, order?: VersionOrder): VulnerabilityResult[] {
+export function dedup(
+  items: VulnerabilityResult[],
+  installed?: string,
+  order?: VersionOrder,
+  sourceOrders?: ReadonlyMap<string, VersionOrder>,
+): VulnerabilityResult[] {
   const seen = new Map<string, VulnerabilityResult>();
   const fixes = new Map<string, Array<{ fix: string; source: string }>>();
   for (const item of items) {
@@ -174,7 +187,7 @@ export function dedup(items: VulnerabilityResult[], installed?: string, order?: 
     }
   }
   for (const [id, list] of fixes) {
-    seen.get(id)!.fixedVersion = pickFix(list, installed, order);
+    seen.get(id)!.fixedVersion = pickFix(list, installed, order, sourceOrders);
   }
   return [...seen.values()];
 }
@@ -723,8 +736,9 @@ const PLAIN_VERSION_RE = /^\d+(\.\d+)*$/;
 
 /**
  * Order by an integer encoding (normalizeVersion(), encodeAdvisoryVersion()). The encoding
- * folds versions together (a component over 999 is clamped, so 9.3.2408.100 and
- * 9.3.2408.110 encode alike), so equal codes for different strings are "cannot tell".
+ * folds versions together (a component past its slot is clamped, and what follows the
+ * third or fourth number is mostly dropped), so equal codes for different strings are
+ * "cannot tell".
  *
  * `plainOnly` limits it to dotted numbers. A suffix means different things to different
  * vendors, and normalizeVersion() reads most as a pre-release: SonicWall's build

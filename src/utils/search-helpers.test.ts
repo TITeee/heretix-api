@@ -31,6 +31,7 @@ import {
   escapeLikePattern,
   type VulnerabilityResult,
 } from './search-helpers.js';
+import { encodeAdvisoryVersion, BROADCOM_VENDOR } from './advisory-version.js';
 
 function makeResult(overrides: Partial<VulnerabilityResult>): VulnerabilityResult {
   return {
@@ -910,6 +911,16 @@ describe('dedup choosing among fixed versions', () => {
       makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '6.5.4.8-89n' }),
       makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '6.5.4.9-1n' }),
     ], '6.5.4.7')).toBe('6.5.4.8-89n');
+  });
+
+  it("orders two fixes from one feed the feed's way when it has its own order", () => {
+    const esxi = new Map([['advisory-broadcom', orderByEncoding(v => encodeAdvisoryVersion(BROADCOM_VENDOR, v))]]);
+    const items = [
+      makeResult({ source: 'advisory-broadcom', sources: ['advisory-broadcom'], fixedVersion: 'ESXi70U3c-19193900' }),
+      makeResult({ source: 'advisory-broadcom', sources: ['advisory-broadcom'], fixedVersion: 'ESXi70U2e-19290878' }),
+    ];
+    expect(dedup(items, '7.0 U2', plain, esxi)[0].fixedVersion).toBe('ESXi70U2e-19290878');
+    expect(dedup(items, '7.0 U2', plain)[0].fixedVersion).toBe('ESXi70U3c-19193900');
   });
 
   it('keeps a lone fix whichever source gave it', () => {

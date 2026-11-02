@@ -6,7 +6,7 @@ import { normalizeVersion } from '../../utils/version.js';
 import { compareRpmVersions } from '../../utils/rpm-version.js';
 import { compareDpkgVersions } from '../../utils/dpkg-version.js';
 import { parseGoVersion } from '../../utils/go-version.js';
-import { VENDORS_WITH_OWN_VERSION_ORDER, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
+import { VENDORS_WITH_OWN_VERSION_ORDER, OWN_VERSION_ORDER_SOURCES, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
 import { type FixStatus, type FixStatusInfo, debianTrackerStatus, ubuntuTrackerStatus } from '../../utils/fix-status.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
@@ -179,6 +179,11 @@ export type SourcePackageRef = { name?: string; version?: string };
 
 /** Orders dotted-number versions by normalizeVersion(); see orderByEncoding(). */
 const PLAIN_VERSION_ORDER = orderByEncoding(normalizeVersion, true);
+
+/** Orders the fixes of a vendor advisory feed with a version order of its own; see dedup(). */
+const ADVISORY_FIX_ORDERS: ReadonlyMap<string, VersionOrder> = new Map(
+  VENDORS_WITH_OWN_VERSION_ORDER.map(vendor => [OWN_VERSION_ORDER_SOURCES[vendor], orderByEncoding(v => encodeAdvisoryVersion(vendor, v))]),
+);
 
 /** Search master via OSV table */
 async function searchOSV(
@@ -987,7 +992,7 @@ async function searchAllVulnerabilities(
       ? compareDpkgVersions
       : rpmVendor || (normalizedEcosystem && isRpmStyleOsvDistro(normalizedEcosystem)) ? compareRpmVersions
         : normalizedEcosystem === 'Go' ? compareGoOrEncoded : PLAIN_VERSION_ORDER;
-    all = dedup([...osvResults, ...nvdResults, ...advisoryResults, ...cnaResults], version, fixOrder);
+    all = dedup([...osvResults, ...nvdResults, ...advisoryResults, ...cnaResults], version, fixOrder, ADVISORY_FIX_ORDERS);
     cacheSearchResults(cacheKey, all);
   }
 
