@@ -155,6 +155,23 @@ describe('buildSonicWallAdvisories with fixed_software', () => {
     ]);
   });
 
+  it('gives a ranged row no version list, so another line is not told its fix', () => {
+    // SNWLID-2025-0001: 8.0.0 matched the 7.0.1 row by the list and was told 7.0.1-5169.
+    const [adv] = buildSonicWallAdvisories(
+      baseAdv({
+        cve: 'CVE-2025-1',
+        affected_products: '<td>7.0.1-5161 and older versions</td><td>7.1.1-7058 and older versions</td><td>Version 8.0.0-8035</td>',
+        vulnerable_products: [{ id: 1, name: 'SonicOS Gen7 Platform - TZ/NSa/NSsp/NSv' }],
+      }),
+      { fixed_software: '<td>7.0.1-5169 and higher</td><td>7.2.0- 7015 and higher</td>' },
+    );
+    // 7.1.1 has no fix on its own line, so it keeps a row without one.
+    expect(adv.affectedProducts).toEqual([
+      { vendor: 'sonicwall', product: 'SonicOS Gen7 Platform - TZ/NSa/NSsp/NSv', versionStart: '7.0.0', lastAffected: '7.0.1-5161', versionFixed: '7.0.1-5169', patchAvailable: true },
+      { vendor: 'sonicwall', product: 'SonicOS Gen7 Platform - TZ/NSa/NSsp/NSv', affectedVersions: ['7.1.1'], patchAvailable: true },
+    ]);
+  });
+
   it('keeps the legacy row when no fix can be paired, and keeps fixed_software in rawData', () => {
     const [adv] = buildSonicWallAdvisories(baseAdv({ cve: 'CVE-2024-2' }), { fixed_software: '<td>Pending Release</td>' });
     expect(adv.affectedProducts).toEqual([

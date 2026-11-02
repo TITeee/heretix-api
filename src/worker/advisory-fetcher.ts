@@ -41,6 +41,10 @@ export interface NormalizedAdvisory {
     // by versionEnd (Red Hat VEX). See AdvisoryAffectedProduct.streamFixes.
     streamFixes?: string[];
   }>;
+  // The fetcher could not read the products this run (a detail page that failed to
+  // load): an advisory already stored keeps the affected products it has, and
+  // affectedProducts is used only for one seen for the first time.
+  keepAffectedProducts?: boolean;
   rawData: unknown;
 }
 
@@ -195,6 +199,8 @@ export async function importAdvisoryData(adv: NormalizedAdvisory, source: string
         missingRunCount: 0,
       },
     });
+
+    if (existing && adv.keepAffectedProducts) return 'updated';
 
     // Delete existing affected products
     await tx.advisoryAffectedProduct.deleteMany({ where: { advisoryId: advisory.id } });

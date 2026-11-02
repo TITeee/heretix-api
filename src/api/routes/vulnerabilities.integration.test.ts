@@ -5,6 +5,7 @@ import { resetDb } from '../../test-utils/db.js';
 import { createServer } from '../server.js';
 import { importAdvisoryData } from '../../worker/advisory-fetcher.js';
 import { importOSVData } from '../../worker/osv-fetcher.js';
+import { normalizeVersion } from '../../utils/version.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
 
@@ -114,8 +115,8 @@ describe('GET /api/v1/vulnerabilities/search', () => {
         vulnerabilityId: osv.id,
         ecosystem: 'npm',
         packageName: 'range-pkg',
-        introducedInt: 1000000000n, // 1.0.0
-        fixedInt: 2000000000n,      // 2.0.0 (exclusive)
+        introducedInt: normalizeVersion('1.0.0'),
+        fixedInt: normalizeVersion('2.0.0'), // exclusive
       },
     });
 
@@ -442,6 +443,28 @@ describe('GET /api/v1/vulnerabilities/search — distroPriority', () => {
     // A build behind the fix of its own stream still gets that fix.
     expect(eus.body.results).toHaveLength(1);
     expect(eus.body.results[0]).toMatchObject({ fixedVersion: '0:5.14.0-284.200.1.el9_2' });
+  });
+
+  // One SonicWall row lists affected versions from two release lines but names the older
+  // line's fix, which is below a 6.5 installation.
+  it('gives no vendor fixed version below the installed version', async () => {
+    await importAdvisoryData({
+      externalId: 'CVE-2026-6161',
+      cveId: 'CVE-2026-6161',
+      rawData: {},
+      affectedProducts: [{
+        vendor: 'sonicwall', product: 'demo-sonicos', affectedVersions: ['6.2.7.9', '6.5.2.2'],
+        versionFixed: '6.2.7.10', patchAvailable: true,
+      }],
+    }, 'advisory-sonicwall');
+
+    const [newer, older] = await Promise.all([
+      search(app, 'package=demo-sonicos&version=6.5.2.2'),
+      search(app, 'package=demo-sonicos&version=6.2.7.9'),
+    ]);
+    expect(newer.body.results).toHaveLength(1);
+    expect(newer.body.results[0]).toMatchObject({ externalId: 'CVE-2026-6161', fixedVersion: null });
+    expect(older.body.results[0]).toMatchObject({ fixedVersion: '6.2.7.10' });
   });
 
   it('returns Red Hat\'s per-CVE impact for an RHEL match', async () => {

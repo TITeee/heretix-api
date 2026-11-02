@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildBroadcomAdvisories,
+  classifyTablelessPage,
   parseResponseMatrixRow,
   parseAffectedVersionCell,
   productVersionsFromRows,
@@ -88,6 +89,36 @@ describe('buildBroadcomAdvisories', () => {
     }
   });
 
+  it('bounds a platform row by its own release when the fix is a component\'s patch', () => {
+    const advisories = buildBroadcomAdvisories(baseItem({ affectedCve: 'CVE-2025-22243' }), [
+      { product: 'VMware Cloud Foundation', affected: [{ versionStart: '5.1', versionEnd: '5.2' }], fixed: ['Async patch to 8.0 U2e'] },
+      { product: 'VMware Cloud Foundation', affected: [{ versionStart: '5.0', versionEnd: '5.1' }], fixed: ['Async patch to NSX 4.1.2.6'] },
+      { product: 'VMware Telco Cloud Infrastructure (ESXi)', affected: [{ versionStart: '3', versionEnd: '4' }], fixed: ['ESXi80U3se-24659227'] },
+      { product: 'VMware Telco Cloud Platform (vCenter)', affected: [{ versionStart: '3', versionEnd: '4' }], fixed: ['8.0 U3e'] },
+      { product: 'VMware Cloud Foundation', affected: [{ versionStart: '4', versionEnd: '5' }], fixed: ['Async patch to ESXi 7.0 U3q'] },
+    ]);
+    expect(advisories[0].affectedProducts.map(p => [p.versionStart, p.versionEnd, p.versionFixed])).toEqual([
+      ['5.1', '5.2', 'Async patch to 8.0 U2e'],
+      ['5.0', '5.1', 'Async patch to NSX 4.1.2.6'],
+      ['3', '4', 'ESXi80U3se-24659227'],
+      ['3', '4', '8.0 U3e'],
+      ['4', '5', 'Async patch to ESXi 7.0 U3q'],
+    ]);
+  });
+
+  it('keeps the fix as the end of the range when it is the product\'s own version', () => {
+    const advisories = buildBroadcomAdvisories(baseItem({ affectedCve: 'CVE-2025-41239' }), [
+      { product: 'VMware ESXi', affected: [{ versionStart: '8.0', versionEnd: '8.1' }], fixed: ['ESXi80U2e-24789317'] },
+      { product: 'VMware Cloud Foundation', affected: [{ versionStart: '5.2', versionEnd: '5.3' }], fixed: ['5.2.1.2'] },
+      { product: 'vRealize Automation', affected: [{ versionStart: '7', versionEnd: '8' }], fixed: ['8.0.0'] },
+    ]);
+    expect(advisories[0].affectedProducts.map(p => [p.versionStart, p.versionEnd, p.versionFixed])).toEqual([
+      ['8.0', undefined, 'ESXi80U2e-24789317'],
+      ['5.2', undefined, '5.2.1.2'],
+      ['7', undefined, '8.0.0'],
+    ]);
+  });
+
   it('falls back to supportProducts list when the detail page yields no versions', () => {
     const advisories = buildBroadcomAdvisories(baseItem({ affectedCve: '' }), []);
     expect(advisories[0].affectedProducts).toEqual([
@@ -117,6 +148,12 @@ describe('parseResponseMatrixRow', () => {
   it('strips a leading footnote marker from the fixed version', () => {
     const parsed = parseResponseMatrixRow('VMware Cloud Foundation', '[1] 9.1.0.0300');
     expect(parsed).toEqual({ products: ['VMware Cloud Foundation'], fixedVersions: ['9.1.0.0300'] });
+  });
+
+  it('strips a trailing footnote marker or asterisks from the fixed version', () => {
+    expect(parseResponseMatrixRow('VMware Cloud Foundation', 'Async patch to 8.0 U3d  [1]')?.fixedVersions).toEqual(['Async patch to 8.0 U3d']);
+    expect(parseResponseMatrixRow('Workstation', '17.5.1 [1]')?.fixedVersions).toEqual(['17.5.1']);
+    expect(parseResponseMatrixRow('Spring Framework', '12.1.0**')?.fixedVersions).toEqual(['12.1.0']);
   });
 
   it('passes a normal single-product row through unchanged', () => {
@@ -187,6 +224,21 @@ describe('parseResponseMatrixRow', () => {
   it('returns null when the fixed-version cell is entirely blank', () => {
     expect(parseResponseMatrixRow('VMware vCenter', '')).toBeNull();
     expect(parseResponseMatrixRow('VMware vCenter', '   ')).toBeNull();
+  });
+});
+
+describe('classifyTablelessPage', () => {
+  it('reads a pre-2019 prose advisory as having no matrix to read', () => {
+    // VMSA-2019-0006's page: an Advisory ID header, then prose; no Response Matrix
+    expect(classifyTablelessPage('VMware Security Advisory Advisory ID: VMSA-2019-0006 VMware Security Advisory Severity: Important 1. Summary ...'))
+      .toBe('no-matrix');
+  });
+
+  it('reads anything else as a page this run failed to read', () => {
+    expect(classifyTablelessPage('')).toBe('failed');
+    expect(classifyTablelessPage('Just a moment... Verifying you are human.')).toBe('failed');
+    // A current VMSA names its matrix: no table means it did not render in time
+    expect(classifyTablelessPage('Advisory ID: VMSA-2026-0006 ... Workarounds: See the Response Matrix.')).toBe('failed');
   });
 });
 

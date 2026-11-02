@@ -40,8 +40,11 @@ describe('microsoftVersionToInt', () => {
     }
   });
 
-  it('exists because normalizeVersion() collapses every Windows build to one value', () => {
-    expect(normalizeVersion('10.0.20348.5622')).toBe(normalizeVersion('10.0.20348.5761'));
-    expect(normalizeVersion('10.0.17763.1')).toBe(normalizeVersion('10.0.26100.33650'));
+  it('orders Windows builds the same way normalizeVersion() now does', () => {
+    const pairs: [string, string][] = [['10.0.20348.5622', '10.0.20348.5761'], ['10.0.17763.1', '10.0.26100.33650']];
+    for (const [a, b] of pairs) {
+      expect(int(a)).toBeLessThan(int(b));
+      expect(normalizeVersion(a) as bigint).toBeLessThan(normalizeVersion(b) as bigint);
+    }
   });
 });

@@ -51,28 +51,78 @@ function labelledVersion(version: string):
   return null;
 }
 
+// Pre-release words after a hyphen, by stage (PRE_RELEASE_STAGES' numbering).
+// Whole words only, plus Maven's "M": the single letters of PRE_RELEASE_STAGES
+// mean other things after a hyphen -- ISC's "9.11.3-S1", Palo Alto's "6.0.10-c823"
+// and "6.3.6-b10", Alpine's "-r0" -- so they keep the generic reading.
+const HYPHEN_PRE_RELEASE_STAGES: Record<string, number> = {
+  dev: 0, canary: 0, next: 0,
+  alpha: 1, ea: 1,
+  beta: 2, pre: 2, preview: 2, m: 2, milestone: 2,
+  rc: 3, cr: 3,
+};
+
+/**
+ * Split a hyphen-joined pre-release: a dotted base of up to three numbers (a
+ * fourth only when it is 0, Shopware's "6.7.0.0-rc1"), a word above, and an
+ * optional number joined by a dot, a hyphen or nothing ("-beta.13", "-alpha-1",
+ * "-RC1", "-beta00017"). Dotted numbers after it are ignored
+ * ("-preview.1.24080.9").
+ */
+function hyphenPreRelease(version: string): { base: string; stage: number; num: number } | null {
+  const m = version.match(/^[vV]?(\d+(?:\.\d+){0,2})(?:\.0)?-([A-Za-z]+)(?:[.-]?(\d+)(?:\.\d+)*)?$/);
+  if (!m) return null;
+  const stage = HYPHEN_PRE_RELEASE_STAGES[m[2].toLowerCase()];
+  if (stage === undefined) return null;
+  return { base: m[1], stage, num: Number(m[3] ?? 0) };
+}
+
+/** A pre-release's value: below its release, by stage and then by number. */
+function preReleaseValue(base: string, stage: number, num: number): bigint | null {
+  const baseInt = normalizeVersion(base);
+  if (baseInt === null) return null;
+  const rank = stage * PRE_RELEASE_STAGE_WIDTH + Math.min(num, PRE_RELEASE_STAGE_WIDTH - 1);
+  const value = baseInt - 1n - BigInt(PRE_RELEASE_MAX_RANK - rank);
+  return value > 0n ? value : 0n;
+}
+
+// Slot widths of normalizeVersion(): major (5 digits), minor (4), patch (5) and
+// release / 4th component (5) -- 19 digits, the most a PostgreSQL BIGINT holds.
+// They were 6/3/3/3 until 2026-11: Windows builds ("10.0.26100.7623"), Adobe
+// Reader ("17.011.30202"), SQL Server ("15.0.4360.2") and Splunk Cloud
+// ("9.3.2408.107") all clamped a component at 999, so the ends of their ranges
+// encoded the same and the ranges matched nothing (65,000 CVE-record and 3,000
+// NVD ranges).
+const MINOR_LIMIT = 9_999;
+const PATCH_LIMIT = 99_999;
+const RELEASE_LIMIT = 99_999;
+// The largest major whose every value of the other slots stays within a BIGINT.
+const MAJOR_LIMIT = 92_232;
+const RELEASE_WEIGHT = 1n;
+const PATCH_WEIGHT = 100_000n;
+const MINOR_WEIGHT = 10_000_000_000n;
+const MAJOR_WEIGHT = 100_000_000_000_000n;
+
 /**
  * Convert a semantic version string to a numeric value
- * "1.2.3"       -> 1002003000  (major * 1_000_000_000 + minor * 1_000_000 + patch * 1_000 + release)
- * "1.2.3-6.el9" -> 1002003006  (RPM release number included as 4th component)
+ * "1.2.3"       -> 100020000300000  (major * 1e14 + minor * 1e10 + patch * 1e5 + release)
+ * "1.2.3-6.el9" -> 100020000300006  (RPM release number included as 4th component)
  *
  * Returns null for abnormally large values or versions containing timestamps
  *
- * minor/patch/release each occupy a fixed-width digit slot (weight 1e6/1e3/1
- * respectively), so any of them reaching 1000+ overflows into the next slot up
- * instead of being rejected -- e.g. "67.9999.64" (a real NVD CPE convention for
- * "any 9999.x build of major 67") previously encoded to 76999064000, comparing
- * as *larger* than "68.0.15" (68000015000), a different major entirely. This
- * isn't just lossy, it's non-monotonic: an older version can normalize higher
- * than a newer one. Legitimately large-but-real values in this range (large
- * RPM release numbers, NVD's minor=9999 convention) are clamped to the slot's
- * max (999) instead -- confirmed this doesn't introduce new same-line
- * ambiguity beyond what already existed (RPM releases with a multi-part
- * suffix like "2136.344.4.3" already only capture the leading integer group;
- * see docs/known-issues.md's generic version encoding note). Values beyond
- * MAX_COMPONENT (999999) are still rejected outright as garbage (timestamps,
- * git hashes) rather than clamped, since clamping those would treat obvious
- * garbage as a real, comparable version.
+ * minor/patch/release each occupy a fixed-width digit slot (see the *_LIMIT and
+ * *_WEIGHT constants above), so a value past its slot would overflow into the
+ * next slot up instead of being rejected -- e.g. "67.9999.64" (a real NVD CPE
+ * convention for "any 9999.x build of major 67") once compared as *larger* than
+ * "68.0.15", a different major entirely. That isn't just lossy, it's
+ * non-monotonic: an older version can normalize higher than a newer one. Values
+ * past a slot (up to MAX_COMPONENT) are clamped to the slot's max instead, the
+ * major included: a major past MAJOR_LIMIT is nearly always letters stripped out
+ * of a non-version ("2199_win32", "16_jun_2002"), and clamping keeps it above
+ * every real version, where it always compared. Values beyond MAX_COMPONENT
+ * (999999) are still rejected outright as garbage (timestamps, git hashes)
+ * rather than clamped, since clamping those would treat obvious garbage as a
+ * real, comparable version.
  */
 /**
  * The Junos version a CPE spells as a version and an update field:
@@ -141,7 +191,7 @@ export function normalizeVersion(version: string): bigint | null {
   const junos = withoutEpoch.match(/^(\d{1,3})\.(\d{1,3})([RrXx])(\d{1,3})(?:-([SsDd])(\d{1,3}))?(?:-EVO)?$/);
   if (junos) {
     const [, maj, min, , train, , service] = junos;
-    return BigInt(maj) * 1_000_000_000n + BigInt(min) * 1_000_000n + BigInt(train) * 1_000n + BigInt(service ?? 0);
+    return BigInt(maj) * MAJOR_WEIGHT + BigInt(min) * MINOR_WEIGHT + BigInt(train) * PATCH_WEIGHT + BigInt(service ?? 0) * RELEASE_WEIGHT;
   }
 
   // A label attached straight to the number ("6.0.18rc1", "7.4p1", "17.3R3").
@@ -150,21 +200,28 @@ export function normalizeVersion(version: string): bigint | null {
   // and far past the release the label belongs to. See labelledVersion().
   const labelled = labelledVersion(withoutEpoch);
   if (labelled) {
-    const base = normalizeVersion(labelled.base);
-    if (base === null) return null;
-    if (labelled.kind === 'post') return normalizeVersion(`${labelled.base}-${labelled.num}`);
-    const rank = PRE_RELEASE_STAGES[labelled.label] * PRE_RELEASE_STAGE_WIDTH
-      + Math.min(labelled.num, PRE_RELEASE_STAGE_WIDTH - 1);
-    const value = base - 1n - BigInt(PRE_RELEASE_MAX_RANK - rank);
-    return value > 0n ? value : 0n;
+    if (labelled.kind === 'post') {
+      return normalizeVersion(labelled.base) === null ? null : normalizeVersion(`${labelled.base}-${labelled.num}`);
+    }
+    return preReleaseValue(labelled.base, PRE_RELEASE_STAGES[labelled.label], labelled.num);
   }
+
+  // A pre-release joined by a hyphen ("1.0.0-beta.13", "42.0.0-alpha.3", Tomcat's
+  // "10.0.0-M1", NuGet's "9.0.0-preview.1.24080.9") is ordered the same way. The
+  // pre-release check below puts every one of a release's pre-releases on the same
+  // value, so a range from 1.0.0-beta.10 to 1.0.0-beta.13 ended before it began and
+  // matched nothing.
+  const hyphenPre = hyphenPreRelease(withoutEpoch);
+  if (hyphenPre) return preReleaseValue(hyphenPre.base, hyphenPre.stage, hyphenPre.num);
 
   // An update, service pack or interim fix joined by a hyphen ("7.4.13-u92", Liferay's DXP
   // updates; "24.0.0-IF006", an IBM interim fix) comes after its release, like the "-N"
   // release it stands in for. The pre-release check below would read the letter as
   // "1.0.0-beta" and put it one below the release, so a range from 7.4.13 to 7.4.13-u92
-  // ended before it began.
-  const hyphenPost = withoutEpoch.match(/^(.*\d)-(?:u|update|sp|if|ifix)(\d{1,3})$/i);
+  // ended before it began. A patch level is the same: Composer's "2.4.7-p3" (Magento's
+  // patch releases) and Ruby's "1.8.7-p21" come after 2.4.7 and 1.8.7, and read as
+  // pre-releases they put 2.4.7-p3 inside a range fixed in 2.4.7.
+  const hyphenPost = withoutEpoch.match(/^(.*\d)-(?:u|update|sp|if|ifix|p|pl|patch)(\d{1,3})$/i);
   if (hyphenPost) return normalizeVersion(`${hyphenPost[1]}-${Number(hyphenPost[2])}`);
 
   // Detect pre-release (only when character after hyphen is a letter)
@@ -185,12 +242,12 @@ export function normalizeVersion(version: string): bigint | null {
   // Pre-release identifiers starting with a letter are excluded by hasPrerelease check above
   const releaseMatch = !hasPrerelease ? parts[1]?.match(/^(\d+)/) : null;
   // A 4th dotted component ("15.1.10.8", "138.53.6.158") takes the release slot when no
-  // RPM-style "-N" release is there. It is left out (as it always was) when the number
-  // above 999 would be clamped in a slot before it -- Chrome's "120.0.6099.109" and
-  // "120.0.6200.50" both clamp to 120.0.999, and ordering them by the 4th number
-  // alone would be wrong -- and above 999 itself ("2.0.0.20230101", a date or build stamp).
-  const dotted = versionOnly.match(/^[vV]?(\d+)\.(\d+)\.(\d+)\.(\d{1,3})$/);
-  const fourth = dotted && Number(dotted[2]) <= 999 && Number(dotted[3]) <= 999 ? dotted[4] : undefined;
+  // RPM-style "-N" release is there. It is left out when the number above it would be
+  // clamped in its slot -- two versions clamped to the same patch, ordered by the 4th
+  // number alone, would be ordered wrong -- and when it is past its own slot
+  // ("2.0.0.20230101", a date or build stamp).
+  const dotted = versionOnly.match(/^[vV]?(\d+)\.(\d+)\.(\d+)\.(\d{1,5})$/);
+  const fourth = dotted && Number(dotted[2]) <= MINOR_LIMIT && Number(dotted[3]) <= PATCH_LIMIT ? dotted[4] : undefined;
   const release = releaseMatch ? parseInt(releaseMatch[1], 10) : fourth ? parseInt(fourth, 10) : 0;
 
   // Check for abnormally large values (timestamps, Git hashes, etc.) -- beyond
@@ -201,19 +258,13 @@ export function normalizeVersion(version: string): bigint | null {
     return null;
   }
 
-  // minor/patch/release must each stay below 1000 to not corrupt the next
-  // slot up (see the function doc comment) -- clamp legitimately-large values
-  // in [1000, MAX_COMPONENT] to the slot's max instead of letting them overflow.
-  const SLOT_LIMIT = 999;
-  const clampedMinor = Math.min(minor, SLOT_LIMIT);
-  const clampedPatch = Math.min(patch, SLOT_LIMIT);
-  const clampedRelease = Math.min(release, SLOT_LIMIT);
-
-  // Verify the resulting BigInt is within a safe range
-  let result = BigInt(major) * 1_000_000_000n
-    + BigInt(clampedMinor) * 1_000_000n
-    + BigInt(clampedPatch) * 1_000n
-    + BigInt(clampedRelease);
+  // Each value must stay within its slot so as not to corrupt the next slot up
+  // (see the function doc comment) -- clamp larger values, up to MAX_COMPONENT,
+  // to the slot's max instead of letting them overflow.
+  let result = BigInt(Math.min(major, MAJOR_LIMIT)) * MAJOR_WEIGHT
+    + BigInt(Math.min(minor, MINOR_LIMIT)) * MINOR_WEIGHT
+    + BigInt(Math.min(patch, PATCH_LIMIT)) * PATCH_WEIGHT
+    + BigInt(Math.min(release, RELEASE_LIMIT)) * RELEASE_WEIGHT;
 
   // Pre-release versions should sort lower than the release (e.g., "2.0.0-beta.1" < "2.0.0")
   if (hasPrerelease && result > 0n) {

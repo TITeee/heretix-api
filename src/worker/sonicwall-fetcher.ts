@@ -216,15 +216,23 @@ export function buildSonicWallAdvisories(adv: SonicWallAdvisory, detail?: SonicW
     if (own.length === 0) {
       return [{ vendor: 'sonicwall', product, affectedVersions: versions, patchAvailable: true }];
     }
-    return own.map(p => ({
-      vendor: 'sonicwall',
-      product,
-      versionStart: rangeStart(p, own),
-      lastAffected: p.lastAffected,
-      versionFixed: p.fixed,
-      affectedVersions: versions,
-      patchAvailable: true,
-    }));
+    // The version list spans every line of the advisory, so on a range row it
+    // matched other lines too and gave them this line's fix (8.0.0 told 7.1.3).
+    // Versions of a line no pair covers keep a row of their own, without a fix,
+    // unless the product's name rules them out (a Gen7 row for 6.5.4.4).
+    const covered = new Set(own.map(p => minorLine(p.fixed)));
+    const uncovered = versions.filter(v => !covered.has(minorLine(v)) && productAcceptsVersion(product, v) !== false);
+    return [
+      ...own.map(p => ({
+        vendor: 'sonicwall',
+        product,
+        versionStart: rangeStart(p, own),
+        lastAffected: p.lastAffected,
+        versionFixed: p.fixed,
+        patchAvailable: true,
+      })),
+      ...(uncovered.length > 0 ? [{ vendor: 'sonicwall', product, affectedVersions: uncovered, patchAvailable: true }] : []),
+    ];
   };
 
   const affectedProducts: NormalizedAdvisory['affectedProducts'] = productNames.length > 0

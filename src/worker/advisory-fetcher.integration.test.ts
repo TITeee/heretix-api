@@ -92,6 +92,35 @@ describe('importAdvisoryData', () => {
     expect(advisory?.affectedProducts.map(p => p.product).sort()).toEqual(['FortiOS', 'FortiProxy']);
   });
 
+  it('keeps the stored affected products when the fetcher could not read them this run', async () => {
+    await importAdvisoryData(makeAdvisory(), 'fortinet');
+
+    const unread = makeAdvisory({
+      severity: 'CRITICAL',
+      affectedProducts: [{ vendor: 'fortinet', product: 'FortiOS', patchAvailable: true }],
+      keepAffectedProducts: true,
+    });
+    expect(await importAdvisoryData(unread, 'fortinet')).toBe('updated');
+
+    const advisory = await prisma.advisoryVulnerability.findUnique({
+      where: { source_externalId: { source: 'fortinet', externalId: 'FG-IR-26-001' } },
+      include: { affectedProducts: true },
+    });
+    expect(advisory?.severity).toBe('CRITICAL');
+    expect(advisory?.affectedProducts.map(p => [p.versionStart, p.versionEnd])).toEqual([['7.0.0', '7.0.5']]);
+  });
+
+  it('imports the products it has for an advisory seen for the first time, read or not', async () => {
+    const unread = makeAdvisory({
+      affectedProducts: [{ vendor: 'fortinet', product: 'FortiOS', patchAvailable: true }],
+      keepAffectedProducts: true,
+    });
+    expect(await importAdvisoryData(unread, 'fortinet')).toBe('inserted');
+
+    const products = await prisma.advisoryAffectedProduct.findMany({ select: { product: true, versionStart: true } });
+    expect(products).toEqual([{ product: 'FortiOS', versionStart: null }]);
+  });
+
   it('links to an existing NVD-created master row instead of creating a new one when cveId matches', async () => {
     const nvdMaster = await prisma.vulnerability.create({
       data: { cveId: 'CVE-2026-1111', severity: 'CRITICAL', cvssScore: 9.8 },

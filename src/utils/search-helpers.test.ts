@@ -10,7 +10,11 @@ import {
   isRpmAdvisoryVendor,
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
+  matchesGoVersion,
+  compareGoOrEncoded,
   matchesRpmVersionRange,
+  fixAboveInstalled,
+  orderByEncoding,
   isRpmStyleOsvDistro,
   isAdvisoryOnlyEcosystem,
   cnaVersionWhere,
@@ -27,6 +31,7 @@ import {
   escapeLikePattern,
   type VulnerabilityResult,
 } from './search-helpers.js';
+import { encodeAdvisoryVersion, BROADCOM_VENDOR } from './advisory-version.js';
 
 function makeResult(overrides: Partial<VulnerabilityResult>): VulnerabilityResult {
   return {
@@ -80,12 +85,20 @@ describe('dedup', () => {
     expect(dedup(items)[0].sources).toEqual(['nvd']);
   });
 
-  it('keeps the first non-null fixedVersion without overwriting it', () => {
+  it('keeps the first non-null fixedVersion when nothing else tells two apart', () => {
+    const items = [
+      makeResult({ id: 'v1', sources: ['nvd'], fixedVersion: '1.2.3' }),
+      makeResult({ id: 'v1', sources: ['nvd'], fixedVersion: '9.9.9' }),
+    ];
+    expect(dedup(items)[0].fixedVersion).toBe('1.2.3');
+  });
+
+  it("takes OSV's fixedVersion over NVD's", () => {
     const items = [
       makeResult({ id: 'v1', sources: ['nvd'], fixedVersion: '1.2.3' }),
       makeResult({ id: 'v1', sources: ['osv'], fixedVersion: '9.9.9' }),
     ];
-    expect(dedup(items)[0].fixedVersion).toBe('1.2.3');
+    expect(dedup(items)[0].fixedVersion).toBe('9.9.9');
   });
 
   it('fills in fixedVersion from a later item when the first is null', () => {
@@ -453,6 +466,49 @@ describe('matchesDpkgStyleVersion', () => {
   });
 });
 
+describe('matchesGoVersion', () => {
+  const row = (o: Partial<Parameters<typeof matchesGoVersion>[0]> = {}) => ({
+    affectedVersions: [],
+    introducedVersion: null,
+    fixedVersion: null,
+    lastAffectedVersion: null,
+    ...o,
+  });
+
+  it('matches an untagged module up to its fixed pseudo-version (minio)', () => {
+    const r = row({ introducedVersion: '0', fixedVersion: '0.0.0-20240527191746-e0fe7cc39172' });
+    expect(matchesGoVersion(r, 'v0.0.0-20240101000000-aaaaaaaaaaaa')).toBe(true);
+    expect(matchesGoVersion(r, 'v0.0.0-20240527191746-e0fe7cc39172')).toBe(false);
+    expect(matchesGoVersion(r, 'v0.0.0-20240601000000-bbbbbbbbbbbb')).toBe(false);
+  });
+
+  it('matches between two pseudo-versions of one release (Nginx-UI)', () => {
+    const r = row({ introducedVersion: '1.9.10-0.20250517140552-daee3ac7ade1', fixedVersion: '1.9.10-0.20260728074433-a3999bd78a3b' });
+    expect(matchesGoVersion(r, 'v1.9.10-0.20251005005631-6de168c94540')).toBe(true);
+    expect(matchesGoVersion(r, 'v1.9.9')).toBe(false);
+    expect(matchesGoVersion(r, 'v1.9.10')).toBe(false);
+  });
+
+  it('matches between two pre-releases (stdlib 1.27.0-0 to 1.27.0-rc.3)', () => {
+    const r = row({ introducedVersion: '1.27.0-0', fixedVersion: '1.27.0-rc.3' });
+    expect(matchesGoVersion(r, '1.27.0-rc.1')).toBe(true);
+    expect(matchesGoVersion(r, '1.27.0-rc.3')).toBe(false);
+  });
+
+  it('keeps tagged ranges as they were, and honours last_affected', () => {
+    expect(matchesGoVersion(row({ introducedVersion: '0', fixedVersion: '0.33.0' }), 'v0.32.0')).toBe(true);
+    expect(matchesGoVersion(row({ introducedVersion: '0', fixedVersion: '0.33.0' }), 'v0.33.0')).toBe(false);
+    expect(matchesGoVersion(row({ introducedVersion: '1.0.0', lastAffectedVersion: '1.2.0' }), 'v1.2.0')).toBe(true);
+    expect(matchesGoVersion(row({ introducedVersion: '1.0.0', lastAffectedVersion: '1.2.0' }), 'v1.2.1')).toBe(false);
+  });
+
+  it('falls back to the encoding for a bound that is not a module version', () => {
+    expect(compareGoOrEncoded('1.12.5', '1.13')).toBe(-1);
+    expect(matchesGoVersion(row({ introducedVersion: '0', fixedVersion: '1.13' }), '1.12.5')).toBe(true);
+    expect(matchesGoVersion(row({ introducedVersion: '0', fixedVersion: '1.13' }), '1.13.1')).toBe(false);
+  });
+});
+
 describe('matchesRpmStyleOsvVersion', () => {
   // OSVAffectedPackage column shape; only the fields this predicate reads.
   const row = (o: Partial<Parameters<typeof matchesRpmStyleOsvVersion>[0]> = {}) => ({
@@ -758,5 +814,119 @@ describe('escapeLikePattern', () => {
   it('escapes the wildcards and the escape character', () => {
     expect(escapeLikePattern('big_ip%')).toBe('big\\_ip\\%');
     expect(escapeLikePattern('a\\b')).toBe('a\\\\b');
+  });
+});
+
+describe('fixAboveInstalled', () => {
+  const byInt = orderByEncoding(v => (/^\d+$/.test(v) ? BigInt(v) : null));
+
+  it('keeps a fix newer than the installed version', () => {
+    expect(fixAboveInstalled('11', '10', byInt)).toBe('11');
+  });
+
+  it('drops a fix older than or equal to the installed version', () => {
+    expect(fixAboveInstalled('9', '10', byInt)).toBeNull();
+    expect(fixAboveInstalled('10', '10', byInt)).toBeNull();
+  });
+
+  it('keeps the fix when the order cannot tell', () => {
+    expect(fixAboveInstalled('9', '10-beta', byInt)).toBe('9');
+  });
+
+  it('keeps the fix when no installed version is known', () => {
+    expect(fixAboveInstalled('9', undefined, byInt)).toBe('9');
+  });
+
+  it('passes a missing fix through', () => {
+    expect(fixAboveInstalled(null, '10', byInt)).toBeNull();
+  });
+});
+
+describe('orderByEncoding', () => {
+  // Like normalizeVersion(): 9.3.2408.100 and 9.3.2408.110 encode alike.
+  const clamped = orderByEncoding(v => (v.startsWith('9.3.2408.') ? 9003999000n : null));
+
+  it('cannot tell two different versions apart when they encode alike', () => {
+    expect(clamped('9.3.2408.107', '9.3.2408.110')).toBeNull();
+  });
+
+  it('reads the same string as equal', () => {
+    expect(clamped('9.3.2408.107', '9.3.2408.107')).toBe(0);
+  });
+});
+
+describe('orderByEncoding with plainOnly', () => {
+  // Reads a suffix as a pre-release, like normalizeVersion() does for most of them.
+  const encode = (v: string) => { const m = v.match(/^(\d+)\.(\d+)\.(\d+)(-.+)?$/); return m ? BigInt(m[1]) * 1_000_000n + BigInt(m[2]) * 1_000n + BigInt(m[3]) - (m[4] ? 1n : 0n) : null; };
+  const plain = orderByEncoding(encode, true);
+
+  it('orders dotted numbers', () => {
+    expect(plain('6.2.7', '6.5.2')).toBe(-1);
+  });
+
+  it('cannot tell once either side has a suffix, so a build like 7.0.1-R1456 is not read as older', () => {
+    expect(plain('7.0.1-R1456', '7.0.1')).toBeNull();
+    expect(fixAboveInstalled('7.0.1-R1456', '7.0.1', plain)).toBe('7.0.1-R1456');
+  });
+});
+
+describe('dedup choosing among fixed versions', () => {
+  const plain = orderByEncoding(v => { const p = v.split('.').map(Number); return p.some(Number.isNaN) ? null : BigInt(p[0] ?? 0) * 1_000_000n + BigInt(p[1] ?? 0) * 1_000n + BigInt(p[2] ?? 0); }, true);
+  const fixOf = (items: VulnerabilityResult[], installed?: string) => dedup(items, installed, plain)[0].fixedVersion;
+
+  it("prefers the vendor's fix over NVD's, whichever came first", () => {
+    expect(fixOf([
+      makeResult({ source: 'nvd', sources: ['nvd'], fixedVersion: '10.1.37' }),
+      makeResult({ sources: ['advisory-tomcat'], fixedVersion: '10.1.39' }),
+    ], '10.1.36')).toBe('10.1.39');
+  });
+
+  it('ranks OSV above the CNA record and the CNA record above NVD', () => {
+    expect(fixOf([
+      makeResult({ source: 'nvd', sources: ['nvd'], fixedVersion: '1.0.3' }),
+      makeResult({ source: 'cna', sources: ['cna'], fixedVersion: '1.0.2' }),
+    ], '1.0.0')).toBe('1.0.2');
+    expect(fixOf([
+      makeResult({ source: 'cna', sources: ['cna'], fixedVersion: '1.0.2' }),
+      makeResult({ source: 'osv', sources: ['osv'], fixedVersion: '1.0.4' }),
+    ], '1.0.0')).toBe('1.0.4');
+  });
+
+  it("prefers the fix on the installed version's release line", () => {
+    expect(fixOf([
+      makeResult({ source: 'advisory-splunk', sources: ['advisory-splunk'], fixedVersion: '10.0.2' }),
+      makeResult({ source: 'advisory-splunk', sources: ['advisory-splunk'], fixedVersion: '9.4.6' }),
+    ], '9.4.5')).toBe('9.4.6');
+  });
+
+  it('takes the nearest fix on the same line', () => {
+    expect(fixOf([
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '8.18.7' }),
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '8.18.6' }),
+    ], '8.18.5')).toBe('8.18.6');
+  });
+
+  it('keeps the first when nothing tells them apart', () => {
+    expect(fixOf([
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '6.5.4.8-89n' }),
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: '6.5.4.9-1n' }),
+    ], '6.5.4.7')).toBe('6.5.4.8-89n');
+  });
+
+  it("orders two fixes from one feed the feed's way when it has its own order", () => {
+    const esxi = new Map([['advisory-broadcom', orderByEncoding(v => encodeAdvisoryVersion(BROADCOM_VENDOR, v))]]);
+    const items = [
+      makeResult({ source: 'advisory-broadcom', sources: ['advisory-broadcom'], fixedVersion: 'ESXi70U3c-19193900' }),
+      makeResult({ source: 'advisory-broadcom', sources: ['advisory-broadcom'], fixedVersion: 'ESXi70U2e-19290878' }),
+    ];
+    expect(dedup(items, '7.0 U2', plain, esxi)[0].fixedVersion).toBe('ESXi70U2e-19290878');
+    expect(dedup(items, '7.0 U2', plain)[0].fixedVersion).toBe('ESXi70U3c-19193900');
+  });
+
+  it('keeps a lone fix whichever source gave it', () => {
+    expect(fixOf([
+      makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: null }),
+      makeResult({ source: 'nvd', sources: ['nvd'], fixedVersion: '2.0.0' }),
+    ], '1.0.0')).toBe('2.0.0');
   });
 });

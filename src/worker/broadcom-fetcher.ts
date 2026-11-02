@@ -137,7 +137,8 @@ function isVersionLike(v: string): boolean {
  * fixed at that version, not that there's one combined product by that name.
  * The fixed-version cell can likewise list several versions ("ESXi80U3i-25205845
  * or ESXi80U3j-25429389"). Broadcom also marks some fixed versions with a
- * footnote reference ("[1] 9.1.0.0300") that isn't part of the version string.
+ * footnote reference ("[1] 9.1.0.0300", "8.0 U3d [1]", "12.1.0**") that isn't part
+ * of the version string.
  *
  * A product is kept even when fixedVersions comes back empty — e.g. VMware Telco
  * Cloud Platform/Infrastructure route their Fixed Version column through a KB
@@ -162,7 +163,7 @@ export function parseResponseMatrixRow(
 
   const fixedVersions = rawFixedVer
     .split(/\s+or\s+/i)
-    .map(v => v.replace(/^\[\d+\]\s*/, '').trim())
+    .map(v => v.replace(/^\[\d+\]\s*/, '').replace(/\s*\[\d+\]$/, '').replace(/\s*\*+$/, '').trim())
     .filter(isVersionLike);
 
   return { products, fixedVersions };
@@ -209,6 +210,26 @@ export function parseAffectedVersionCell(raw: string): AffectedRange[] {
 }
 
 /**
+ * True when a fixed version is the patch of a component, not a version of the
+ * product it is listed for. Cloud Foundation and Telco Cloud rows name their own
+ * release in the Version column and the ESXi, vCenter or NSX patch that fixes it
+ * in the Fixed Version column: Cloud Foundation 5.1 fixed by "Async patch to 8.0
+ * U2e", 5.0 by "Async patch to NSX 4.1.2.6", Telco Cloud Infrastructure 3 by
+ * "ESXi80U3se-24659227". Used as the end of the range, such a fix ran it from 5.1
+ * up to vCenter's 8.0 -- or ended it below its start, at NSX's 4.1, so it matched
+ * nothing. Told by the component's spelling or a platform product, with a major
+ * version other than the range's.
+ */
+function isComponentFix(product: string, versionStart: string, fixedVer: string): boolean {
+  const componentSpelling = /^(?:async\s+patch|nsx|esxi)/i.test(fixedVer);
+  const platform = /cloud\s+foundation|telco\s+cloud|vsphere\s+foundation/i.test(product);
+  if (!componentSpelling && !platform) return false;
+  const major = fixedVer.match(/^ESXi(\d)\d/i)?.[1]
+    ?? fixedVer.replace(/^(?:async\s+patch\s+to\s+)?(?:nsx(?:-t)?\s+|esxi[\s_-])?/i, '').match(/^(\d+)/)?.[1];
+  return major !== undefined && Number(major) !== Number(versionStart.split('.')[0]);
+}
+
+/**
  * Builds one affectedProducts entry for a (product, affected range, fixed
  * version) combination. Either range or fixedVer can be absent — a product
  * can be named as affected with no specific range, no specific fix, or both.
@@ -217,7 +238,9 @@ export function parseAffectedVersionCell(raw: string): AffectedRange[] {
  * available: versionFixed is a specific patch ("8.0 U3k"), while a range like
  * "8.0.x.x" only bounds the whole branch ("8.1") — a strictly wider, less
  * accurate upper bound. versionEnd is only set from the range when there's no
- * versionFixed to defer to, so it's the best available bound rather than none.
+ * versionFixed to defer to, so it's the best available bound rather than none --
+ * or when versionFixed is a component's version (isComponentFix), which bounds
+ * nothing of the product's own.
  */
 function buildAffectedProductEntry(
   product: string,
@@ -229,14 +252,14 @@ function buildAffectedProductEntry(
     product,
     patchAvailable: fixedVer !== undefined,
   };
-  // normalizeVersion (called downstream in importAdvisoryData) handles "X.Y UZw".
+  // broadcomVersionToInt (called downstream in importAdvisoryData) handles "X.Y UZw".
   if (fixedVer !== undefined) entry.versionFixed = fixedVer;
 
   if (range && 'exact' in range) {
     entry.affectedVersions = [range.exact];
   } else if (range) {
     entry.versionStart = range.versionStart;
-    if (fixedVer === undefined) {
+    if (fixedVer === undefined || isComponentFix(product, range.versionStart, fixedVer)) {
       entry.versionEnd = range.versionEnd;
     }
   }
@@ -445,11 +468,25 @@ export function isBroadcomUrl(url: string): boolean {
 }
 
 /**
+ * What a detail page that never showed a table is, from its text. A VMSA from before
+ * 2019 is prose with no Response Matrix (its "Advisory ID" header is there, the matrix is
+ * not), every run: 'no-matrix', nothing to read. Anything else -- a page that did not
+ * load, Cloudflare's challenge, a matrix the page names but did not render in time -- is
+ * a failure of this run: 'failed'.
+ */
+export function classifyTablelessPage(text: string): 'no-matrix' | 'failed' {
+  return /advisory\s+id/i.test(text) && !/response\s+matrix/i.test(text) ? 'no-matrix' : 'failed';
+}
+
+/**
  * Fetch detail page and extract product/fixed-version pairs from the Response Matrix table.
  * Runs in browser context via page.evaluate() to avoid innerText multiline cell issues.
  *
  * VMSA "Response Matrix" columns:
  *   0: VMware Product | 1: Version | ... | 6: Fixed Version | ...
+ *
+ * `failed` is a page this run could not read (see classifyTablelessPage); a page with no
+ * matrix to read is not one.
  */
 async function fetchDetailVersions(notificationUrl: string): Promise<{ versions: ProductVersion[]; failed: boolean }> {
   // The URL comes from the list API's response, and the browser would open whatever it
@@ -465,7 +502,12 @@ async function fetchDetailVersions(notificationUrl: string): Promise<{ versions:
     // dedup all happen below instead, in plain Node code that's actually
     // unit-testable.
     const rawRows = await withPage(notificationUrl, async (page) => {
-      await page.waitForSelector('table', { timeout: 20000 });
+      const hasTable = await page.waitForSelector('table', { timeout: 20000 }).then(() => true, () => false);
+      if (!hasTable) {
+        const text = await page.evaluate(() => document.body?.innerText ?? '');
+        if (classifyTablelessPage(text) === 'no-matrix') return [];
+        throw new Error('No Response Matrix table on the advisory page');
+      }
       return page.evaluate(() => {
         const rows: MatrixRawRow[] = [];
 
@@ -547,9 +589,12 @@ export class BroadcomFetcher implements AdvisoryFetcher {
       // Fetch detail page for version table (uses the direct notificationUrl)
       await new Promise(r => setTimeout(r, DELAY_MS));
       const { versions: productVersions, failed: detailFailed } = await fetchDetailVersions(item.notificationUrl);
+      // A page this run could not read says nothing about the products: the rows the last
+      // good run imported are kept, rather than replaced with the version-less fallback.
       if (detailFailed) this.fetchFailed++;
 
-      const built = buildBroadcomAdvisories(item, productVersions);
+      const built = buildBroadcomAdvisories(item, productVersions)
+        .map(adv => (detailFailed ? { ...adv, keepAffectedProducts: true } : adv));
       results.push(...built);
 
       logger.debug(

@@ -4,6 +4,8 @@
  */
 import { compareDpkgVersions } from './dpkg-version.js';
 import { compareRpmVersions, rpmReleaseStream } from './rpm-version.js';
+import { compareGoVersions } from './go-version.js';
+import { normalizeVersion } from './version.js';
 import type { FixStatus } from './fix-status.js';
 
 export type VulnerabilityResult = {
@@ -88,10 +90,74 @@ export function buildAliases(
   return [...new Set([master.cveId, master.osvId, master.advisoryId, sourceOwnId].filter((v): v is string => !!v))];
 }
 
-/** Deduplicate by master ID (merge sources and aliases, keep first non-null fixedVersion) */
-export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
+/**
+ * How far a source's fixed version is trusted, lowest first: the vendor's or distribution's
+ * own advisory, OSV (the package ecosystem's), the CNA's CVE record, then NVD's reading of it.
+ */
+function fixSourceRank(source: string): number {
+  if (source === 'nvd') return 3;
+  if (source === 'cna') return 2;
+  if (source === 'osv') return 1;
+  return 0;
+}
+
+/** How many leading numbers two versions share ("9.4.5" and "9.4.6": 2). */
+function sharedLeadingNumbers(a: string, b: string): number {
+  const nums = (v: string) => v.match(/^\d+(?:\.\d+)*/)?.[0].split('.') ?? [];
+  const x = nums(a), y = nums(b);
+  let n = 0;
+  while (n < x.length && n < y.length && x[n] === y[n]) n++;
+  return n;
+}
+
+/**
+ * The fixed version to report when several sources or rows name one for the same finding:
+ * the most trusted source; then the fix on the installed version's own release line (9.4.6
+ * for 9.4.5, not 10.0.2); then the nearest, lowest one; then the first. Two fixes from the
+ * same source are ordered the source's way when `sourceOrders` has one: VMware's
+ * "ESXi70U2e-19290878" and "ESXi70U3c-19193900" are no dotted numbers to `order`.
+ */
+function pickFix(
+  candidates: Array<{ fix: string; source: string }>,
+  installed: string | undefined,
+  order: VersionOrder | undefined,
+  sourceOrders: ReadonlyMap<string, VersionOrder> | undefined,
+): string {
+  let best = candidates[0];
+  for (const c of candidates.slice(1)) {
+    const rank = fixSourceRank(c.source) - fixSourceRank(best.source);
+    if (rank !== 0) { if (rank < 0) best = c; continue; }
+    if (installed) {
+      const line = sharedLeadingNumbers(c.fix, installed) - sharedLeadingNumbers(best.fix, installed);
+      if (line !== 0) { if (line > 0) best = c; continue; }
+    }
+    const by = (c.source === best.source && sourceOrders?.get(c.source)) || order;
+    if (by && (by(c.fix, best.fix) ?? 0) < 0) best = c;
+  }
+  return best.fix;
+}
+
+/**
+ * Deduplicate by master ID, merging sources and aliases. When more than one result names a
+ * fixed version, pickFix() chooses it from all of them; `installed`, `order` and
+ * `sourceOrders` let it prefer the installed version's release line and the nearest fix.
+ */
+export function dedup(
+  items: VulnerabilityResult[],
+  installed?: string,
+  order?: VersionOrder,
+  sourceOrders?: ReadonlyMap<string, VersionOrder>,
+): VulnerabilityResult[] {
   const seen = new Map<string, VulnerabilityResult>();
+  const fixes = new Map<string, Array<{ fix: string; source: string }>>();
   for (const item of items) {
+    if (item.fixedVersion) {
+      const list = fixes.get(item.id) ?? [];
+      // sources[0] is the source this result came from; `source` is the master's kind ("nvd"
+      // for anything with a CVE id).
+      list.push({ fix: item.fixedVersion, source: item.sources[0] ?? item.source });
+      fixes.set(item.id, list);
+    }
     const existing = seen.get(item.id);
     if (existing) {
       for (const s of item.sources) {
@@ -102,9 +168,6 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
       // consumer needs to follow a finding across a rename.
       for (const a of item.aliases) {
         if (!existing.aliases.includes(a)) existing.aliases.push(a);
-      }
-      if (!existing.fixedVersion && item.fixedVersion) {
-        existing.fixedVersion = item.fixedVersion;
       }
       if (!existing.distroPriority && item.distroPriority) {
         existing.distroPriority = item.distroPriority;
@@ -122,6 +185,9 @@ export function dedup(items: VulnerabilityResult[]): VulnerabilityResult[] {
     } else {
       seen.set(item.id, { ...item, sources: [...item.sources], aliases: [...item.aliases] });
     }
+  }
+  for (const [id, list] of fixes) {
+    seen.get(id)!.fixedVersion = pickFix(list, installed, order, sourceOrders);
   }
   return [...seen.values()];
 }
@@ -578,6 +644,44 @@ export function matchesRpmStyleOsvVersion(
 }
 
 /**
+ * Go module order (compareGoVersions), falling back to normalizeVersion() for a
+ * bound that is not a Go module version: a few OSV Go records carry one ("1.13",
+ * "9.6.0b1"), and those rows matched by the encoding until now. Null when neither
+ * can order the two.
+ */
+export function compareGoOrEncoded(a: string, b: string): number | null {
+  const go = compareGoVersions(a, b);
+  if (go !== null) return go;
+  const x = normalizeVersion(a);
+  const y = normalizeVersion(b);
+  if (x === null || y === null) return null;
+  return x > y ? 1 : x < y ? -1 : 0;
+}
+
+/**
+ * Same shape as matchesRpmStyleOsvVersion(), for OSV's Go ranges: the *Int
+ * columns put every pseudo-version of a release on one value (see
+ * go-version.ts), so these are compared as Go versions instead. A bound that
+ * cannot be compared at all does not exclude the version, as a null *Int did not.
+ */
+export function matchesGoVersion(
+  row: { affectedVersions: string[]; introducedVersion: string | null; fixedVersion: string | null; lastAffectedVersion: string | null },
+  version: string,
+): boolean {
+  if (row.affectedVersions.includes(version)) return true;
+
+  const hasRange = row.introducedVersion !== null || row.fixedVersion !== null || row.lastAffectedVersion !== null;
+  if (!hasRange) return false;
+
+  const cmp = (bound: string) => compareGoOrEncoded(version, bound);
+  if (row.introducedVersion && (cmp(row.introducedVersion) ?? 0) < 0) return false;
+  if (row.fixedVersion && (cmp(row.fixedVersion) ?? -1) >= 0) return false;
+  if (row.lastAffectedVersion && (cmp(row.lastAffectedVersion) ?? 0) > 0) return false;
+
+  return true;
+}
+
+/**
  * Row predicate for RPM-based distro advisories (searchAdvisoryRpm).
  *
  * `versionEnd` comes from OVAL's "<package> is earlier than <version>" and is
@@ -623,6 +727,44 @@ export function matchesRpmVersionRange(
   if (compareRpmVersions(version, row.versionEnd) >= 0) return false;
   if (row.versionStart && compareRpmVersions(version, row.versionStart) < 0) return false;
   return true;
+}
+
+/** Orders two versions, or says it cannot (null). */
+export type VersionOrder = (a: string, b: string) => number | null;
+
+const PLAIN_VERSION_RE = /^\d+(\.\d+)*$/;
+
+/**
+ * Order by an integer encoding (normalizeVersion(), encodeAdvisoryVersion()). The encoding
+ * folds versions together (a component past its slot is clamped, and what follows the
+ * third or fourth number is mostly dropped), so equal codes for different strings are
+ * "cannot tell".
+ *
+ * `plainOnly` limits it to dotted numbers. A suffix means different things to different
+ * vendors, and normalizeVersion() reads most as a pre-release: SonicWall's build
+ * 7.0.1-R1456 would sort below 7.0.1, Magento's patch 2.4.7-p3 below 2.4.7.
+ */
+export function orderByEncoding(encode: (v: string) => bigint | null, plainOnly = false): VersionOrder {
+  return (a, b) => {
+    if (plainOnly && (!PLAIN_VERSION_RE.test(a) || !PLAIN_VERSION_RE.test(b))) return null;
+    const x = encode(a), y = encode(b);
+    if (x === null || y === null || (x === y && a !== b)) return null;
+    return x > y ? 1 : x < y ? -1 : 0;
+  };
+}
+
+/**
+ * The fixed version to report for an installed version, or null when it is no update for
+ * it. An update is a newer build, so a fix at or below the installed version cannot be the
+ * one to install, whichever source named it: an older release line's fix (SonicWall 6.2.7.10
+ * on 6.5.2.2), or a row that lists the installed version as affected past its own fix.
+ * Dropped only when `order` is sure; with no installed version the fix is kept.
+ */
+export function fixAboveInstalled(fixed: string | null, installed: string | undefined, order: VersionOrder): string | null {
+  if (!fixed || !installed) return fixed;
+  if (fixed === installed) return null;
+  const c = order(fixed, installed);
+  return c !== null && c <= 0 ? null : fixed;
 }
 
 /**
