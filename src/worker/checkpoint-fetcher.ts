@@ -203,9 +203,7 @@ function stripTags(html: string): string {
 
 /**
  * Extracts the plain-text content between one <h2>/<h3> heading and the next,
- * matching whichever level the page used for that heading. sk articles are
- * server-rendered static HTML (confirmed live), so this is a plain regex
- * slice -- no browser automation needed, unlike Broadcom/Sophos.
+ * matching whichever level the page used for that heading.
  */
 function extractSection(html: string, heading: string): string | undefined {
   const re = new RegExp(`<h[23][^>]*>\\s*${heading}\\s*</h[23]>([\\s\\S]*?)(?=<h[23][^>]*>|$)`, 'i');
@@ -220,16 +218,52 @@ export interface CheckpointDetail {
   workaround?: string;
 }
 
+/** The sk article fields read here, as the page's Next.js data carries them. */
+interface SkArticle {
+  symptoms?: unknown;
+  solution?: unknown;
+}
+
+function articleHtml(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string').join('\n') : '';
+}
+
+/**
+ * Solution and Mitigation of an sk article page. The page is rendered in the
+ * browser: the article's HTML is not in the markup but in the __NEXT_DATA__
+ * JSON, as the fields `symptoms` (description, "Mitigation", "Indication of
+ * Compromise" sections) and `solution` (the fix, with no heading of its own).
+ * A page without that JSON is read as plain HTML, the way the site used to
+ * serve it.
+ */
+export function parseCheckpointDetail(html: string): CheckpointDetail {
+  const next = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (!next) {
+    return { solution: extractSection(html, 'Solution'), workaround: extractSection(html, 'Mitigation') };
+  }
+  let article: SkArticle | undefined;
+  try {
+    article = JSON.parse(next[1])?.props?.pageProps?.data;
+  } catch {
+    return {};
+  }
+  const symptoms = articleHtml(article?.symptoms);
+  const solution = articleHtml(article?.solution);
+  const solutionText = stripTags(solution);
+  return {
+    solution: solutionText.length > 0 ? solutionText : undefined,
+    workaround: extractSection(symptoms, 'Mitigation') ?? extractSection(solution, 'Mitigation'),
+  };
+}
+
 export async function fetchCheckpointDetail(url: string): Promise<CheckpointDetail> {
   const { data: html } = await axios.get<string>(url, {
     timeout: 30000,
     headers: { 'User-Agent': 'heretix-api/1.0' },
     responseType: 'text',
   });
-  return {
-    solution: extractSection(html, 'Solution'),
-    workaround: extractSection(html, 'Mitigation'),
-  };
+  return parseCheckpointDetail(html);
 }
 
 // ─── AdvisoryFetcher implementation ───────────────────────────

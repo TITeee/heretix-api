@@ -26,7 +26,7 @@ interface CsafBranch {
   product?: { product_id: string; name: string };
 }
 
-interface CsafVulnerability {
+export interface CsafVulnerability {
   cve?: string;
   scores?: Array<{
     products: string[];
@@ -218,7 +218,6 @@ export function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdv
   }
 
   const summaryNote    = firstVuln.notes?.find(n => n.category === 'summary');
-  const workaroundNote = firstVuln.notes?.find(n => n.title === 'Workarounds');
   const fixRemediation = firstVuln.remediations?.find(r => r.category === 'vendor_fix');
   const refUrl         = firstVuln.references?.[0]?.url;
 
@@ -296,12 +295,37 @@ export function parseCsaf(csaf: CsafDocument, advisoryId: string): NormalizedAdv
     cvssScore,
     cvssVector,
     url:         refUrl ?? `https://fortiguard.fortinet.com/psirt/${advisoryId}`,
-    workaround:  workaroundNote?.text === 'N/A' ? undefined : workaroundNote?.text?.trim(),
+    workaround:  extractWorkaround(vulns),
     solution:    fixRemediation?.details,
     publishedAt,
     affectedProducts,
     rawData:     csaf,
   };
+}
+
+/**
+ * The advisory's workarounds, verbatim. Fortinet writes them in three places:
+ * a "mitigation" remediation (virtual patches: "A virtual patch is available.
+ * FortiGuard IPS signature package: ..."), the "Additional info" note
+ * ("Workaround: Disable SNMP entirely ..."), and rarely a "Workarounds" note,
+ * which in practice only ever says "N/A". An "Additional info" note that does
+ * not mention a workaround or mitigation is something else ("Fortinet PSIRT is
+ * currently investigating ...", "FortiAnalyzer Cloud is not affected") and is
+ * left out. Each text is kept once, however many CVE entries repeat it.
+ */
+export function extractWorkaround(vulns: CsafVulnerability[]): string | undefined {
+  const texts: string[] = [];
+  const add = (text: string | undefined) => {
+    const t = text?.trim();
+    if (t && t !== 'N/A' && !texts.includes(t)) texts.push(t);
+  };
+  for (const v of vulns) {
+    for (const r of v.remediations ?? []) if (r.category === 'mitigation') add(r.details);
+    for (const n of v.notes ?? []) {
+      if (n.title === 'Workarounds' || (n.title === 'Additional info' && /workaround|mitigat/i.test(n.text))) add(n.text);
+    }
+  }
+  return texts.length > 0 ? texts.join('\n\n') : undefined;
 }
 
 // ─── Full PSIRT Listing (paginated) ──────────────────────────

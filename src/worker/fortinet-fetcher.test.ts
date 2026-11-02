@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCsaf, parseListingPage } from './fortinet-fetcher.js';
+import { extractWorkaround, parseCsaf, parseListingPage } from './fortinet-fetcher.js';
 
 // Row markup as served by fortiguard.fortinet.com/psirt since 2026-08: the row
 // link lives in a script at the end of the page, not on the row itself.
@@ -115,5 +115,28 @@ describe('parseCsaf with an exactly-listed affected version', () => {
       '',
     ), 'FG-IR-24-019');
     expect(adv!.affectedProducts[0].versionFixed).toBe('7.4.2');
+  });
+});
+
+// Texts as FG-IR-26-163, FG-IR-26-172 and FG-IR-26-137 carry them.
+describe('extractWorkaround', () => {
+  const virtualPatch = 'A virtual patch is available. FortiGuard IPS signature package: Virtual Patch named "FG-VD-58646.0day." is available in FMWP db update 26.010';
+
+  it('reads a mitigation remediation and a workaround in the Additional info note, once each', () => {
+    const snmp = 'Workaround Disable SNMP entirely if it is not actively used';
+    expect(extractWorkaround([
+      { remediations: [{ category: 'vendor_fix', details: 'Upgrade to 7.4.9' }, { category: 'mitigation', details: virtualPatch }],
+        notes: [{ category: 'general', title: 'Additional info', text: snmp }] },
+      { remediations: [{ category: 'mitigation', details: virtualPatch }] },
+    ])).toBe(`${virtualPatch}\n\n${snmp}`);
+  });
+
+  it('leaves out an Additional info note that is not about a workaround, and a Workarounds note of N/A', () => {
+    expect(extractWorkaround([{
+      notes: [
+        { category: 'general', title: 'Additional info', text: 'Fortinet PSIRT is currently investigating the impact of this CVE over Fortinet products.' },
+        { category: 'general', title: 'Workarounds', text: 'N/A' },
+      ],
+    }])).toBeUndefined();
   });
 });

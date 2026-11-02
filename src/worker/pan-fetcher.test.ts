@@ -1,5 +1,36 @@
 import { describe, it, expect } from 'vitest';
-import { parseCsaf, type CsafDocument } from './pan-fetcher.js';
+import { parseCsaf, parsePanAdvisoryTexts, type CsafDocument } from './pan-fetcher.js';
+
+// Shapes as https://security.paloaltonetworks.com/json/<id> serves them.
+describe('parsePanAdvisoryTexts', () => {
+  it('reads the workaround and solution verbatim, including a statement that there is no workaround', () => {
+    expect(parsePanAdvisoryTexts({
+      containers: { cna: {
+        workarounds: [{ lang: 'eng', value: 'No known workarounds exist for this issue.' }],
+        solutions: [{ lang: 'eng', value: 'Upgrade Prisma Browser to 142.15.2.60 or later.' }],
+      } },
+    })).toEqual({
+      workaround: 'No known workarounds exist for this issue.',
+      solution: 'Upgrade Prisma Browser to 142.15.2.60 or later.',
+    });
+  });
+
+  it('prefers the English entries and joins several', () => {
+    expect(parsePanAdvisoryTexts({
+      containers: { cna: {
+        workarounds: [
+          { lang: 'en', value: 'Recommended Mitigation: block Threat IDs 95187.' },
+          { lang: 'ja', value: '緩和策' },
+          { lang: 'en', value: 'Disable device telemetry.' },
+        ],
+      } },
+    })).toEqual({ workaround: 'Recommended Mitigation: block Threat IDs 95187.\n\nDisable device telemetry.', solution: undefined });
+  });
+
+  it('returns nothing for a record without them', () => {
+    expect(parsePanAdvisoryTexts({})).toEqual({ workaround: undefined, solution: undefined });
+  });
+});
 
 // Real shape confirmed live at https://security.paloaltonetworks.com/csaf/CVE-2026-0291.
 // This CSAF document mixes a range-shaped branch ("vers:generic/...>=26.2.2") with a
