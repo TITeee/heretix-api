@@ -436,6 +436,43 @@ describe('normalizeVexDoc', () => {
     expect(normalizeVexDoc(null)).toBeNull();
     expect(normalizeVexDoc(undefined)).toBeNull();
   });
+
+  const STOCK_TEXT = 'Mitigation for this issue is either not available or the currently available options do not meet the Red Hat Product Security criteria comprising ease of use and deployment, applicability to widespread installation base, or stability.';
+
+  it('carries Red Hat\'s workaround for RHEL, its stock text included, once', () => {
+    const doc = buildDoc() as { vulnerabilities: Array<Record<string, unknown>> };
+    doc.vulnerabilities[0].remediations = [
+      { category: 'workaround', details: `${STOCK_TEXT}\n`, product_ids: ['red_hat_enterprise_linux_9:bzip2-libs'] },
+      { category: 'workaround', details: STOCK_TEXT, product_ids: ['red_hat_enterprise_linux_9:bzip2-libs'] },
+    ];
+    expect(normalizeVexDoc(doc)?.workaround).toBe(STOCK_TEXT);
+  });
+
+  it('leaves out a workaround written only for another product', () => {
+    const doc = buildDoc() as { vulnerabilities: Array<Record<string, unknown>> };
+    doc.vulnerabilities[0].remediations = [
+      { category: 'workaround', details: 'Scale the operator down.', product_ids: ['red_hat_openshift_container_platform_4:thing'] },
+      { category: 'mitigation', details: 'Blacklist the bzip2 module.', product_ids: ['red_hat_enterprise_linux_9:bzip2-libs'] },
+    ];
+    expect(normalizeVexDoc(doc)?.workaround).toBe('Blacklist the bzip2 module.');
+  });
+
+  it('keeps a CVE fixed on every OVAL-covered major, with no affected products, when it has a workaround for RHEL', () => {
+    const doc = rhel10FixedDoc([['BaseOS-9.6.0.Z.MAIN', 'sudo-0:1.9.5p2-10.el9_6.1.x86_64']]) as unknown as { vulnerabilities: Array<Record<string, unknown>> };
+    doc.vulnerabilities[0].remediations = [
+      { category: 'workaround', details: 'Do not grant host-restricted sudo rules.', product_ids: ['BaseOS-9.6.0.Z.MAIN:sudo-0:1.9.5p2-10.el9_6.1.x86_64'] },
+    ];
+    const result = normalizeVexDoc(doc);
+    expect(result?.affectedProducts).toEqual([]);
+    expect(result?.workaround).toBe('Do not grant host-restricted sudo rules.');
+  });
+
+  it('still returns null for a workaround on a document that concerns no RHEL 8-10 component', () => {
+    const doc = buildDoc({ knownAffected: ['some_other_product:thing'] }) as { product_tree: { relationships: Array<Record<string, unknown>> }; vulnerabilities: Array<Record<string, unknown>> };
+    doc.product_tree.relationships[0].relates_to_product_reference = 'red_hat_enterprise_linux_7';
+    doc.vulnerabilities[0].remediations = [{ category: 'workaround', details: 'Disable the service.' }];
+    expect(normalizeVexDoc(doc)).toBeNull();
+  });
 });
 
 describe('parseArchiveDate', () => {
