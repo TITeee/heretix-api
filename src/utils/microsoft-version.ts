@@ -5,9 +5,11 @@
  * the update build revision (UBR). Every Windows release keeps its build for its
  * whole life (20348 is Windows Server 2022) and each monthly cumulative update
  * raises only the UBR, so the UBR is what tells a patched system from an
- * unpatched one. normalizeVersion() cannot order these: it caps a component at
- * 999, so the build collapses to 999 and the UBR is dropped -- every Windows
- * Server 2022 build reads as the same version.
+ * unpatched one. normalizeVersion() could not order these until its slots were
+ * widened (2026-11): it capped a component at 999, so the build collapsed to 999
+ * and the UBR was dropped -- every Windows Server 2022 build read as the same
+ * version. MSRC rows keep this encoding, which has room for six-digit builds and
+ * UBRs.
  *
  * This module is the Microsoft-specific replacement, used both when
  * AdvisoryAffectedProduct rows are written (advisory-fetcher.ts) and when a

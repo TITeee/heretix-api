@@ -5,6 +5,7 @@ import { resetDb } from '../../test-utils/db.js';
 import { createServer } from '../server.js';
 import { importAdvisoryData } from '../../worker/advisory-fetcher.js';
 import { importOSVData } from '../../worker/osv-fetcher.js';
+import { normalizeVersion } from '../../utils/version.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
 
@@ -114,8 +115,8 @@ describe('GET /api/v1/vulnerabilities/search', () => {
         vulnerabilityId: osv.id,
         ecosystem: 'npm',
         packageName: 'range-pkg',
-        introducedInt: 1000000000n, // 1.0.0
-        fixedInt: 2000000000n,      // 2.0.0 (exclusive)
+        introducedInt: normalizeVersion('1.0.0'),
+        fixedInt: normalizeVersion('2.0.0'), // exclusive
       },
     });
 

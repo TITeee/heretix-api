@@ -26,11 +26,14 @@ describe('sonicWallVersionToInt', () => {
     for (let i = 1; i < ints.length; i++) expect(ints[i - 1], `${versions[i - 1]} < ${versions[i]}`).toBeLessThan(ints[i]);
   };
 
-  it('tells apart builds that normalizeVersion() makes equal (7.0.1-5161 against 7.0.1-5165)', () => {
-    expect(normalizeVersion('7.0.1-5161')).toBe(normalizeVersion('7.0.1-5165'));
+  it('tells apart builds past 999 (7.0.1-5161 against 7.0.1-5165)', () => {
     ordered('7.0.1-5161', '7.0.1-5165');
-    expect(normalizeVersion('12.4.3-03245')).toBe(normalizeVersion('12.4.3-03387'));
     ordered('12.4.3-03245', '12.4.3-03387');
+  });
+
+  it('orders letter-led builds as builds, where normalizeVersion() reads them as pre-releases', () => {
+    ordered('7.0.1', '7.0.1-R1456');
+    expect(normalizeVersion('7.0.1-R1456') as bigint).toBeLessThan(normalizeVersion('7.0.1') as bigint);
   });
 
   it('orders builds within a release, and releases against each other', () => {

@@ -4,10 +4,11 @@
  *
  * A SonicWall version is a dotted release, often with a build after a hyphen:
  * "7.0.1-5161" is build 5161 of SonicOS 7.0.1. normalizeVersion() cannot order
- * it: it caps every component at 999, so 7.0.1-5161 and 7.0.1-5165 encode the
- * same, a fixed build's bound equals the last affected build's, and the range
- * between them is empty -- every 7.0.1 build went unmatched. It also reads a
- * letter-led build ("7.0.1-R1456", "6.5.4.9-92n") as a pre-release.
+ * it: it reads a letter-led build ("7.0.1-R1456", "6.5.4.9-92n") as a
+ * pre-release, below the release, and keeps only one build number of a build in
+ * several parts ("6.5.4.4-44v-21-2457"). Until its slots were widened (2026-11)
+ * it also capped every component at 999, so 7.0.1-5161 and 7.0.1-5165 encoded
+ * the same and every 7.0.1 build went unmatched.
  *
  * This module is the SonicWall-specific replacement, used both when
  * AdvisoryAffectedProduct rows are written (advisory-fetcher.ts) and when a search

@@ -22,7 +22,7 @@ describe('isUsableVersion', () => {
 
   it('rejects free text that normalizeVersion() would turn into a confident wrong number', () => {
     // Real CVE-2021-41773 declaration; normalizeVersion() reads it as 2.42.4.
-    expect(normalizeVersion('Apache HTTP Server 2.4 2.4.49')).toBe(2042004000n);
+    expect(normalizeVersion('Apache HTTP Server 2.4 2.4.49')).toBe(normalizeVersion('2.42.4'));
     expect(isUsableVersion('Apache HTTP Server 2.4 2.4.49')).toBe(false);
 
     // "below 2.0" would be stored as the version 2.0 itself.

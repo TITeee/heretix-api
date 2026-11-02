@@ -41,10 +41,10 @@ export const VENDORS_WITH_OWN_VERSION_ORDER = Object.keys(VENDOR_VERSION_ENCODER
  * that normalizeVersion() drops -- see ivanti-version.ts -- and NetScaler's
  * branch-plus-build versions ("14.1-73.32"), of which normalizeVersion() keeps only
  * the 73 -- see citrix-version.ts -- and Windows builds ("10.0.20348.5761"),
- * whose build normalizeVersion() caps and whose update revision it drops -- see
- * microsoft-version.ts -- and SonicWall's release-plus-build versions
- * ("7.0.1-5161"), whose build normalizeVersion() caps -- see
- * sonicwall-version.ts. Writer
+ * whose build normalizeVersion() capped and whose update revision it dropped
+ * until 2026-11 -- see microsoft-version.ts -- and SonicWall's release-plus-build
+ * versions ("7.0.1-R1456"), whose letter-led build normalizeVersion() reads as a
+ * pre-release -- see sonicwall-version.ts. Writer
  * (advisory-fetcher.ts) and reader (routes/vulnerabilities.ts) must both go
  * through here so the stored bound and the queried version are always encoded
  * the same way.
