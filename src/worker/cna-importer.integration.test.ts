@@ -113,6 +113,37 @@ describe('importCveRecords / SSVC', () => {
     expect(await prisma.cnaVulnerability.count({ where: { cveId: 'CVE-2022-5555' } })).toBe(0);
   });
 
+  it('stores the CNA workaround and solution on the master row for any year, with no usable affected data', async () => {
+    const record: CveRecord = {
+      cveMetadata: { cveId: 'CVE-2019-0001' },
+      containers: { cna: {
+        providerMetadata: { shortName: 'juniper' },
+        affected: [{ vendor: 'Juniper', product: 'Junos OS', defaultStatus: 'affected' }],
+        workarounds: [{ lang: 'en', value: 'Disable the J-Web service.' }],
+        solutions: [{ lang: 'en', value: 'Upgrade to 18.4R1.' }],
+      } },
+    };
+
+    const result = await importCveRecords([record], new Set(['2025', '2026']));
+    expect(result.textsUpdated).toBe(1);
+    expect(await vulnerabilityByCveId('CVE-2019-0001')).toMatchObject({
+      cnaWorkaround: 'Disable the J-Web service.',
+      cnaSolution: 'Upgrade to 18.4R1.',
+      cnaProvider: 'juniper',
+    });
+    expect(await prisma.cnaVulnerability.count({ where: { cveId: 'CVE-2019-0001' } })).toBe(0);
+  });
+
+  it('clears the CNA text when a revised record no longer has it', async () => {
+    const withText: CveRecord = {
+      cveMetadata: { cveId: 'CVE-2024-3333' },
+      containers: { cna: { providerMetadata: { shortName: 'acme' }, workarounds: [{ lang: 'en', value: 'Turn it off.' }] } },
+    };
+    await importCveRecords([withText]);
+    await importCveRecords([{ cveMetadata: { cveId: 'CVE-2024-3333' }, containers: { cna: { affected: [] } } }]);
+    expect(await vulnerabilityByCveId('CVE-2024-3333')).toMatchObject({ cnaWorkaround: null, cnaSolution: null, cnaProvider: null });
+  });
+
   it('does nothing when the record has no SSVC assessment', async () => {
     const record: CveRecord = {
       cveMetadata: { cveId: 'CVE-2024-2222' },

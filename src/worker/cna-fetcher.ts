@@ -44,7 +44,7 @@ export interface CveRecordAffected {
 export interface CveRecord {
   cveMetadata?: { cveId?: unknown; datePublished?: unknown; dateUpdated?: unknown; state?: unknown };
   containers?: {
-    cna?: { providerMetadata?: { shortName?: unknown }; affected?: unknown };
+    cna?: { providerMetadata?: { shortName?: unknown }; affected?: unknown; workarounds?: unknown; solutions?: unknown };
     // Authorized Data Publisher containers -- CISA's Vulnrichment (SSVC) data
     // is one of these, alongside the CVE Program's own transferred-reference
     // container and others. Array shape confirmed live (CVE-2024-3400).
@@ -451,6 +451,48 @@ export function parseCveRecord(record: CveRecord): ParsedCveRecord | null {
     affected: cna?.affected,
     rows,
     dropped,
+  };
+}
+
+// ─── CNA workarounds and solutions ─────────────────────────────
+
+export interface CnaTexts {
+  workaround: string | null;
+  solution: string | null;
+  provider: string | null;
+}
+
+/**
+ * The text of one CVE Record description list (`workarounds`, `solutions`),
+ * verbatim: the English entries ("en", "en-US", "eng") when there are any,
+ * otherwise every entry, each text once, separated by a blank line.
+ * "No known workarounds" is kept like any other text: that there is none is
+ * worth knowing too.
+ */
+function descriptionText(entries: unknown): string | null {
+  const list = Array.isArray(entries) ? entries.filter(isObject) : [];
+  const english = list.filter(e => /^en/i.test(asString(e['lang']) ?? ''));
+  const texts: string[] = [];
+  for (const e of english.length > 0 ? english : list) {
+    const t = asString(e['value'])?.trim();
+    if (t && !texts.includes(t)) texts.push(t);
+  }
+  return texts.length > 0 ? texts.join('\n\n') : null;
+}
+
+/**
+ * The CNA's workaround and solution text for a CVE, with the CNA that wrote
+ * them. A REJECTED record yields none, so a withdrawn CVE's text is cleared.
+ */
+export function parseCnaTexts(record: CveRecord): CnaTexts {
+  const cna = record.containers?.cna;
+  if (record.cveMetadata?.state === 'REJECTED' || !cna) return { workaround: null, solution: null, provider: null };
+  const workaround = descriptionText(cna.workarounds);
+  const solution = descriptionText(cna.solutions);
+  return {
+    workaround,
+    solution,
+    provider: workaround || solution ? (asString(cna.providerMetadata?.shortName) ?? null) : null,
   };
 }
 

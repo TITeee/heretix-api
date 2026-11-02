@@ -1,5 +1,35 @@
 import { describe, it, expect } from 'vitest';
-import { parseVersionLine, parseAffected, buildCheckpointAffectedProducts } from './checkpoint-fetcher.js';
+import { parseVersionLine, parseAffected, buildCheckpointAffectedProducts, parseCheckpointDetail } from './checkpoint-fetcher.js';
+
+// The sk article page as served since the site moved to Next.js (sk1000171):
+// the article is only in the __NEXT_DATA__ JSON.
+function skPage(data: Record<string, unknown>): string {
+  return `<!DOCTYPE html><html><head><title>sk1000171</title></head><body><div id="__next"></div>`
+    + `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { data } } })}</script></body></html>`;
+}
+
+describe('parseCheckpointDetail', () => {
+  it('reads the solution and the Mitigation section from the Next.js data', () => {
+    const html = skPage({
+      symptoms: ['<p>A directory traversal vulnerability ...</p><h3>Mitigation</h3><p>Limit&nbsp;access to your Management Servers.</p><h3>Indication of Compromise</h3><p>Look for ...</p>'],
+      solution: '<p>This problem was fixed.&nbsp;Download the R82.20 Security Hotfix</p>',
+    });
+    expect(parseCheckpointDetail(html)).toEqual({
+      solution: 'This problem was fixed. Download the R82.20 Security Hotfix',
+      workaround: 'Limit access to your Management Servers.',
+    });
+  });
+
+  it('returns no workaround for an article without a Mitigation section', () => {
+    expect(parseCheckpointDetail(skPage({ symptoms: ['<p>Description</p>'], solution: '<p>Install the hotfix.</p>' })))
+      .toEqual({ solution: 'Install the hotfix.', workaround: undefined });
+  });
+
+  it('still reads a page served as plain HTML', () => {
+    expect(parseCheckpointDetail('<h2>Solution</h2><p>Install the hotfix.</p><h3>Mitigation</h3><p>Restrict access.</p>'))
+      .toEqual({ solution: 'Install the hotfix.', workaround: 'Restrict access.' });
+  });
+});
 
 // Every fixture below is a shape taken from the live getAllActive feed
 // (https://iapi-services-ucs.checkpoint.com/public/api/support-center-mms/api/securityAdvisories/getAllActive).

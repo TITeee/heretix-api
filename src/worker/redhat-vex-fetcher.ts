@@ -266,6 +266,41 @@ function fixedBuilds(relationships: unknown, productStatus: unknown): Map<string
   return result;
 }
 
+/**
+ * Red Hat's workaround for the RHEL 8-10 components of a CVE, verbatim: the
+ * `workaround` and `mitigation` remediations that name such a component (a
+ * major-level one, "red_hat_enterprise_linux_9:kernel", or a fixed build in a
+ * release stream) or no product at all. One written only for other products
+ * (OpenShift, ...) is left out. Red Hat's stock "Mitigation for this issue is
+ * either not available or ..." is kept: that there is none is worth knowing,
+ * and specific steps sometimes follow it.
+ */
+export function rhelWorkaround(relationships: unknown, remediations: unknown): string | undefined {
+  const rhelIds = new Set<string>();
+  for (const rel of Array.isArray(relationships) ? relationships : []) {
+    if (!rel || typeof rel !== 'object') continue;
+    const r = rel as Record<string, unknown>;
+    if (r['category'] !== 'default_component_of') continue;
+    const to = r['relates_to_product_reference'];
+    const major = typeof to === 'string' ? (to.match(RHEL_PRODUCT_RE) ?? to.match(RHEL_STREAM_RE))?.[1] : undefined;
+    const productId = (r['full_product_name'] as Record<string, unknown> | undefined)?.['product_id'];
+    if (major && SUPPORTED_MAJORS.has(major) && typeof productId === 'string') rhelIds.add(productId);
+  }
+  if (rhelIds.size === 0) return undefined;
+
+  const texts: string[] = [];
+  for (const rem of Array.isArray(remediations) ? remediations : []) {
+    if (!rem || typeof rem !== 'object') continue;
+    const r = rem as Record<string, unknown>;
+    if (r['category'] !== 'workaround' && r['category'] !== 'mitigation') continue;
+    const ids = Array.isArray(r['product_ids']) ? r['product_ids'] : [];
+    if (ids.length > 0 && !ids.some(id => typeof id === 'string' && rhelIds.has(id))) continue;
+    const text = typeof r['details'] === 'string' ? r['details'].trim() : '';
+    if (text && !texts.includes(text)) texts.push(text);
+  }
+  return texts.length > 0 ? texts.join('\n\n') : undefined;
+}
+
 /** Splits a "<major>:<package>" key built by newestFixedVersions(). */
 function splitComponentKey(key: string): [string, string] {
   const sep = key.indexOf(':');
@@ -315,7 +350,9 @@ export function parseVexVulnerability(vuln: unknown): VexCveInfo | null {
  * i.e. RHEL 10) -- one patchAvailable: true row per fixed package, bounded by
  * its newest recorded fix. Returns null for the common case -- most CVEs in
  * the archive are for other Red Hat products entirely, or are fully fixed on
- * every OVAL-covered major they touch (already covered by RedHatFetcher).
+ * every OVAL-covered major they touch (already covered by RedHatFetcher) --
+ * unless Red Hat gives a workaround for RHEL, in which case the advisory is
+ * kept with no affected products, for the text alone (rhelWorkaround()).
  *
  * affectedProducts carry no versionStart, and a versionEnd only when the same
  * document records a fixed build for that major in some release stream
@@ -347,12 +384,15 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
   const newestFix = new Map<string, string>();
   const streamFixes = new Map<string, Map<string, string>>();
   const seen = new Set<string>();
+  const workarounds: string[] = [];
   for (const vuln of vulnerabilities) {
     const parsed = parseVexVulnerability(vuln);
     if (!parsed) continue;
     info ??= parsed;
 
     const v = vuln as Record<string, unknown>;
+    const workaround = rhelWorkaround(productTree['relationships'], v['remediations']);
+    if (workaround && !workarounds.includes(workaround)) workarounds.push(workaround);
     for (const c of extractUnfixedComponents(v['product_status'], componentMap, v['remediations'])) {
       const key = `${c.major}:${c.pkg}`;
       if (seen.has(key)) continue;
@@ -383,7 +423,13 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
     if (!VEX_ONLY_MAJORS.has(major) || seen.has(key) || DEBUG_PACKAGE_RE.test(pkg)) continue;
     fixedRows.push({ vendor: `red-hat-${major}`, product: pkg, versionEnd: evr, patchAvailable: true });
   }
-  if (!info || (components.length === 0 && fixedRows.length === 0)) return null;
+  // A CVE fixed on every OVAL-covered major still yields an advisory when Red
+  // Hat gives a workaround for RHEL: a host that has not installed the fix is
+  // still exposed, and the workaround is what it can do meanwhile. It has no
+  // affected products, so it never matches a search; it only carries the text
+  // to the CVE's detail.
+  const workaround = workarounds.length > 0 ? workarounds.join('\n\n') : undefined;
+  if (!info || (components.length === 0 && fixedRows.length === 0 && !workaround)) return null;
 
   const unfixedRows: NormalizedAdvisory['affectedProducts'] = components.map(c => {
     // Bounded by the newest fix the same document records for this major
@@ -409,6 +455,7 @@ export function normalizeVexDoc(doc: unknown): NormalizedAdvisory | null {
     cvssScore: info.cvssScore,
     cvssVector: info.cvssVector,
     distroPriority: info.impact,
+    workaround,
     affectedProducts: [...unfixedRows, ...fixedRows],
     // Not the full parsed document: a VEX doc's product_tree can carry
     // hundreds of container-image/product-family relationships entirely

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import AdmZip from 'adm-zip';
-import { extractCnaRows, parseCveRecord, parseSsvc, cveIdOf, isUsableVersion, recordsFromZip, findDeltaBundles, findFullBundle } from './cna-fetcher.js';
+import { extractCnaRows, parseCnaTexts, parseCveRecord, parseSsvc, cveIdOf, isUsableVersion, recordsFromZip, findDeltaBundles, findFullBundle } from './cna-fetcher.js';
 import { normalizeVersion } from '../utils/version.js';
 
 // Every fixture below is a shape taken from real cvelistV5 data.
@@ -455,6 +455,46 @@ describe('parseCveRecord', () => {
       containers: { cna: { affected: record.containers.cna.affected } },
     });
     expect(parsed?.cnaShortName).toBe('unknown');
+  });
+});
+
+describe('parseCnaTexts', () => {
+  // Shapes as the Palo Alto (CVE-2024-3400) and other CNA records carry them.
+  it('reads the workaround and solution verbatim, with the CNA that wrote them', () => {
+    expect(parseCnaTexts({
+      cveMetadata: { cveId: 'CVE-2024-3400' },
+      containers: { cna: {
+        providerMetadata: { shortName: 'palo_alto' },
+        workarounds: [{ lang: 'en', value: 'Recommended Mitigation: block Threat IDs 95187.' }],
+        solutions: [{ lang: 'en', value: 'This issue is fixed in PAN-OS 10.2.9-h1.' }],
+      } },
+    })).toEqual({
+      workaround: 'Recommended Mitigation: block Threat IDs 95187.',
+      solution: 'This issue is fixed in PAN-OS 10.2.9-h1.',
+      provider: 'palo_alto',
+    });
+  });
+
+  it('keeps a statement that there is no workaround, and prefers English entries, each once', () => {
+    expect(parseCnaTexts({
+      containers: { cna: {
+        providerMetadata: { shortName: 'juniper' },
+        workarounds: [
+          { lang: 'eng', value: 'There are no known workarounds for this issue.' },
+          { lang: 'es', value: 'No hay soluciones.' },
+          { lang: 'en-US', value: 'There are no known workarounds for this issue. ' },
+        ],
+      } },
+    })).toEqual({ workaround: 'There are no known workarounds for this issue.', solution: null, provider: 'juniper' });
+  });
+
+  it('returns nothing for a record without them, or a REJECTED one', () => {
+    expect(parseCnaTexts({ containers: { cna: { providerMetadata: { shortName: 'acme' }, affected: [] } } }))
+      .toEqual({ workaround: null, solution: null, provider: null });
+    expect(parseCnaTexts({
+      cveMetadata: { state: 'REJECTED' },
+      containers: { cna: { workarounds: [{ lang: 'en', value: 'Disable it.' }] } },
+    })).toEqual({ workaround: null, solution: null, provider: null });
   });
 });
 
