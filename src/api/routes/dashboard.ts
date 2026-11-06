@@ -3,7 +3,7 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { requireAdminKey } from '../auth.js';
 import { prisma } from '../../db/client.js';
-import { STATIC_JOBS } from '../../jobs/registry.js';
+import { STATIC_JOBS, resolveJob } from '../../jobs/registry.js';
 import { getEnabledMap, defaultEnabled } from '../../jobs/config.js';
 import { isMaintainedOsvEcosystem } from '../../config/support-policy.js';
 import { osvBucketName } from '../../jobs/osv-bucket.js';
@@ -87,20 +87,26 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     // OSVVulnerability.ecosystem only stores affected[0] and is not updated on re-import)
     const ecosystemCounts = await getEcosystemCounts();
 
+    // Whether a Run would load the source in full: it has never been loaded (see JobDefinition.firstLoad).
+    const needsFirstLoad = async (source: string): Promise<boolean> => {
+      const def = STATIC_JOBS.find((j) => j.source === source) ?? (await resolveJob(source));
+      return def?.firstLoad ? !(await def.firstLoad.isLoaded()) : false;
+    };
+
     const enabledMap = await getEnabledMap();
     const isSourceEnabled = (source: string): boolean => enabledMap.get(source) ?? defaultEnabled(source);
 
-    const osvEcosystems = ecosystemCounts.map((r) => {
-      const eco = r.ecosystem;
+    const osvRow = async (ecosystem: string, recordCount: number) => {
       // The releases of a distro share one job (osv-Debian runs for Debian:12 and Debian:13 alike).
-      const source = `osv-${osvBucketName(eco)}`;
+      const source = `osv-${osvBucketName(ecosystem)}`;
       const job = latestBySource.get(source);
       return {
-        ecosystem: eco,
+        ecosystem,
         source,
         enabled: isSourceEnabled(source),
-        maintained: isMaintainedOsvEcosystem(eco),
-        recordCount: Number(r.count),
+        maintained: isMaintainedOsvEcosystem(ecosystem),
+        recordCount,
+        needsFirstLoad: await needsFirstLoad(source),
         status: job?.status ?? null,
         completedAt: job?.completedAt ?? null,
         durationMs: jobDurationMs(job),
@@ -108,7 +114,12 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         totalUpdated: job?.totalUpdated ?? null,
         errorMessage: job?.errorMessage ?? null,
       };
-    });
+    };
+    const osvEcosystems = await Promise.all(ecosystemCounts.map((r) => osvRow(r.ecosystem, Number(r.count))));
+    // An ecosystem being loaded for the first time has a job but no records yet: show it already.
+    const shown = new Set(osvEcosystems.map((e) => e.source));
+    const pending = [...latestBySource.keys()].filter((src) => src.startsWith('osv-') && !src.startsWith('osv-full-') && !shown.has(src));
+    for (const src of pending) osvEcosystems.push(await osvRow(src.slice(4), 0));
 
     const [nvdCount, osvCount, kevCount, advisoryCount, epssCount, advisorySourceCounts, rhel9Count, rhel8Count, debianTrackerCount, ubuntuTrackerCount] = await Promise.all([
       prisma.nVDVulnerability.count(),
@@ -145,11 +156,12 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     // has never run). OSV per-ecosystem entries are shown separately.
     // Split into core sources (NVD/KEV/EPSS) and vendor advisories so the
     // dashboard can render them as two distinct tables.
-    const allSources = STATIC_JOBS
+    const allSources = await Promise.all(STATIC_JOBS
       .filter((def) => !isOsvEcosystemSource(def.source))
-      .map((def) => {
+      .map(async (def) => {
         const j = latestBySource.get(def.source);
         return {
+          needsFirstLoad: def.firstLoad ? !(await def.firstLoad.isLoaded()) : false,
           source: def.source,
           label: def.label,
           enabled: isSourceEnabled(def.source),
@@ -164,7 +176,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
           fetchFailed: (j?.metadata as { fetchFailed?: number } | null)?.fetchFailed ?? null,
           errorMessage: j?.errorMessage ?? null,
         };
-      });
+      }));
 
     const coreSources = allSources.filter((s) => !s.source.startsWith('advisory-'));
     const advisorySources = allSources.filter((s) => s.source.startsWith('advisory-'));
@@ -249,6 +261,12 @@ ${statusPanel('Vendor Advisories', 'Per-vendor advisory feed import status', 'Ve
         <h2>OSV Ecosystems</h2>
         <p>Per-ecosystem import status and record counts</p>
       </div>
+      <!-- Switches the daily job on and loads the ecosystem in full: no command to run first. -->
+      <form id="osv-add-form" class="add-form" novalidate>
+        <label for="osv-add-select" class="field-label">Add an ecosystem</label>
+        <select id="osv-add-select" class="key-input" disabled><option value="">Loading…</option></select>
+        <button id="osv-add-button" type="submit" class="btn-primary" disabled>Add and load</button>
+      </form>
       <div class="table-wrap">
         <table>
           ${tableHead('Ecosystem')}

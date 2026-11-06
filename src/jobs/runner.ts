@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { prisma } from '../db/client.js';
 import { logger } from '../utils/logger.js';
 import { envInt } from '../api/concurrency-gate.js';
-import type { JobDefinition } from './types.js';
+import type { JobDefinition, JobMode } from './types.js';
 
 export interface RunnerConfig {
   maxConcurrent: number;
@@ -61,7 +61,7 @@ export function runnerConfigFromEnv(): RunnerConfig {
 
 export type RequestOutcome = 'started' | 'queued' | 'busy' | 'stopped' | 'failed';
 
-type Waiting = { def: JobDefinition; jobId: string };
+type Waiting = { def: JobDefinition; jobId: string; mode: JobMode };
 type Active = { source: string; jobId: string; heavy: boolean; child?: ChildProcess; done: Promise<void> };
 
 /** Why a job process ended without recording an outcome of its own. */
@@ -72,6 +72,11 @@ export function exitReason(code: number | null, signal: string | null, maxOldSpa
   }
   if (signal) return `Job process was killed (${signal}) before recording an outcome`;
   return `Job process exited with code ${code} before recording an outcome`;
+}
+
+/** A first load of a source that holds its whole dataset counts as heavy, as a heavy job always does. */
+function isHeavy({ def, mode }: Waiting): boolean {
+  return !!def.heavy || (mode === 'full' && !!def.firstLoad?.heavy);
 }
 
 export class JobRunner {
@@ -89,16 +94,16 @@ export class JobRunner {
   }
 
   /** Queue a job and start it if a slot is free. Never rejects. */
-  async request(def: JobDefinition): Promise<RequestOutcome> {
+  async request(def: JobDefinition, mode: JobMode = 'delta'): Promise<RequestOutcome> {
     if (this.stopping) return 'stopped';
     if (this.isBusy(def.source)) return 'busy';
     this.reserving.add(def.source);
     try {
       const row = await prisma.collectionJob.create({
-        data: { source: def.source, status: 'queued' },
+        data: { source: def.source, status: 'queued', metadata: { mode } },
         select: { id: true },
       });
-      this.queue.push({ def, jobId: row.id });
+      this.queue.push({ def, jobId: row.id, mode });
     } catch (err) {
       logger.error({ job: def.source, err }, 'Failed to queue job');
       return 'failed';
@@ -113,15 +118,16 @@ export class JobRunner {
   private dispatch(): void {
     while (!this.stopping && this.active.size < this.config.maxConcurrent) {
       const heavyRunning = [...this.active.values()].filter((a) => a.heavy).length;
-      const index = this.queue.findIndex((w) => !w.def.heavy || heavyRunning < this.config.maxHeavy);
+      const index = this.queue.findIndex((w) => !isHeavy(w) || heavyRunning < this.config.maxHeavy);
       if (index < 0) return;
       const [next] = this.queue.splice(index, 1);
       this.start(next);
     }
   }
 
-  private start({ def, jobId }: Waiting): void {
-    const entry: Active = { source: def.source, jobId, heavy: !!def.heavy, done: Promise.resolve() };
+  private start(waiting: Waiting): void {
+    const { def, jobId } = waiting;
+    const entry: Active = { source: def.source, jobId, heavy: isHeavy(waiting), done: Promise.resolve() };
     this.active.set(def.source, entry);
     entry.done = this.run(entry)
       .catch(async (err) => {

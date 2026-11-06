@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll, afterEach, beforeAll, vi } from 'vitest
 import type { FastifyInstance } from 'fastify';
 import { createServer } from '../server.js';
 import { prisma } from '../../db/client.js';
+import { resetDb } from '../../test-utils/db.js';
 import { ECOSYSTEM_COUNTS_CACHE_TTL_MS } from './dashboard.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
@@ -221,6 +222,28 @@ describe('dashboard', () => {
       const js = (await app.inject({ method: 'GET', url: '/dashboard.js' })).body;
       expect(js).toContain('sessionStorage');
       expect(js).not.toContain('localStorage');
+    });
+  });
+
+  describe('GET /api/v1/import-status: first load', () => {
+    const status = async () =>
+      (await app.inject({ method: 'GET', url: '/api/v1/import-status', headers: { 'x-api-key': ADMIN_API_KEY } })).json();
+
+    it('says which sources a Run would load in full', async () => {
+      await resetDb();
+      const { coreSources } = await status();
+      const bySource = Object.fromEntries(coreSources.map((s: { source: string; needsFirstLoad: boolean }) => [s.source, s.needsFirstLoad]));
+      expect(bySource).toMatchObject({ nvd: true, kev: false, epss: false });
+    });
+
+    it('shows an OSV ecosystem that is being loaded for the first time, before any record is here', async () => {
+      await resetDb();
+      await prisma.collectionJob.create({ data: { source: 'osv-npm', status: 'running', startedAt: new Date(), metadata: { mode: 'full' } } });
+
+      const { osvEcosystems } = await status();
+
+      // (Ecosystems with records come from a cache shared with the tests above, so look for this one.)
+      expect(osvEcosystems).toContainEqual(expect.objectContaining({ ecosystem: 'npm', source: 'osv-npm', status: 'running', recordCount: 0, needsFirstLoad: true }));
     });
   });
 });

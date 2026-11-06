@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { prisma } from '../db/client.js';
 import { resetDb } from '../test-utils/db.js';
-import { executeJob, getDeltaCursor, isJobRunning, reconcileOrphanedJobs } from './executor.js';
+import { executeJob, getDeltaCursor, isJobRunning, reconcileOrphanedJobs, runRecordedJob } from './executor.js';
 import type { JobDefinition } from './types.js';
 
 describe('executeJob', () => {
@@ -174,5 +174,34 @@ describe('getDeltaCursor', () => {
 
     const cursor = await getDeltaCursor('delta-source', 60_000);
     expect(cursor.getTime()).toBe(newer.getTime());
+  });
+
+  it('starts from the beginning of a full load, since what changed while it ran is not in it', async () => {
+    const began = new Date(Date.now() - 5 * 60 * 60 * 1000);
+    const ended = new Date(Date.now() - 60 * 60 * 1000);
+    await prisma.collectionJob.create({
+      data: { source: 'full-source', status: 'completed', startedAt: began, completedAt: ended, metadata: { mode: 'full' } },
+    });
+
+    expect((await getDeltaCursor('full-source', 60_000)).getTime()).toBe(began.getTime());
+  });
+});
+
+describe('the mode a job runs in', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('is the one recorded on its row, and delta for a row without one', async () => {
+    const seen: string[] = [];
+    const def = { source: 'mode-source', label: 'm', cron: '', run: async ({ mode }: { mode: string }) => { seen.push(mode); return {}; } };
+
+    for (const metadata of [{ mode: 'full' }, undefined, { mode: 'delta' }]) {
+      const row = await prisma.collectionJob.create({ data: { source: 'mode-source', status: 'running', startedAt: new Date(), metadata } });
+      await runRecordedJob(def, row.id);
+    }
+    await executeJob(def);
+
+    expect(seen).toEqual(['full', 'delta', 'delta', 'delta']);
   });
 });

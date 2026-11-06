@@ -339,11 +339,15 @@ Takes the admin key (`ADMIN_API_KEY`). `:source` is the job's source key (`nvd`,
 ```
 POST  /api/v1/jobs/:source/run    # Run now (fire-and-forget), regardless of the enabled state
 PATCH /api/v1/jobs/:source        # Enable/disable the scheduled run. Body: { "enabled": boolean }
+GET   /api/v1/jobs/osv-ecosystems # OSV's ecosystem names: [{ "name": "npm", "added": false }, ...]
+POST  /api/v1/jobs/osv-ecosystems # Add one: switch its daily job on and run it. Body: { "name": "PyPI" }
 ```
+
+A Run on a source that was never loaded (NVD, OSV) is its full load; the response says which in `mode` (`"full"` or `"delta"`). Adding an ecosystem takes the names the import command does: `Ubuntu:22.04:LTS` is `Ubuntu`, and `pypi` is answered with `400` and `Did you mean "PyPI"?`.
 
 | Case | Response |
 |---|---|
-| Run started | `202 { "status": "started", "source": "..." }` |
+| Run started | `202 { "status": "started", "source": "...", "mode": "full" }` |
 | Already running | `409` |
 | Unknown source | `404` |
 

@@ -104,22 +104,14 @@ curl http://localhost:5000/health    # → {"status":"ok",...}
 
 ### 3. データの取り込み
 
-**起動直後のデータベースは空です。** NVD と OSV の定期ジョブは前回実行以降の差分しか取得しないため、利用を始める前に初回の取り込みを一度実行してください。
+**起動直後のデータベースは空です。** 定期ジョブは**差分だけ**を取得するため、利用を始める前に初回の取り込みが必要です。`http://localhost:5000/dashboard` の[ダッシュボード](#ダッシュボード)を開き、管理キー（`ADMIN_API_KEY`）を入力してください。取り込みはすべてここから行え、コマンドは不要です。
 
-```bash
-# NVD: 全 CVE（約 40 万件）。数時間かかるため、バックグラウンドで実行する
-docker compose exec -d app pnpm import:nvd full
+- **NVD**（全 CVE、約 40 万件）: NVD の行の **Load** を押します。数時間かかり、状態が `running` から `completed` に変わります。途中で失敗しても、もう一度 **Load** を押せば、止まった所から再開します。
+- **CISA KEV と EPSS**: NVD の完了後に **Run** を押します。取り込み済みの CVE に情報を追加するものなので、NVD より後に実行します。2 回目以降は毎日自動で更新されます。
+- **OSV**: 「OSV Ecosystems」で、スキャンするエコシステム（`npm`、`PyPI`、`Ubuntu` など。[名前の選び方](docs/data-sources.md#which-name-to-import)）を選び、**Add and load** を押します。毎日のジョブが On になり、全件が取り込まれます。
+- **そのほかのソース**（ベンダーアドバイザリ、Debian security tracker `debian-tracker`）: ジョブを **On** にして、**Run** を一度押します。CVE レコード（`cna`）は、先に `pnpm import:cna` が必要です（[docs/operations.md](docs/operations.md#scheduler)）。
 
-# OSV: 実際にスキャンするエコシステムだけを取り込む。名前の一覧: docs/data-sources.md#which-name-to-import
-docker compose exec app pnpm import:osv ecosystem npm
-docker compose exec app pnpm import:osv ecosystem Ubuntu
-```
-
-取り込みを開始したら、`http://localhost:5000/dashboard` の[ダッシュボード](#ダッシュボード)を開き、API キーを入力します。
-- NVD の状態が `running` になり、完了すると `completed` に変わります。
-- NVD の完了後に、CISA KEV と EPSS の **Run** を押します。KEV と EPSS は、取り込み済みの CVE に情報を追加するものなので、NVD より後に実行する必要があります。2 回目以降は毎日自動で更新されます。
-- **取り込んだ OSV エコシステムの `osv-<エコシステム>` を On にしてください。** On にしないと、そのエコシステムのデータは更新されません。
-- そのほかに使うソースも、**On** にしてから **Run** を押して初回の取り込みを行います。対象は、ベンダーアドバイザリ（Fortinet、Red Hat など）、CVE レコード（`cna`）、Debian security tracker（`debian-tracker`）です。
+コマンド（`docker compose exec app pnpm import:nvd full`、`pnpm import:osv ecosystem <名前>`）も使えます。スクリプトからの実行や、最初から取り込み直すときに使います。
 
 取り込むソースの選び方は [docs/data-sources.md](docs/data-sources.md#choosing-what-to-import) を参照してください。
 

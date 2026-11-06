@@ -39,7 +39,9 @@ import { importOSVEcosystemDelta } from '../worker/osv-fetcher.js';
 import { importDebianSourceMappings } from '../worker/debian-sources-fetcher.js';
 import { importDebianTrackerStatus } from '../worker/debian-tracker-fetcher.js';
 import { importUbuntuTrackerStatus } from '../worker/ubuntu-tracker-fetcher.js';
-import { SHARED_BUCKET_ECOSYSTEMS, osvBucketName } from './osv-bucket.js';
+import { osvBucketName } from './osv-bucket.js';
+import { fetchOsvEcosystems } from './osv-ecosystems.js';
+import { isNvdLoaded, isOsvLoaded, osvEcosystemWhere, runNvdFullLoad, runOsvFullLoad } from './first-load.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -61,7 +63,10 @@ export const STATIC_JOBS: JobDefinition[] = [
     source: 'nvd',
     label: 'NVD',
     cron: '0 */2 * * *',
-    run: async () => {
+    // The schedule reads the last 2 hours; an empty database needs the whole mirror first.
+    firstLoad: { isLoaded: isNvdLoaded },
+    run: async ({ jobId, mode }) => {
+      if (mode === 'full') return runNvdFullLoad(jobId);
       const start = await getDeltaCursor('nvd', 2 * HOUR_MS);
       const result = await importNVDByDateRange(start, new Date());
       return { fetched: result.total, updated: result.succeeded, failed: result.failed };
@@ -168,7 +173,10 @@ function osvEcosystemJob(bucketEcosystem: string): JobDefinition {
     source,
     label: `OSV / ${bucketEcosystem}`,
     cron: '0 8 * * *',
-    run: async () => {
+    // The full file of a big ecosystem (Ubuntu's is 792 MB) is held in memory whole.
+    firstLoad: { isLoaded: () => isOsvLoaded(bucketEcosystem), heavy: true },
+    run: async ({ mode }) => {
+      if (mode === 'full') return runOsvFullLoad(bucketEcosystem);
       const since = await getDeltaCursor(source, OSV_DELTA_FALLBACK_MS);
       const result = await importOSVEcosystemDelta(bucketEcosystem, since);
       return { fetched: result.total, inserted: result.inserted, updated: result.updated, failed: result.failed };
@@ -188,12 +196,11 @@ export async function resolveJob(source: string): Promise<JobDefinition | null> 
   if (source.startsWith('osv-')) {
     // "osv-Debian:13" is the job "osv-Debian" now: the releases of a distro share one bucket.
     const bucketEcosystem = osvBucketName(source.slice(4));
-    // A shared-bucket job (e.g. "osv-AlmaLinux") is valid as long as any
-    // version under it exists, not just an exact "AlmaLinux" match.
-    const where = SHARED_BUCKET_ECOSYSTEMS.includes(bucketEcosystem)
-      ? { ecosystem: { startsWith: bucketEcosystem } }
-      : { ecosystem: bucketEcosystem };
-    const exists = await prisma.oSVVulnerability.findFirst({ where, select: { id: true } });
+    // Valid when OSV lists the ecosystem, even before any of its records are here (its first
+    // Run loads them), or when records are already here under that name.
+    const official = await fetchOsvEcosystems();
+    if (official?.includes(bucketEcosystem)) return osvEcosystemJob(bucketEcosystem);
+    const exists = await prisma.oSVVulnerability.findFirst({ where: osvEcosystemWhere(bucketEcosystem), select: { id: true } });
     if (exists) return osvEcosystemJob(bucketEcosystem);
   }
 

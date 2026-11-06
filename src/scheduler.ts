@@ -12,7 +12,13 @@ const OSV_ECOSYSTEM_CRON = '0 8 * * *';
 const tasks: ScheduledTask[] = [];
 
 /** Hand a job to the runner, which starts it as soon as a slot is free. */
-async function enqueue(def: JobDefinition): Promise<void> {
+export async function enqueue(def: JobDefinition): Promise<void> {
+  // A source that reads only changes has nothing to build on before its first load.
+  // That load is a person's call (a Run on the dashboard): it can take hours.
+  if (def.firstLoad && !(await def.firstLoad.isLoaded())) {
+    logger.info({ job: def.source }, 'Scheduler: not loaded yet, skipping (press Run on the dashboard to load it)');
+    return;
+  }
   const outcome = await getJobRunner().request(def);
   if (outcome === 'busy') logger.warn({ job: def.source }, 'Scheduler: job already queued or running, skipping');
 }

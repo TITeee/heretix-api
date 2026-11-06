@@ -1,6 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import cron from 'node-cron';
-import { startScheduler, stopScheduler } from './scheduler.js';
+import { enqueue, startScheduler, stopScheduler } from './scheduler.js';
+import * as runnerModule from './jobs/runner.js';
+import type { JobDefinition } from './jobs/types.js';
 
 describe('stopScheduler', () => {
   afterEach(async () => {
@@ -26,5 +28,33 @@ describe('stopScheduler', () => {
     startScheduler();
     await stopScheduler();
     await expect(stopScheduler()).resolves.toBeUndefined();
+  });
+});
+
+describe('enqueue', () => {
+  const request = vi.fn().mockResolvedValue('started');
+
+  beforeEach(() => {
+    request.mockClear();
+    vi.spyOn(runnerModule, 'getJobRunner').mockReturnValue({ request } as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const job = (isLoaded?: () => Promise<boolean>): JobDefinition => ({
+    source: 'x', label: 'x', cron: '', run: async () => ({}), ...(isLoaded ? { firstLoad: { isLoaded } } : {}),
+  });
+
+  it('skips a source that was never loaded: its first load is a person\'s call', async () => {
+    await enqueue(job(async () => false));
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('runs a loaded source, and one with no first load', async () => {
+    await enqueue(job(async () => true));
+    await enqueue(job());
+    expect(request).toHaveBeenCalledTimes(2);
   });
 });

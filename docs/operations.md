@@ -69,10 +69,10 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 
 | Job (`source`) | Schedule | Enabled by default | First load |
 |---|---|---|---|
-| `nvd` (changes since last run) | Every 2 hours | ✅ | `pnpm import:nvd full`. Run alone reads only the last 2 hours |
+| `nvd` (changes since last run) | Every 2 hours | ✅ | **Load** on the dashboard (several hours; carries on after a failure) |
 | `kev` | Daily 09:00 | ✅ | Run is enough |
 | `epss` | Daily 10:00 | ✅ | Run is enough |
-| `osv-<ecosystem>` (one per imported ecosystem) | Daily 08:00 | | `pnpm import:osv ecosystem <name>`. The job does not exist until then; Run reads the changes since the last run, or the last 30 days |
+| `osv-<ecosystem>` (one per added ecosystem) | Daily 08:00 | | *Add and load* on the dashboard (it also switches the job on) |
 | `debian-source-packages` | Weekly, Sunday 07:00 | | Run is enough |
 | `debian-tracker` | Daily 07:15 | | Run is enough |
 | `ubuntu-tracker` | Daily 07:45 | | Run is enough. Needs `git` (in the Docker image) and a few minutes: it clones a 220 MB repository |
@@ -85,7 +85,7 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 | `advisory-checkpoint` / `-ivanti` / `-citrix` | Daily 16:00 / 16:30 / 16:45 | | Run is enough. `advisory-ivanti` renders about 90 pages in a headless browser and takes 10 to 15 minutes; `advisory-citrix` reads about 20 pages over plain HTTP in under a minute |
 | `advisory-microsoft` | Daily 18:30 | | `pnpm import:msrc` once: it reads all the MSRC documents since March 2021 (about 68) in about 3 minutes. Run alone reads only the documents revised in the last 7 days and the latest month |
 
-**First load.** A dashboard Run does what the scheduled job does. Most sources are fetched in full every time, so for them a Run is the first load. The sources marked with a command fetch only what changed since the last run, so a Run on an empty database loads next to nothing: run the command first (`docker compose exec app pnpm import:...`, after `pnpm build` when running from source), then switch the job on. Switching a job on is separate from running it: a new job is Off until switched on, and Run works either way.
+**First load.** A Run on a source that reads only changes (NVD, OSV) that was never loaded does the full import itself; the button then says **Load**. The schedule skips such a source until it is loaded, because a load can take hours and is a person's call. After that a Run is the schedule's delta. A full load of an OSV ecosystem counts as a heavy job (see `JOB_MAX_HEAVY`). The sources marked with a command (CVE Records, Microsoft) still need it: a Run reads only recent changes. Switching a job on is separate from running it: a new job is Off until switched on, and Run works either way. To load a source again from scratch, use the command (`docker compose exec app pnpm import:...`, after `pnpm build` when running from source).
 
 Switch jobs on and off with the dashboard's On/Off toggle or `PATCH /api/v1/jobs/:source` (see [api.md](api.md#jobs)). On a fresh install only NVD, KEV and EPSS are enabled. The other jobs are high-volume scrapers, so switch on just the ones you need. Each OSV ecosystem job appears once that ecosystem has been imported.
 
@@ -144,6 +144,6 @@ The name suggestions (`/vulnerabilities/suggest`) match a prefix on `lower(name)
 
 **Migration errors on a development database**: `pnpm prisma migrate reset` drops and recreates it; then re-run `pnpm db:migrate`. Never run this against production.
 
-**A source shows no data**: check that its job is enabled on the dashboard and has completed at least once. OSV ecosystems need one full `pnpm import:osv ecosystem <name>` before their daily job (see [data-sources.md](data-sources.md#osv)).
+**A source shows no data**: check that its job is enabled on the dashboard and has completed at least once. A source that says *not loaded* needs its first **Load** (OSV: *Add and load*; see [data-sources.md](data-sources.md#osv)).
 
 **An import command seems to ignore a code change**: `pnpm import:*` runs `dist/`. Run `pnpm build` first.
