@@ -9,7 +9,7 @@ CVE Records ──┼─► per-source tables ─► Vulnerability (master) ─�
 Vendor feeds ─┘                                   └─ deduplicated by CVE ID
 ```
 
-Each source has a fetcher in `src/worker/` that downloads and normalizes its data. Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts), scheduled by [src/scheduler.ts](../src/scheduler.ts), and run one process per job by [src/jobs/runner.ts](../src/jobs/runner.ts) through [src/scripts/run-job.ts](../src/scripts/run-job.ts) and [src/jobs/executor.ts](../src/jobs/executor.ts). Search lives in [src/api/routes/vulnerabilities.ts](../src/api/routes/vulnerabilities.ts) with its matching predicates in [src/utils/search-helpers.ts](../src/utils/search-helpers.ts).
+Each source has a fetcher in `src/worker/` that downloads and normalizes its data. Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts), scheduled by [src/scheduler.ts](../src/scheduler.ts), and run one process per job by [src/jobs/runner.ts](../src/jobs/runner.ts) through [src/scripts/run-job.ts](../src/scripts/run-job.ts) and [src/jobs/executor.ts](../src/jobs/executor.ts). A source whose schedule reads only changes (NVD, OSV, CVE Records, Microsoft) has a `firstLoad`: until it is loaded, a manual Run is its full load (mode `full`, recorded on the job's row, see [first-load.ts](../src/jobs/first-load.ts)) and the schedule skips it. Search lives in [src/api/routes/vulnerabilities.ts](../src/api/routes/vulnerabilities.ts) with its matching predicates in [src/utils/search-helpers.ts](../src/utils/search-helpers.ts).
 
 ## Data model
 

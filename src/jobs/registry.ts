@@ -41,7 +41,7 @@ import { importDebianTrackerStatus } from '../worker/debian-tracker-fetcher.js';
 import { importUbuntuTrackerStatus } from '../worker/ubuntu-tracker-fetcher.js';
 import { osvBucketName, osvImportBlock } from './osv-bucket.js';
 import { fetchOsvEcosystems } from './osv-ecosystems.js';
-import { isNvdLoaded, isOsvLoaded, osvEcosystemWhere, runNvdFullLoad, runOsvFullLoad } from './first-load.js';
+import { isCnaLoaded, isMsrcLoaded, isNvdLoaded, isOsvLoaded, osvEcosystemWhere, runCnaFullLoad, runMsrcFullLoad, runNvdFullLoad, runOsvFullLoad } from './first-load.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -114,17 +114,26 @@ export const STATIC_JOBS: JobDefinition[] = [
   // Recently revised MSRC documents only; the history from March 2021 is
   // imported by hand (`pnpm import:msrc`). Patch Tuesday updates are released
   // around 17:00 UTC.
-  { source: 'advisory-microsoft',    label: 'Microsoft (Windows Server)', cron: '30 18 * * *', run: () => runAdvisory('advisory-microsoft', new MsrcFetcher()) },
   {
-    // Delta bundles only. The one-time bootstrap of historical years is run by
-    // hand (`pnpm import:cna --bootstrap`) since it downloads a ~600MB archive.
+    source: 'advisory-microsoft',
+    label: 'Microsoft (Windows Server)',
+    cron: '30 18 * * *',
+    // The schedule reads only the recently revised documents; the first load reads all of them.
+    firstLoad: { isLoaded: isMsrcLoaded },
+    run: ({ mode }) => mode === 'full' ? runMsrcFullLoad() : runAdvisory('advisory-microsoft', new MsrcFetcher()),
+  },
+  {
+    // The schedule applies delta bundles only; the first load is the ~600MB archive (the same
+    // as `pnpm import:cna --bootstrap`), which a Run on the dashboard does while nothing is loaded.
     source: 'cna',
     label: 'CVE Record (CNA)',
     cron: '30 15 * * *',
     // Marked from what was known before jobs ran on their own; revisit with
     // the peak memory each run now records.
     heavy: true,
-    run: async () => {
+    firstLoad: { isLoaded: isCnaLoaded },
+    run: async ({ mode }) => {
+      if (mode === 'full') return runCnaFullLoad();
       const since = await getDeltaCursor('cna', 25 * HOUR_MS);
       const result = await importCnaDelta(since);
       return { fetched: result.scanned, inserted: result.inserted, updated: result.updated, failed: result.failed };

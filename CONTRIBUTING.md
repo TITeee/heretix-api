@@ -53,7 +53,7 @@ Accuracy against official advisories is measured with the `pnpm validate:*` scri
    ```
 
    Master-row linkage, pruning and zero-result detection are handled by `runAdvisoryFetcher()` (see [architecture.md](docs/architecture.md#vendor-advisories)).
-2. Add a job to `STATIC_JOBS` in [src/jobs/registry.ts](src/jobs/registry.ts). The job's source key is `advisory-<vendor>` (e.g. `advisory-myvendor`), which is what the dashboard and the jobs API use. New jobs are disabled by default.
+2. Add a job to `STATIC_JOBS` in [src/jobs/registry.ts](src/jobs/registry.ts). The job's source key is `advisory-<vendor>` (e.g. `advisory-myvendor`), which is what the dashboard and the jobs API use. New jobs are disabled by default. Vendor fetchers read everything on every run, so a Run is already the first load; give the job a `firstLoad` ([src/jobs/types.ts](src/jobs/types.ts)) only if its schedule reads just the changes.
 3. Map the job's source key to the fetcher's `source()` value in `ADVISORY_SOURCE_MAP` ([src/api/routes/dashboard.ts](src/api/routes/dashboard.ts)), e.g. `'advisory-myvendor': 'myvendor'`, so the dashboard shows the record count.
 4. Add an `import:<vendor>` script (`src/scripts/import-<vendor>.ts` and `package.json`).
 5. Add unit tests built from real advisory samples. Add an accuracy check if the vendor publishes a usable ground truth.

@@ -9,6 +9,9 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { fullDownloadNVD } from '../worker/nvd-fetcher.js';
 import { importOSVEcosystemStreaming } from '../worker/osv-fetcher.js';
+import { bootstrapCna, CNA_BOOTSTRAP_YEARS } from '../worker/cna-importer.js';
+import { MsrcFetcher } from '../worker/msrc-fetcher.js';
+import { runAdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { SHARED_BUCKET_ECOSYSTEMS } from './osv-bucket.js';
 import type { JobResult } from './types.js';
 
@@ -27,6 +30,15 @@ async function completedWithData(sources: string[], hasData: () => Promise<boole
 
 export function isNvdLoaded(): Promise<boolean> {
   return completedWithData(['nvd'], async () => !!(await prisma.nVDVulnerability.findFirst({ select: { id: true } })));
+}
+
+export function isCnaLoaded(): Promise<boolean> {
+  return completedWithData(['cna'], async () => !!(await prisma.cnaVulnerability.findFirst({ select: { id: true } })));
+}
+
+export function isMsrcLoaded(): Promise<boolean> {
+  return completedWithData(['advisory-microsoft'], async () =>
+    !!(await prisma.advisoryVulnerability.findFirst({ where: { source: 'advisory-microsoft' }, select: { id: true } })));
 }
 
 /** Where the records of an OSV bucket are in the database ("Debian" holds "Debian:12", ...). */
@@ -82,4 +94,16 @@ export async function runNvdFullLoad(jobId: string): Promise<JobResult> {
 export async function runOsvFullLoad(bucket: string): Promise<JobResult> {
   const result = await importOSVEcosystemStreaming(bucket);
   return { fetched: result.total, updated: result.succeeded, failed: result.failed };
+}
+
+/** The ~600 MB CVE Records bundle; what `pnpm import:cna` does on an empty database. */
+export async function runCnaFullLoad(): Promise<JobResult> {
+  const result = await bootstrapCna(CNA_BOOTSTRAP_YEARS);
+  return { fetched: result.scanned, inserted: result.inserted, updated: result.updated, failed: result.failed };
+}
+
+/** Every MSRC document since March 2021; what `pnpm import:msrc` does. */
+export async function runMsrcFullLoad(): Promise<JobResult> {
+  const result = await runAdvisoryFetcher(new MsrcFetcher({ full: true }));
+  return { fetched: result.total, inserted: result.inserted, updated: result.updated, failed: result.failed };
 }

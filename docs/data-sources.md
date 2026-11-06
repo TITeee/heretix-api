@@ -170,7 +170,7 @@ pnpm import:cna --bootstrap  # Force the full bundle (~600 MB)
 
 - **CNA-declared affected products** (`containers.cna.affected`) go into their own `CnaVulnerability` / `CnaAffectedProduct` tables. They cover vendors that have no dedicated advisory fetcher. The bootstrap only imports recent years (`BOOTSTRAP_YEARS` in `src/scripts/import-cna.ts`); deltas apply to any year. Ranges that cannot be ordered are not stored: git commit hashes, free text, and NetScaler's branch-plus-build bounds (`14.1` up to `56.73`, which read as 14.1.0 up to 56.73.0 and flagged the fixed builds). A branch written `lessThan: *` with a real start (`16.1.0` to `*`: that release and every later one, no fix yet; F5 writes its end-of-life BIG-IP branches this way) is stored from its start and ends where the next branch of the same record and product begins, so it does not run on into a branch that has its fix. A whole line (`22.2` to `22.2*`, how Juniper writes a Junos train with no fix; `0.0.0` to `11.2.*`, Drupal's unsupported lines; `8.1.*` as a `lessThanOrEqual`, MongoDB) is stored up to the start of the next one (`22.3`, `11.3`, `8.2`). A placeholder start (`0`, `*`) with a `*` end means every version and is still not stored. Juniper's list of fixed releases (`23.4` to `23.4R1-S2, 23.4R2`: each release line has its own fix) is stored as the releases below the fix of their own line, here `23.4` up to `23.4R1-S2`, since `23.4R2` is fixed outright. Palo Alto and Microsoft also write lists with commas, and mean something else by them, so theirs are still not stored. `pnpm migrate:cna-open-ended-ranges` rebuilds the rows of the records that have one (it runs by itself on start).
 - **CISA Vulnrichment SSVC** (`containers.adp`, the CISA-ADP entry): exploitation (none/poc/active), automatable (yes/no) and technical impact (partial/total). Stored on the master row and returned by `GET /vulnerabilities/:id`. No final SSVC decision is computed, since that needs the consumer's own mission impact. SSVC is backfilled from every year in the bundle.
-- The daily delta runs at 15:30 UTC. No API key or rate limit.
+- **Dashboard**: until CVE Records are loaded the button says **Load** and downloads the full bundle; the daily delta (15:30 UTC) is skipped until then. No API key or rate limit.
 
 ## Red Hat
 
@@ -356,7 +356,7 @@ Other Citrix bulletins (Workspace app, StoreFront, XenServer, SD-WAN, Session Re
 
 ## Microsoft (Windows Server)
 
-[msrc-fetcher.ts](../src/worker/msrc-fetcher.ts) · `pnpm import:msrc` (history) · daily 18:30 UTC (recent revisions)
+[msrc-fetcher.ts](../src/worker/msrc-fetcher.ts) · **Load** on the dashboard, or `pnpm import:msrc` (history) · daily 18:30 UTC (recent revisions)
 
 > **Beta.** This source is new and has been checked against only a few real servers. The product names, the fields of its results and what it covers may change, and its results should be checked against Windows Update or the Security Update Guide before acting on them. Its known gaps are in [known-issues.md](known-issues.md#windows-server-what-a-build-number-cannot-tell).
 
@@ -381,7 +381,7 @@ Windows is serviced by monthly cumulative updates that raise only the last numbe
   About 9% of the stored advisories (541 of 5,785) are in a role that can be judged. The rest apply to every server, which is the safe side: a CVE is set aside only when its role is known and a client knows the role is absent.
 - **What is left out.** ADV advisories (their updates, such as servicing stack updates, are not the fix of a CVE), and products affected without any build that fixes them, such as CVE-2013-3900, whose fix is an opt-in registry setting no update applies. Neither can be decided by a build number.
 - **Releases.** Windows Server 2012 / 2012 R2 (extended security updates ended 2026-10-13) and older releases are not imported, nor the semi-annual and annual channel releases, all past end of support. The list is `WINDOWS_SERVER_BUILDS` in [support-policy.ts](../src/config/support-policy.ts).
-- **History.** The documents carry fix builds from March 2021; earlier ones name the KB but not the build, so they are not read. `pnpm import:msrc` reads every document from March 2021. The daily job reads the documents revised in the last seven days, and always the latest month's: MSRC revises earlier months as well as the current one. A CVE listed in more than one document is taken from the entry revised most recently.
+- **History.** The documents carry fix builds from March 2021; earlier ones name the KB but not the build, so they are not read. The dashboard's **Load** (or `pnpm import:msrc`) reads every document from March 2021. The daily job reads the documents revised in the last seven days, and always the latest month's: MSRC revises earlier months as well as the current one. A CVE listed in more than one document is taken from the entry revised most recently.
 
 A Windows build is ordered with its own order ([microsoft-version.ts](../src/utils/microsoft-version.ts)): the generic encoding caps a component at 999, so the build (20348) collapses and the update revision is dropped, and every Windows Server 2022 build would read as the same version.
 

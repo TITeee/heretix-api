@@ -4,7 +4,7 @@
  * The text, like SSVC, is stored for every year in the bundle.
  *
  * The first run bootstraps from the ~600MB full bundle: CNA-affected-products
- * storage is restricted to BOOTSTRAP_YEARS, but SSVC has no such restriction
+ * storage is restricted to CNA_BOOTSTRAP_YEARS, but SSVC has no such restriction
  * and is backfilled for every year in the bundle (see bootstrapCna()'s doc
  * comment). Every later run applies only the hourly delta bundles published
  * since the last completed job, which is a few MB a day.
@@ -15,15 +15,9 @@
  */
 import 'dotenv/config';
 import { prisma } from '../db/client.js';
-import { bootstrapCna, importCnaDelta } from '../worker/cna-importer.js';
+import { bootstrapCna, importCnaDelta, CNA_BOOTSTRAP_YEARS } from '../worker/cna-importer.js';
 import { getDeltaCursor } from '../jobs/executor.js';
 
-// Recent CVEs are where the NVD CPE gap is worst (roughly half of the last
-// year's CVEs have no CPE row at all, against a fifth across all time), and
-// older records mostly predate the structured `versions` conventions this
-// import relies on. Widen this once the measured value justifies it. Only
-// restricts CNA-affected-products storage -- SSVC backfill is unaffected.
-const BOOTSTRAP_YEARS = ['2025', '2026'];
 const DELTA_FALLBACK_MS = 25 * 60 * 60 * 1000;
 
 async function main() {
@@ -37,11 +31,11 @@ async function main() {
 
   try {
     console.log(bootstrap
-      ? `Bootstrapping CNA affected data for ${BOOTSTRAP_YEARS.join(', ')} (full bundle download)...`
+      ? `Bootstrapping CNA affected data for ${CNA_BOOTSTRAP_YEARS.join(', ')} (full bundle download)...`
       : 'Importing CNA affected data (delta bundles)...');
 
     const result = bootstrap
-      ? await bootstrapCna(BOOTSTRAP_YEARS)
+      ? await bootstrapCna(CNA_BOOTSTRAP_YEARS)
       : await importCnaDelta(await getDeltaCursor('cna', DELTA_FALLBACK_MS));
 
     await prisma.collectionJob.update({
