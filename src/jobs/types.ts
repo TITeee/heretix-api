@@ -13,6 +13,18 @@ export interface JobResult {
   failed?: number;
 }
 
+/**
+ * 'full': the first load of a source, which reads everything. 'delta': what the
+ * schedule runs, the changes since the last completed run.
+ */
+export type JobMode = 'full' | 'delta';
+
+export interface JobContext {
+  /** The job's own CollectionJob row. */
+  jobId: string;
+  mode: JobMode;
+}
+
 export interface JobDefinition {
   /** Source key, e.g. 'nvd', 'kev', 'advisory-fortinet', 'osv-npm' */
   source: string;
@@ -21,7 +33,7 @@ export interface JobDefinition {
   /** Cron schedule (used by the scheduler; ignored for on-demand osv-<eco> jobs) */
   cron: string;
   /** Actual work; returns record counts for the CollectionJob row */
-  run: () => Promise<JobResult>;
+  run: (ctx: JobContext) => Promise<JobResult>;
   /**
    * Holds a lot in memory (a whole dataset or archive at once). The job runner
    * runs at most JOB_MAX_HEAVY of these at a time (see runner.ts), so two of
@@ -29,4 +41,14 @@ export interface JobDefinition {
    * process to 2.6GB. A job left unmarked only loses that guard.
    */
   heavy?: boolean;
+  /**
+   * A source whose schedule reads only changes, so an empty database needs one
+   * full load first. A manual Run does that load by itself when `isLoaded()` is
+   * false (the job then gets mode 'full'); the schedule skips the job until then.
+   */
+  firstLoad?: {
+    isLoaded: () => Promise<boolean>;
+    /** The full load holds a whole dataset in memory: it counts as heavy. */
+    heavy?: boolean;
+  };
 }

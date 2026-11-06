@@ -9,7 +9,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { logger } from '../utils/logger.js';
-import type { JobDefinition } from './types.js';
+import type { JobDefinition, JobMode } from './types.js';
 
 // In-memory lock to prevent concurrent execution of the same source
 const running = new Set<string>();
@@ -44,15 +44,26 @@ export async function reconcileOrphanedJobs(): Promise<number> {
 }
 
 /**
- * Resolve the delta cursor for a source: the completedAt of its last completed
- * CollectionJob, or now - fallbackMs if none exists.
+ * Resolve the delta cursor for a source: when its last completed CollectionJob
+ * began (full load) or ended (delta), or now - fallbackMs if none exists.
+ *
+ * A full load reads for hours; what changed while it ran is not in it, so the
+ * next delta starts from the load's start. A delta run ends where it stopped
+ * reading.
  */
 export async function getDeltaCursor(source: string, fallbackMs: number): Promise<Date> {
   const lastJob = await prisma.collectionJob.findFirst({
     where: { source, status: 'completed' },
     orderBy: { completedAt: 'desc' },
   });
+  if (lastJob && jobModeOf(lastJob.metadata) === 'full' && lastJob.startedAt) return lastJob.startedAt;
   return lastJob?.completedAt ?? new Date(Date.now() - fallbackMs);
+}
+
+/** The mode recorded on a job's row; rows without one are deltas. */
+export function jobModeOf(metadata: unknown): JobMode {
+  const mode = metadata && typeof metadata === 'object' ? (metadata as { mode?: unknown }).mode : undefined;
+  return mode === 'full' ? 'full' : 'delta';
 }
 
 /**
@@ -97,7 +108,7 @@ export async function executeJob(def: JobDefinition): Promise<void> {
     let job: { id: string };
     try {
       job = await prisma.collectionJob.create({
-        data: { source: def.source, status: 'running', startedAt: new Date() },
+        data: { source: def.source, status: 'running', startedAt: new Date(), metadata: { mode: 'delta' } },
         select: { id: true },
       });
     } catch (err) {
@@ -136,7 +147,8 @@ export async function runRecordedJob(
   };
 
   try {
-    const result = await def.run();
+    const row = await prisma.collectionJob.findUnique({ where: { id: jobId }, select: { metadata: true } });
+    const result = await def.run({ jobId, mode: jobModeOf(row?.metadata) });
     await recordOutcome(jobId, def.source, await withMetadata({
       status: 'completed',
       completedAt: new Date(),

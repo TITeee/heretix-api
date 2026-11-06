@@ -402,7 +402,7 @@ export async function importNVDByDateRange(
  * completedAt), leaving the unfetched remainder permanently uncovered.
  * Resume a failed run with the job id logged at startup.
  */
-export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; succeeded: number; failed: number }> {
+export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; succeeded: number; failed: number; inserted: number; updated: number }> {
   logger.info('Starting NVD full download');
 
   // Retrieve previous progress
@@ -411,12 +411,15 @@ export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; 
   let inserted = 0;
   let updated = 0;
   let failed = 0;
+  // What the row already holds (the job's mode) stays when progress is saved.
+  let baseMetadata: Record<string, unknown> = {};
 
   if (savedJobId) {
     const job = await prisma.collectionJob.findUnique({ where: { id: savedJobId } });
     if (!job) throw new Error(`NVD full download job not found: ${savedJobId}`);
     const meta = job.metadata as Record<string, number> | null;
     startIndex = meta?.lastStartIndex ?? 0;
+    baseMetadata = job.metadata && typeof job.metadata === 'object' ? { ...(job.metadata as Record<string, unknown>) } : {};
     // Carry the counts forward so a resumed run's totals cover the whole job.
     inserted = job.totalInserted;
     updated = job.totalUpdated;
@@ -469,7 +472,7 @@ export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; 
       await prisma.collectionJob.update({
         where: { id: savedJobId },
         data: {
-          metadata: { lastStartIndex: startIndex, totalResults },
+          metadata: { ...baseMetadata, lastStartIndex: startIndex, totalResults },
           totalInserted: inserted,
           totalUpdated: updated,
           totalFailed: failed,
@@ -509,7 +512,7 @@ export async function fullDownloadNVD(jobId?: string): Promise<{ total: number; 
 
   const succeeded = inserted + updated;
   logger.info({ succeeded, failed, total: succeeded + failed }, 'NVD full download completed');
-  return { total: succeeded + failed, succeeded, failed };
+  return { total: succeeded + failed, succeeded, failed, inserted, updated };
 }
 
 // ─── Import ───────────────────────────────────────────────────

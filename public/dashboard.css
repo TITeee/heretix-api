@@ -26,7 +26,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; border: 0 solid var(--border); }
-button, input { font: inherit; color: inherit; background: none; }
+button, input, select { font: inherit; color: inherit; background: none; }
 button { cursor: pointer; }
 table { border-collapse: collapse; }
 .hidden { display: none !important; }
@@ -157,3 +157,9 @@ th.num { font-family: inherit; }
 .legacy summary:hover { background: var(--row-hover); }
 
 @keyframes pulse { 50% { opacity: 0.5; } }
+
+.add-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.75rem 1rem; border-bottom-width: 1px; }
+.add-form .field-label { margin: 0; }
+.add-form select { width: auto; min-width: 14rem; }
+/* The opened list is drawn by the browser: give it the card's colours too. */
+.add-form option { background: var(--card); color: var(--card-foreground); }

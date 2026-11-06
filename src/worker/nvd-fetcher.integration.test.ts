@@ -66,7 +66,7 @@ describe('fullDownloadNVD — failure handling', () => {
     const result = await fullDownloadNVD(failedJob.id);
 
     expect(get).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ params: expect.objectContaining({ startIndex: 4000 }) }));
-    expect(result).toEqual({ total: 6, succeeded: 5, failed: 1 });
+    expect(result).toEqual({ total: 6, succeeded: 5, failed: 1, inserted: 3, updated: 2 });
 
     const job = await prisma.collectionJob.findUnique({ where: { id: failedJob.id } });
     expect(job?.status).toBe('completed');
@@ -86,6 +86,16 @@ describe('fullDownloadNVD — failure handling', () => {
     const job = await prisma.collectionJob.findUnique({ where: { id: failedJob.id } });
     expect(job?.status).toBe('failed');
     expect(job?.metadata).toEqual({ lastStartIndex: 4000, totalResults: 396949 });
+  });
+
+  it('keeps what the row already holds (its mode) when it saves progress', async () => {
+    const job = await prisma.collectionJob.create({ data: { source: 'nvd', status: 'running', startedAt: new Date(), metadata: { mode: 'full' } } });
+    vi.spyOn(axios, 'get').mockResolvedValue({ data: { resultsPerPage: 2000, startIndex: 0, totalResults: 1, format: 'NVD_CVE', version: '2.0', timestamp: '', vulnerabilities: [{ cve: { id: 'CVE-2026-0001', published: '2026-01-01T00:00:00.000', lastModified: '2026-01-02T00:00:00.000', descriptions: [{ lang: 'en', value: 'x' }], configurations: [] } }] } });
+
+    await fullDownloadNVD(job.id);
+
+    const row = await prisma.collectionJob.findUnique({ where: { id: job.id } });
+    expect(row?.metadata).toMatchObject({ mode: 'full', lastStartIndex: 1, totalResults: 1 });
   });
 
   it('rejects an unknown resume job id instead of silently restarting from zero', async () => {

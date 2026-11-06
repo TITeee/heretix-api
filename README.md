@@ -105,22 +105,14 @@ On first start, the container creates the database schema and then starts the AP
 
 ### 3. Load data
 
-**The database starts empty**, and the scheduled NVD and OSV jobs only fetch *changes* since their last run. Run the initial import once before scanning anything:
+**The database starts empty**, and the scheduled jobs only fetch *changes*. Open the [dashboard](#dashboard) at `http://localhost:5000/dashboard` and enter your admin key (`ADMIN_API_KEY`). Everything is loaded from there; no command is needed:
 
-```bash
-# NVD: every CVE (~400k). Takes several hours, so run it in the background.
-docker compose exec -d app pnpm import:nvd full
+- **NVD** (every CVE, ~400k): press **Load** on the NVD row. It takes several hours; the row shows `running`, then `completed`. If it fails part way, **Load** again carries on from where it stopped.
+- **CISA KEV and EPSS**: after NVD completes, press **Run**. They only annotate CVEs that are already there, and their daily runs keep them current.
+- **OSV**: under *OSV Ecosystems*, choose each ecosystem you scan (`npm`, `PyPI`, `Ubuntu`, ... [which name?](docs/data-sources.md#which-name-to-import)) and press **Add and load**. That switches its daily job on and loads it in full.
+- **Other sources** (vendor advisories, the Debian security tracker `debian-tracker`): switch the job **On** and press **Run** once. CVE Records (`cna`) first needs `pnpm import:cna` ([why](docs/operations.md#scheduler)).
 
-# OSV: only the ecosystems you scan. Names: docs/data-sources.md#which-name-to-import
-docker compose exec app pnpm import:osv ecosystem npm
-docker compose exec app pnpm import:osv ecosystem Ubuntu
-```
-
-Then open the [dashboard](#dashboard) at `http://localhost:5000/dashboard` and enter your admin key (`ADMIN_API_KEY`):
-- The NVD row shows `running`, then `completed` when the import finishes.
-- After NVD completes, press **Run** on CISA KEV and EPSS. They only annotate CVEs that are already in the database. Their daily runs keep them current after that.
-- **Switch On the `osv-<ecosystem>` row of each OSV ecosystem you imported.** Without this, the ecosystem is never updated.
-- For each other source you need, switch its job **On** and press **Run** once to load it: vendor advisories (Fortinet, Red Hat, ...), CVE Records (`cna`), and the Debian security tracker (`debian-tracker`).
+The commands (`docker compose exec app pnpm import:nvd full`, `pnpm import:osv ecosystem <name>`) still work, for scripts and for loading again from scratch.
 
 Which sources to import: [docs/data-sources.md](docs/data-sources.md#choosing-what-to-import).
 

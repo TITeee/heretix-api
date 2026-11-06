@@ -152,8 +152,9 @@ function actionCell(row) {
   // A queued job waits for a free slot in the job runner; it runs once one opens.
   const busy = row.status === 'running' || row.status === 'queued';
   const runBtn = '<button data-action="run" data-source="' + esc(row.source) + '" ' +
+    (row.needsFirstLoad ? 'title="Not loaded yet: imports everything. This can take hours." ' : '') +
     (busy ? 'disabled ' : '') + 'class="btn-sm btn-run">' +
-    (row.status === 'queued' ? 'Queued…' : busy ? 'Running…' : 'Run') + '</button>';
+    (row.status === 'queued' ? 'Queued…' : busy ? 'Running…' : row.needsFirstLoad ? 'Load' : 'Run') + '</button>';
   const enabled = row.enabled !== false;
   const toggleBtn = '<button data-action="toggle" data-source="' + esc(row.source) + '" ' +
     'data-enabled="' + (!enabled) + '" ' +
@@ -180,7 +181,7 @@ async function runJob(source) {
     if (res.status === 409) { showToast(source + ' is already queued or running', 'error'); return; }
     if (!res.ok) { showToast('Failed: HTTP ' + res.status, 'error'); return; }
     const body = await res.json().catch(() => ({}));
-    showToast((body.status === 'queued' ? 'Queued ' : 'Started ') + source, 'ok');
+    showToast((body.status === 'queued' ? 'Queued ' : 'Started ') + (body.mode === 'full' ? 'full load of ' : '') + source, 'ok');
     setTimeout(loadData, 800);
   } catch (err) {
     showToast('Failed: ' + err.message, 'error');
@@ -237,7 +238,7 @@ function renderTable(tbodyId, rows, getName, options) {
   tbody.innerHTML = ordered.map(r =>
     '<tr class="row' + (r.enabled === false ? ' row-disabled' : '') + '">' +
       '<td class="name">' + esc(getName(r)) + '</td>' +
-      '<td>' + statusBadge(r.status) + fetchFailedBadge(r.fetchFailed) + '</td>' +
+      '<td>' + (r.needsFirstLoad && !r.status ? '<span class="badge badge-neutral">not loaded</span>' : statusBadge(r.status)) + fetchFailedBadge(r.fetchFailed) + '</td>' +
       '<td class="muted">' + esc(relativeTime(r.completedAt)) + '</td>' +
       '<td class="num muted">' + esc(formatDuration(r.durationMs)) + '</td>' +
       '<td class="num">' + esc(fmt(r.recordCount)) + '</td>' +
@@ -275,6 +276,7 @@ async function loadData() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     showDashboard();
+    if (!addListLoaded) void loadEcosystemChoices();
     renderCards(data.recordCounts);
     renderTable('core-tbody', data.coreSources, s => s.label, { sort: true, emptyMessage: 'No import jobs found.' });
     renderTable('advisory-tbody', data.advisorySources, s => s.label, { sort: true, emptyMessage: 'No vendor advisories found.' });
@@ -294,6 +296,54 @@ async function loadData() {
     }
   }
 }
+
+// Add an OSV ecosystem: the list is OSV's own, so no name is typed or misspelt.
+const addSelect = document.getElementById('osv-add-select');
+const addButton = document.getElementById('osv-add-button');
+let addListLoaded = false;
+
+async function loadEcosystemChoices() {
+  const key = getApiKey();
+  if (!key) return;
+  try {
+    const res = await fetch('/api/v1/jobs/osv-ecosystems', { headers: { 'x-api-key': key } });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    addSelect.innerHTML = '<option value="">Choose an ecosystem…</option>' + data.ecosystems
+      .filter(e => !e.added)
+      .map(e => '<option value="' + esc(e.name) + '">' + esc(e.name) + '</option>').join('');
+    addSelect.disabled = false;
+    addButton.disabled = false;
+    addListLoaded = true;
+  } catch {
+    addSelect.innerHTML = '<option value="">Could not load the list</option>';
+  }
+}
+
+document.getElementById('osv-add-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const name = addSelect.value;
+  const key = getApiKey();
+  if (!name || !key) return;
+  addButton.disabled = true;
+  try {
+    const res = await fetch('/api/v1/jobs/osv-ecosystems', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (res.status === 401) { signOut('The admin key is no longer accepted. Sign in again.'); return; }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(body.error || 'Failed: HTTP ' + res.status, 'error'); return; }
+    showToast('Loading ' + name + ' (daily job on)', 'ok');
+    await loadEcosystemChoices();
+    setTimeout(loadData, 800);
+  } catch (err) {
+    showToast('Failed: ' + err.message, 'error');
+  } finally {
+    addButton.disabled = !addListLoaded;
+  }
+});
 
 document.getElementById('refresh').addEventListener('click', () => { void loadData(); });
 

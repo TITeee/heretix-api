@@ -109,6 +109,20 @@ describe('JobRunner', () => {
     expect(h2.startedAt!.getTime()).toBeGreaterThanOrEqual(h1.completedAt!.getTime());
   }, 60_000);
 
+  it('records the mode on the row, and holds a full load back like a heavy job when the source says so', async () => {
+    const loadable = (source: string): JobDefinition => ({
+      source, label: source, cron: '', run: async () => ({}), firstLoad: { isLoaded: async () => false, heavy: true },
+    });
+    const r = runner();
+    expect(await r.request(loadable('fake-slow-1500-load1'), 'full')).toBe('started');
+    expect(await r.request(loadable('fake-slow-1500-load2'), 'full')).toBe('queued');
+    expect(await r.request(loadable('fake-slow-1500-delta'), 'delta')).toBe('started');
+    await r.idle();
+
+    expect((await rowOf('fake-slow-1500-load1')).metadata).toMatchObject({ mode: 'full' });
+    expect((await rowOf('fake-slow-1500-delta')).metadata).toMatchObject({ mode: 'delta' });
+  });
+
   it('on stop, records running jobs as interrupted and waiting ones as not started', async () => {
     const r = runner({ maxConcurrent: 1 });
     await r.request(job('fake-slow-30000-running'));

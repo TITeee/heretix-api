@@ -40,7 +40,8 @@ pnpm import:nvd range 2024-01-01 2024-03-31  # Date range (auto-chunked at NVD's
 ```
 
 - The full mirror takes **several hours** (about 6 hours in one measured run). Most of that is downloading pages and writing rows, not the rate limit. `NVD_API_KEY` (50 instead of 10 requests/min) still helps; get a free key at [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key).
-- A full import is not resumed automatically. If a page still fails after retries, the job is marked `failed`, the command exits non-zero, and the error message ends with the resume command (`pnpm import:nvd full <job-id>`). A failed job is never used as the starting point of `update`.
+- **Dashboard**: until NVD is loaded, the NVD row's button says **Load** and does the full mirror. If it fails, the next **Load** carries on from where it stopped. The scheduled job skips NVD until it is loaded.
+- **Command line**: a full import is not resumed automatically. If a page still fails after retries, the job is marked `failed`, the command exits non-zero, and the error message ends with the resume command (`pnpm import:nvd full <job-id>`). A failed job is never used as the starting point of `update`.
 - The scheduled job runs `update` every 2 hours.
 
 ### CPE mapping
@@ -125,7 +126,7 @@ pnpm import:osv package npm lodash       # One package
 pnpm import:osv id GHSA-67hx-6x53-jw92   # One record (OSV or CVE ID)
 ```
 
-- **Adding an ecosystem**: run the full `ecosystem` import once *before* enabling its daily job (`osv-<name>`, 08:00 UTC). The daily job only reads records modified after its last run, so it never backfills. Check completeness with `pnpm validate:osv-coverage [name ...]`.
+- **Adding an ecosystem**: on the dashboard, under *OSV Ecosystems*, choose it and press *Add and load*. That switches its daily job (`osv-<name>`, 08:00 UTC) on and loads it in full. The command line does the same in two steps: `ecosystem` once, then switch the job on. The daily job only reads records modified after its last run, so it never backfills. Check completeness with `pnpm validate:osv-coverage [name ...]`.
 - **Releases of a distro share one job** (`osv-Debian` covers `Debian:12`, `Debian:13`, ...), as do the vendors that publish one feed for several ecosystems (`osv-Echo` covers `Echo:PyPI`, `Echo:Maven`, ...). The list is `SHARED_BUCKET_ECOSYSTEMS` in [osv-bucket.ts](../src/jobs/osv-bucket.ts), which also explains why.
 - **A job fails, rather than reporting an empty success, when its OSV file is missing (404) or no longer written to** (newest record over 14 days old for a distro, 90 for anything else). Check every file ahead of time with `pnpm validate:osv-buckets` (exits 1 on a problem).
 - **Backfilling after a job read a stale or wrong file**: re-import from a date before the problem started (the import is idempotent):
