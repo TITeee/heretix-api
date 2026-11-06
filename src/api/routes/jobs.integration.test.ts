@@ -25,7 +25,7 @@ describe('jobs', () => {
     await resetDb();
     request.mockReset().mockResolvedValue('started');
     vi.spyOn(runnerModule, 'getJobRunner').mockReturnValue({ request } as never);
-    vi.spyOn(ecosystems, 'fetchOsvEcosystems').mockResolvedValue(['Debian', 'PyPI', 'Ubuntu', 'npm']);
+    vi.spyOn(ecosystems, 'fetchOsvEcosystems').mockResolvedValue(['Debian', 'GIT', 'PyPI', 'Red Hat', 'Ubuntu', 'npm']);
   });
 
   const run = (source: string) => app.inject({ method: 'POST', url: `/api/v1/jobs/${encodeURIComponent(source)}/run`, headers: ADMIN });
@@ -54,6 +54,11 @@ describe('jobs', () => {
       expect((await run('osv-PyPI')).json()).toMatchObject({ source: 'osv-PyPI', mode: 'full' });
     });
 
+    it('refuses to run the job of an ecosystem that is not for import', async () => {
+      expect((await run('osv-Red Hat')).statusCode).toBe(404);
+      expect(request).not.toHaveBeenCalled();
+    });
+
     it('refuses a name OSV does not list', async () => {
       expect((await run('osv-NoSuchThing')).statusCode).toBe(404);
     });
@@ -67,10 +72,10 @@ describe('jobs', () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/jobs/osv-ecosystems', headers: ADMIN });
 
       expect(res.json().ecosystems).toEqual([
-        { name: 'Debian', added: true },
-        { name: 'PyPI', added: false },
-        { name: 'Ubuntu', added: false },
-        { name: 'npm', added: true },
+        { name: 'Debian', added: true, group: 'recommended' },
+        { name: 'PyPI', added: false, group: 'recommended' },
+        { name: 'Ubuntu', added: false, group: 'recommended' },
+        { name: 'npm', added: true, group: 'recommended' },
       ]);
     });
 
@@ -92,6 +97,17 @@ describe('jobs', () => {
 
       expect(res.statusCode).toBe(400);
       expect(res.json().error).toContain('Did you mean "PyPI"');
+      expect(request).not.toHaveBeenCalled();
+      expect(await prisma.jobConfig.count()).toBe(0);
+    });
+
+    it('does not list or add an ecosystem that is not for import, and says why', async () => {
+      const list = await app.inject({ method: 'GET', url: '/api/v1/jobs/osv-ecosystems', headers: ADMIN });
+      expect(list.json().ecosystems.map((e: { name: string }) => e.name)).not.toContain('Red Hat');
+
+      const res = await add('Red Hat');
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain('OVAL');
       expect(request).not.toHaveBeenCalled();
       expect(await prisma.jobConfig.count()).toBe(0);
     });

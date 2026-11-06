@@ -110,7 +110,9 @@ Pick by what you scan. Names are case-sensitive (`PyPI`, not `pypi`); a wrong na
 | Alpine | `Alpine` (all releases) |
 | AlmaLinux, Rocky Linux | `AlmaLinux`, `Rocky Linux` |
 
-A release suffix is accepted and ignored: `Ubuntu:22.04:LTS` imports `Ubuntu`. RHEL is not imported from OSV (see [Red Hat](#red-hat)). Malicious packages (`MAL-*`) arrive with `npm`, `PyPI`, `RubyGems`, `NuGet`, `crates.io`, `Go`, `Maven` and `Packagist`.
+A release suffix is accepted and ignored: `Ubuntu:22.04:LTS` imports `Ubuntu`. The dashboard lists the rows above first, under *Recommended*; the rest work on a best-effort basis.
+
+**Two OSV ecosystems are refused**, in the dashboard, the API and the command: `Red Hat` (RHEL is imported from Red Hat's own OVAL and VEX, see [Red Hat](#red-hat); the OSV records would duplicate and contradict them) and `GIT` (its records name no package, only commit ranges, so nothing could match). They are `OSV_NOT_FOR_IMPORT` in [osv-bucket.ts](../src/jobs/osv-bucket.ts). Malicious packages (`MAL-*`) arrive with `npm`, `PyPI`, `RubyGems`, `NuGet`, `crates.io`, `Go`, `Maven` and `Packagist`.
 
 All OSV ecosystems, as of 2026-11-06 ([live list](https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt)):
 `AlmaLinux`, `Alpaquita`, `Alpine`, `Android`, `Azure Linux`, `BellSoft Hardened Containers`, `Bitnami`, `CRAN`, `Chainguard`, `CleanStart`, `Debian`, `Echo`, `GHC`, `GIT`, `GSD`, `GitHub Actions`, `Go`, `Hackage`, `Hex`, `Julia`, `Linux`, `Mageia`, `Maven`, `MinimOS`, `NuGet`, `OSS-Fuzz`, `Packagist`, `Pub`, `PyPI`, `Red Hat`, `Red Hat Lightwell`, `Rocky Linux`, `Root`, `RubyGems`, `SUSE`, `SwiftURL`, `TuxCare`, `UVI`, `Ubuntu`, `VSCode`, `Wolfi`, `crates.io`, `npm`, `opam`, `openEuler`, `openSUSE`.

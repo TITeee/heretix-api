@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../db/client.js';
 import { resolveJob } from '../../jobs/registry.js';
 import { fetchOsvEcosystems } from '../../jobs/osv-ecosystems.js';
-import { resolveOsvEcosystem } from '../../jobs/osv-bucket.js';
+import { osvEcosystemGroup, osvImportBlock, resolveOsvEcosystem } from '../../jobs/osv-bucket.js';
 import { getJobRunner } from '../../jobs/runner.js';
 import { setEnabled } from '../../jobs/config.js';
 import type { JobDefinition } from '../../jobs/types.js';
@@ -32,7 +32,12 @@ export default async function jobsRoute(fastify: FastifyInstance) {
       select: { source: true },
     });
     const added = new Set(rows.map((r) => r.source.replace(/^osv-(full-)?/, '')));
-    return reply.send({ ecosystems: official.map((name) => ({ name, added: added.has(name) })) });
+    // Those not for import are left out; `group` puts the ones worth a first look at the top.
+    return reply.send({
+      ecosystems: official
+        .filter((name) => !osvImportBlock(name))
+        .map((name) => ({ name, added: added.has(name), group: osvEcosystemGroup(name) })),
+    });
   });
 
   // Add an OSV ecosystem: switch its daily job on and load it. Accepts the names the

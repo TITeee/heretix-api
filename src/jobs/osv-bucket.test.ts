@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { osvBucketName, maxBucketAgeMs, staleBucketProblem, usesModifiedList, resolveOsvEcosystem } from './osv-bucket.js';
+import { osvBucketName, maxBucketAgeMs, staleBucketProblem, usesModifiedList, resolveOsvEcosystem, osvImportBlock, osvEcosystemGroup } from './osv-bucket.js';
 
 describe('osvBucketName', () => {
   it('maps a versioned AlmaLinux/Rocky Linux ecosystem to the shared bare bucket name', () => {
@@ -133,5 +133,32 @@ describe('resolveOsvEcosystem', () => {
       expect(r.message).toContain('Maven');
       expect(r.message).toContain('ecosystems.txt');
     }
+  });
+});
+
+describe('ecosystems that are not imported', () => {
+  const official = ['GIT', 'Maven', 'Red Hat', 'Ubuntu'];
+
+  it('names a reason for Red Hat (any stream) and GIT, and none for the rest', () => {
+    expect(osvImportBlock('Red Hat')).toContain('OVAL');
+    expect(osvImportBlock('Red Hat:enterprise_linux:9::appstream')).toContain('OVAL');
+    expect(osvImportBlock('GIT')).toContain('no package');
+    expect(osvImportBlock('Maven')).toBeNull();
+    expect(osvImportBlock('Red Hat Lightwell')).toBeNull();
+  });
+
+  it('refuses them with the reason, even though OSV lists them', () => {
+    for (const name of ['Red Hat', 'Red Hat:enterprise_linux:9', 'GIT']) {
+      const r = resolveOsvEcosystem(name, official);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.message).toContain('is not imported');
+    }
+  });
+
+  it('puts the language ecosystems and the maintained distros first, the rest after', () => {
+    expect(osvEcosystemGroup('npm')).toBe('recommended');
+    expect(osvEcosystemGroup('Ubuntu:22.04:LTS')).toBe('recommended');
+    expect(osvEcosystemGroup('Chainguard')).toBe('other');
+    expect(osvEcosystemGroup('SUSE')).toBe('other');
   });
 });

@@ -39,7 +39,7 @@ import { importOSVEcosystemDelta } from '../worker/osv-fetcher.js';
 import { importDebianSourceMappings } from '../worker/debian-sources-fetcher.js';
 import { importDebianTrackerStatus } from '../worker/debian-tracker-fetcher.js';
 import { importUbuntuTrackerStatus } from '../worker/ubuntu-tracker-fetcher.js';
-import { osvBucketName } from './osv-bucket.js';
+import { osvBucketName, osvImportBlock } from './osv-bucket.js';
 import { fetchOsvEcosystems } from './osv-ecosystems.js';
 import { isNvdLoaded, isOsvLoaded, osvEcosystemWhere, runNvdFullLoad, runOsvFullLoad } from './first-load.js';
 
@@ -196,10 +196,10 @@ export async function resolveJob(source: string): Promise<JobDefinition | null> 
   if (source.startsWith('osv-')) {
     // "osv-Debian:13" is the job "osv-Debian" now: the releases of a distro share one bucket.
     const bucketEcosystem = osvBucketName(source.slice(4));
-    // Valid when OSV lists the ecosystem, even before any of its records are here (its first
-    // Run loads them), or when records are already here under that name.
+    // Valid when OSV lists the ecosystem (unless it is not for import), even before any of its
+    // records are here (its first Run loads them), or when records are already here under that name.
     const official = await fetchOsvEcosystems();
-    if (official?.includes(bucketEcosystem)) return osvEcosystemJob(bucketEcosystem);
+    if (official?.includes(bucketEcosystem) && !osvImportBlock(bucketEcosystem)) return osvEcosystemJob(bucketEcosystem);
     const exists = await prisma.oSVVulnerability.findFirst({ where: osvEcosystemWhere(bucketEcosystem), select: { id: true } });
     if (exists) return osvEcosystemJob(bucketEcosystem);
   }

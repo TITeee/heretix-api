@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
 import axios from 'axios';
-import { OSV_ECOSYSTEMS_URL, osvBucketName, resolveOsvEcosystem } from '../jobs/osv-bucket.js';
+import { OSV_ECOSYSTEMS_URL, osvBucketName, osvImportBlock, resolveOsvEcosystem } from '../jobs/osv-bucket.js';
 import {
   fetchOSVById,
   queryOSVByPackage,
@@ -83,6 +83,11 @@ async function checkedBucket(input: string): Promise<string> {
     official = String(res.data).split('\n').map((l) => l.trim()).filter((l) => l && l !== '[EMPTY]');
   } catch {
     logger.warn('Could not fetch the list of OSV ecosystems; using the name as given');
+    const blocked = osvImportBlock(input);
+    if (blocked) {
+      logger.error(`OSV ecosystem "${osvBucketName(input)}" is not imported: ${blocked}`);
+      process.exit(1);
+    }
     return osvBucketName(input);
   }
   const resolved = resolveOsvEcosystem(input, official);
