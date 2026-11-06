@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
-import { osvBucketName } from '../jobs/osv-bucket.js';
+import axios from 'axios';
+import { OSV_ECOSYSTEMS_URL, osvBucketName, resolveOsvEcosystem } from '../jobs/osv-bucket.js';
 import {
   fetchOSVById,
   queryOSVByPackage,
@@ -71,6 +72,28 @@ async function importByPackage(ecosystem: string, packageName?: string) {
 }
 
 /**
+ * The bucket to import for a typed ecosystem name, checked against OSV's list. A name that is
+ * not on the list exits with what to type instead; if the list cannot be fetched the name is
+ * used as given (OSV answers 404 for a wrong one).
+ */
+async function checkedBucket(input: string): Promise<string> {
+  let official: string[];
+  try {
+    const res = await axios.get<string>(OSV_ECOSYSTEMS_URL, { responseType: 'text', timeout: 30000 });
+    official = String(res.data).split('\n').map((l) => l.trim()).filter((l) => l && l !== '[EMPTY]');
+  } catch {
+    logger.warn('Could not fetch the list of OSV ecosystems; using the name as given');
+    return osvBucketName(input);
+  }
+  const resolved = resolveOsvEcosystem(input, official);
+  if (!resolved.ok) {
+    logger.error(resolved.message);
+    process.exit(1);
+  }
+  return resolved.bucket;
+}
+
+/**
  * Main entry point
  */
 async function main() {
@@ -108,7 +131,8 @@ async function main() {
           logger.error('Missing argument: ecosystem required');
           process.exit(1);
         }
-        const ecosystem = args[1];
+        // "Ubuntu:22.04:LTS" is the "Ubuntu" bucket: OSV stopped writing per-release files in 2024.
+        const ecosystem = await checkedBucket(args[1]);
         // Tracked under a distinct 'osv-full-<ecosystem>' source (not 'osv-<ecosystem>',
         // which is the daily delta job) so this doesn't clobber the delta job's dashboard
         // status. Recorded so completeness can be verified later — this command used to
@@ -176,7 +200,7 @@ async function main() {
           process.exit(1);
         }
         // "Debian:13" and "Debian" are the same job: the releases of a distro share one bucket.
-        const ecosystem = osvBucketName(args[1]);
+        const ecosystem = await checkedBucket(args[1]);
         const sourceKey = `osv-${ecosystem}`;
 
         // --since=YYYY-MM-DD starts from that day instead of the last completed run, to

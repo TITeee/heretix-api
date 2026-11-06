@@ -95,3 +95,24 @@ export function staleBucketProblem(ecosystem: string, newestModified: Date | nul
     'SHARED_BUCKET_ECOSYSTEMS in src/jobs/osv-bucket.ts'
   );
 }
+
+export const OSV_ECOSYSTEMS_URL = 'https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt';
+
+export type EcosystemResolution = { ok: true; bucket: string } | { ok: false; message: string };
+
+/**
+ * Turns the name a person typed into the OSV bucket to import, or says what to type instead.
+ * `official` is OSV's list of ecosystems (ecosystems.txt). Names are case-sensitive in OSV, so
+ * "pypi" is a 404 there; here it is answered with "PyPI". A release suffix is accepted for the
+ * distros that share one bucket ("Ubuntu:22.04:LTS" is the "Ubuntu" bucket).
+ */
+export function resolveOsvEcosystem(input: string, official: readonly string[]): EcosystemResolution {
+  const bucket = osvBucketName(input);
+  if (official.includes(bucket)) return { ok: true, bucket };
+  const lower = bucket.toLowerCase();
+  const sameLetters = official.find((o) => o.toLowerCase() === lower);
+  if (sameLetters) return { ok: false, message: `Unknown OSV ecosystem "${input}". Did you mean "${sameLetters}"? (names are case-sensitive)` };
+  const near = official.filter((o) => o.toLowerCase().includes(lower) || lower.includes(o.toLowerCase())).slice(0, 5);
+  const hint = near.length > 0 ? ` Similar: ${near.join(', ')}.` : '';
+  return { ok: false, message: `Unknown OSV ecosystem "${input}".${hint} All names: ${OSV_ECOSYSTEMS_URL}` };
+}

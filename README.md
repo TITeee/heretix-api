@@ -111,11 +111,9 @@ On first start, the container creates the database schema and then starts the AP
 # NVD: every CVE (~400k). Takes several hours, so run it in the background.
 docker compose exec -d app pnpm import:nvd full
 
-# OSV: only the ecosystems you actually scan
+# OSV: only the ecosystems you scan. Names: docs/data-sources.md#which-name-to-import
 docker compose exec app pnpm import:osv ecosystem npm
-docker compose exec app pnpm import:osv ecosystem PyPI
-docker compose exec app pnpm import:osv ecosystem Go
-docker compose exec app pnpm import:osv ecosystem "Ubuntu:22.04:LTS"
+docker compose exec app pnpm import:osv ecosystem Ubuntu
 ```
 
 Then open the [dashboard](#dashboard) at `http://localhost:5000/dashboard` and enter your admin key (`ADMIN_API_KEY`):

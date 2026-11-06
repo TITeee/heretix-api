@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { osvBucketName, maxBucketAgeMs, staleBucketProblem, usesModifiedList } from './osv-bucket.js';
+import { osvBucketName, maxBucketAgeMs, staleBucketProblem, usesModifiedList, resolveOsvEcosystem } from './osv-bucket.js';
 
 describe('osvBucketName', () => {
   it('maps a versioned AlmaLinux/Rocky Linux ecosystem to the shared bare bucket name', () => {
@@ -105,5 +105,33 @@ describe('Ubuntu and Packagist', () => {
   it('reads the delta of Ubuntu from its modified-ID list, and of the smaller buckets from the zip', () => {
     expect(usesModifiedList('Ubuntu')).toBe(true);
     for (const bucket of ['Debian', 'Alpine', 'AlmaLinux', 'npm']) expect(usesModifiedList(bucket)).toBe(false);
+  });
+});
+
+describe('resolveOsvEcosystem', () => {
+  const official = ['Debian', 'Go', 'Maven', 'PyPI', 'Ubuntu', 'crates.io', 'npm'];
+
+  it('accepts a listed name', () => {
+    expect(resolveOsvEcosystem('npm', official)).toEqual({ ok: true, bucket: 'npm' });
+  });
+
+  it('turns a distro release into its shared bucket', () => {
+    expect(resolveOsvEcosystem('Ubuntu:22.04:LTS', official)).toEqual({ ok: true, bucket: 'Ubuntu' });
+    expect(resolveOsvEcosystem('Debian:12', official)).toEqual({ ok: true, bucket: 'Debian' });
+  });
+
+  it('answers a wrong case with the right name', () => {
+    const r = resolveOsvEcosystem('pypi', official);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain('Did you mean "PyPI"');
+  });
+
+  it('lists similar names and the full list for an unknown one', () => {
+    const r = resolveOsvEcosystem('mave', official);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.message).toContain('Maven');
+      expect(r.message).toContain('ecosystems.txt');
+    }
   });
 });

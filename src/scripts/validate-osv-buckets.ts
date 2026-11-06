@@ -18,6 +18,7 @@
  *   pnpm validate:osv-buckets
  */
 import 'dotenv/config';
+import { readFileSync } from 'node:fs';
 import axios from 'axios';
 import { prisma } from '../db/client.js';
 import { osvBucketName, staleBucketProblem } from '../jobs/osv-bucket.js';
@@ -91,6 +92,18 @@ async function main() {
       (r.problems.length === 0 ? 'ok' : 'PROBLEM'),
     );
     for (const p of r.problems) console.log(`    - ${p}`);
+  }
+
+  // The list in docs/data-sources.md is typed by hand; say when OSV has a name it lacks.
+  // (The docs are not in every image, so a missing file only skips this check.)
+  try {
+    const docs = readFileSync(new URL('../../docs/data-sources.md', import.meta.url), 'utf8');
+    const undocumented = [...official].filter((e) => e !== '[EMPTY]' && !docs.includes(`\`${e}\``));
+    if (undocumented.length > 0) {
+      console.log(`\nNot in docs/data-sources.md (add to "All OSV ecosystems"): ${undocumented.join(', ')}`);
+    }
+  } catch {
+    console.log('\ndocs/data-sources.md not found; skipped the check of its ecosystem list.');
   }
 
   const broken = results.filter((r) => r.problems.length > 0);
