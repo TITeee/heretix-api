@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import AdmZip from 'adm-zip';
-import { extractCnaRows, parseCnaTexts, parseCveRecord, parseSsvc, cveIdOf, isUsableVersion, recordsFromZip, findDeltaBundles, findFullBundle } from './cna-fetcher.js';
+import { extractCnaRows, parseCnaTexts, parseCveRecord, parseSsvc, cveIdOf, isUsableVersion, recordsFromZip, recordsFromBundle, findDeltaBundles, findFullBundle } from './cna-fetcher.js';
 import { normalizeVersion } from '../utils/version.js';
 
 // Every fixture below is a shape taken from real cvelistV5 data.
@@ -690,5 +693,70 @@ describe('release asset selection', () => {
       release('2026-09-11T01:00:00Z', ['release_notes.md']),
     ], new Date('2026-09-10T00:00:00Z'));
     expect(assets).toEqual([]);
+  });
+});
+
+// The full snapshot is read from a file, one entry at a time (AdmZip needed 3.9 GB for it).
+describe('recordsFromBundle', () => {
+  let dir: string;
+  beforeEach(async () => { dir = await mkdtemp(path.join(os.tmpdir(), 'cna-bundle-test-')); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  const record = (cveId: string) => ({ cveMetadata: { cveId } });
+  async function bundle(entries: Record<string, unknown>, name = 'bundle.zip'): Promise<string> {
+    const zip = new AdmZip();
+    for (const [n, body] of Object.entries(entries)) zip.addFile(n, Buffer.from(typeof body === 'string' ? body : JSON.stringify(body), 'utf8'));
+    const file = path.join(dir, name);
+    await writeFile(file, zip.toBuffer());
+    return file;
+  }
+  async function ids(file: string, years: Set<string> | null = null): Promise<string[]> {
+    const out: string[] = [];
+    for await (const r of recordsFromBundle(file, years, dir)) out.push(String(r.cveMetadata?.cveId));
+    return out.sort(); // the order of entries in an archive is not what is tested
+  }
+
+  it('reads the flat delta layout and the full-bundle layout alike', async () => {
+    const file = await bundle({
+      'deltaCves/CVE-2026-1111.json': record('CVE-2026-1111'),
+      'cves/2026/2xxx/CVE-2026-2222.json': record('CVE-2026-2222'),
+    });
+    expect(await ids(file)).toEqual(['CVE-2026-1111', 'CVE-2026-2222']);
+  });
+
+  it('unwraps the nested cves.zip of the full snapshot, and leaves no file behind', async () => {
+    const innerFile = await bundle({ 'cves/2026/1xxx/CVE-2026-1111.json': record('CVE-2026-1111') }, 'inner-source.zip');
+    const outer = new AdmZip();
+    outer.addFile('cves.zip', await readFile(innerFile));
+    const outerFile = path.join(dir, 'outer.zip');
+    await writeFile(outerFile, outer.toBuffer());
+
+    expect(await ids(outerFile)).toEqual(['CVE-2026-1111']);
+    expect((await readdir(dir)).filter((f) => f.startsWith('nested-'))).toEqual([]);
+  });
+
+  it('takes the year from the CVE id, not from the path, and skips what is not a record', async () => {
+    const file = await bundle({
+      'cves/2025/0xxx/CVE-2025-0001.json': record('CVE-2025-0001'),
+      'cves/2024/0xxx/CVE-2024-0001.json': record('CVE-2024-0001'),
+      'cves/delta.json': { not: 'a record' },
+      'cves/2025/0xxx/': '',
+    });
+    expect(await ids(file, new Set(['2025', '2026']))).toEqual(['CVE-2025-0001']);
+  });
+
+  it('skips a record that is not valid JSON instead of stopping', async () => {
+    const file = await bundle({
+      'cves/2026/0xxx/CVE-2026-0001.json': '{ broken',
+      'cves/2026/0xxx/CVE-2026-0002.json': record('CVE-2026-0002'),
+    });
+    expect(await ids(file)).toEqual(['CVE-2026-0002']);
+  });
+
+  it('gives the same records as recordsFromZip', async () => {
+    const entries = { 'cves/2026/0xxx/CVE-2026-0001.json': record('CVE-2026-0001'), 'cves/2025/0xxx/CVE-2025-0009.json': record('CVE-2025-0009') };
+    const zip = new AdmZip();
+    for (const [n, b] of Object.entries(entries)) zip.addFile(n, Buffer.from(JSON.stringify(b)));
+    expect(await ids(await bundle(entries))).toEqual([...recordsFromZip(zip, null)].map((r) => String(r.cveMetadata?.cveId)).sort());
   });
 });

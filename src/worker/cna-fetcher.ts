@@ -1,5 +1,11 @@
+import { createWriteStream } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import path from 'node:path';
+import type { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import axios from 'axios';
 import AdmZip from 'adm-zip';
+import yauzl from 'yauzl';
 import { logger } from '../utils/logger.js';
 import { normalizeVersion } from '../utils/version.js';
 
@@ -631,6 +637,101 @@ export function* recordsFromZip(zip: AdmZip, years: Set<string> | null): Generat
 }
 
 /** The full-snapshot asset from the most recent release that carries one. */
+/** A download straight to a file, so the 650 MB full bundle is never held in memory. */
+export async function downloadToFile(url: string, file: string, timeoutMs: number): Promise<void> {
+  const res = await axios.get<Readable>(url, {
+    timeout: timeoutMs,
+    responseType: 'stream',
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+    headers: { 'User-Agent': 'heretix-api/1.0' },
+  });
+  await pipeline(res.data, createWriteStream(file));
+}
+
+function openZip(file: string): Promise<yauzl.ZipFile> {
+  return new Promise((resolve, reject) => {
+    // lazyEntries: the entries are read one at a time, on request. AdmZip builds all of them at once,
+    // about 9 KB each on the heap, so the 420,000 records of the full bundle took 3.9 GB. autoClose off:
+    // the file stays open while entries are read between two `readEntry` calls.
+    yauzl.open(file, { lazyEntries: true, autoClose: false }, (err, zip) => (err || !zip ? reject(err ?? new Error('Could not open zip')) : resolve(zip)));
+  });
+}
+
+function entryStream(zip: yauzl.ZipFile, entry: yauzl.Entry): Promise<Readable> {
+  return new Promise((resolve, reject) => {
+    zip.openReadStream(entry, (err, stream) => (err || !stream ? reject(err ?? new Error(`Could not read ${entry.fileName}`)) : resolve(stream)));
+  });
+}
+
+async function readEntry(zip: yauzl.ZipFile, entry: yauzl.Entry): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of await entryStream(zip, entry)) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks);
+}
+
+/** The entries of a zip, one at a time: the next is read only when this one has been taken. */
+async function* zipEntries(zip: yauzl.ZipFile): AsyncGenerator<yauzl.Entry> {
+  try {
+    for (;;) {
+      const entry = await new Promise<yauzl.Entry | null>((resolve, reject) => {
+        const onEntry = (e: yauzl.Entry) => { cleanup(); resolve(e); };
+        const onEnd = () => { cleanup(); resolve(null); };
+        const onError = (e: Error) => { cleanup(); reject(e); };
+        const cleanup = () => {
+          zip.off('entry', onEntry);
+          zip.off('end', onEnd);
+          zip.off('error', onError);
+        };
+        zip.once('entry', onEntry);
+        zip.once('end', onEnd);
+        zip.once('error', onError);
+        zip.readEntry();
+      });
+      if (!entry) return;
+      yield entry;
+    }
+  } finally {
+    zip.close();
+  }
+}
+
+/**
+ * `recordsFromZip` for a bundle too big to hold as AdmZip entries: the full snapshot, 420,000
+ * records. Same layouts and rules (a nested archive is unwrapped, the year comes from the CVE ID in
+ * the file name, anything that is not a CVE record is skipped). The archive is read from a file, one
+ * entry at a time, and one record at a time is parsed; a nested archive is first written to `tmpDir`
+ * (the caller removes it). Memory stays at a few tens of MB, where AdmZip needed 3.9 GB.
+ */
+export async function* recordsFromBundle(file: string, years: Set<string> | null, tmpDir: string): AsyncGenerator<CveRecord> {
+  const zip = await openZip(file);
+  let nested = 0;
+  for await (const entry of zipEntries(zip)) {
+    if (entry.fileName.endsWith('/')) continue;
+
+    if (entry.fileName.endsWith('.zip')) {
+      const inner = path.join(tmpDir, `nested-${nested++}.zip`);
+      await pipeline(await entryStream(zip, entry), createWriteStream(inner));
+      try {
+        yield* recordsFromBundle(inner, years, tmpDir);
+      } finally {
+        await rm(inner, { force: true });
+      }
+      continue;
+    }
+
+    const match = entry.fileName.match(/(?:^|\/)CVE-(\d{4})-\d+\.json$/);
+    if (!match) continue;
+    if (years && !years.has(match[1])) continue;
+    try {
+      yield JSON.parse((await readEntry(zip, entry)).toString('utf8')) as CveRecord;
+    } catch {
+      // A single malformed record must not abort the whole bundle.
+      logger.warn({ entry: entry.fileName }, 'Skipping unparseable CVE record');
+    }
+  }
+}
+
 export function findFullBundle(releases: GitHubRelease[]): GitHubRelease['assets'][number] | undefined {
   return releases.flatMap(r => r.assets).find(a => /_all_CVEs_at_midnight\.zip(\.zip)?$/.test(a.name));
 }
