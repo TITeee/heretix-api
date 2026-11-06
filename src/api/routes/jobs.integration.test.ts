@@ -46,6 +46,11 @@ describe('jobs', () => {
       expect((await run('nvd')).json()).toMatchObject({ mode: 'delta' });
     });
 
+    it('loads CVE Records and Microsoft in full too, until they are loaded', async () => {
+      expect((await run('cna')).json()).toMatchObject({ source: 'cna', mode: 'full' });
+      expect((await run('advisory-microsoft')).json()).toMatchObject({ source: 'advisory-microsoft', mode: 'full' });
+    });
+
     it('treats a source that has no first load as a delta', async () => {
       expect((await run('kev')).json()).toMatchObject({ mode: 'delta' });
     });

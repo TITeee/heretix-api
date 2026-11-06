@@ -3,7 +3,7 @@ import axios from 'axios';
 import { prisma } from '../db/client.js';
 import { resetDb } from '../test-utils/db.js';
 import { importNVDData } from '../worker/nvd-fetcher.js';
-import { isNvdLoaded, isOsvLoaded, runNvdFullLoad } from './first-load.js';
+import { isCnaLoaded, isMsrcLoaded, isNvdLoaded, isOsvLoaded, runNvdFullLoad } from './first-load.js';
 
 async function seedNvdRecord() {
   await importNVDData({
@@ -53,6 +53,28 @@ describe('first load checks', () => {
     await done('osv-full-Debian');
     expect(await isOsvLoaded('Debian')).toBe(true);
     expect(await isOsvLoaded('npm')).toBe(false);
+  });
+});
+
+describe('first load checks: CVE Records and Microsoft', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('CVE Records: loaded only when a run completed and records are there', async () => {
+    expect(await isCnaLoaded()).toBe(false);
+    await prisma.cnaVulnerability.create({ data: { cveId: 'CVE-2026-0001', cnaShortName: 'x', rawAffected: [] } });
+    expect(await isCnaLoaded()).toBe(false);
+    await done('cna');
+    expect(await isCnaLoaded()).toBe(true);
+  });
+
+  it('Microsoft: loaded only when a run completed and its advisories are there', async () => {
+    expect(await isMsrcLoaded()).toBe(false);
+    await done('advisory-microsoft');
+    expect(await isMsrcLoaded()).toBe(false);
+    await prisma.advisoryVulnerability.create({ data: { source: 'advisory-microsoft', externalId: 'CVE-2026-0002', rawData: {} } });
+    expect(await isMsrcLoaded()).toBe(true);
   });
 });
 

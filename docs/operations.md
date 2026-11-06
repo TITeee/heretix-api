@@ -27,7 +27,7 @@ Requires Node.js 22, pnpm and PostgreSQL 15 or later.
 3. Copy `.env.example` to `.env` and fill it in (see [below](#environment-variables)).
 4. Apply migrations: `pnpm db:migrate`, then `pnpm build && pnpm migrate:all`.
 5. Start the server: `pnpm dev` (auto-reload) or `pnpm build && pnpm start`.
-6. Load data as in [the README's step 3](../README.md#3-load-data), using `pnpm import:nvd full`, `pnpm import:osv ecosystem <name>` and so on, in place of the `docker compose exec` commands.
+6. Load data as in [the README's step 3](../README.md#3-load-data). The dashboard works the same when run from source; the commands (`pnpm import:nvd full`, `pnpm import:osv ecosystem <name>` and so on) do the same without it, in place of the `docker compose exec` commands.
 
 `pnpm import:*` and `pnpm migrate:*` run the compiled `dist/` output. Rebuild after changing code, or run the TypeScript directly with `pnpm exec tsx src/scripts/<script>.ts ...`.
 
@@ -47,7 +47,7 @@ RATE_LIMIT_BATCH_MAX=30     # Optional. Batch searches per client address per mi
 BATCH_SEARCH_MAX_CONCURRENT=2  # Optional. Batch searches running at once; more get 429 (0 = no cap)
 BATCH_SEARCH_TIMEOUT_MS=300000  # Optional. A batch search still running after this is answered 503 and its slot freed (0 = no limit)
 JOB_MAX_CONCURRENT=2        # Optional. Collection jobs running at once; the rest wait as "queued"
-JOB_MAX_HEAVY=1             # Optional. Of those, memory-heavy jobs (EPSS, CNA, Red Hat OVAL and VEX) running at once
+JOB_MAX_HEAVY=1             # Optional. Of those, memory-heavy jobs (EPSS, CNA, Red Hat OVAL and VEX, the full load of an OSV ecosystem) running at once
 JOB_MAX_OLD_SPACE_MB=3072   # Optional. Heap limit of each job process
 JOB_DATABASE_POOL_MAX=5     # Optional. Postgres connection pool of each job process
 NVD_API_KEY=                # Optional. NVD rate limit 10 → 50 requests/min
@@ -81,13 +81,13 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 | `advisory-broadcom` / `-redhat-rhel9` / `-redhat-rhel8` / `-splunk` | Daily 13:00 / 13:15 / 13:30 / 13:45 | | Run is enough |
 | `advisory-apache` / `-zabbix` / `-tomcat` / `-nginx` | Daily 14:00 / 14:15 / 14:30 / 14:45 | | Run is enough |
 | `advisory-redhat-vex` | Daily 15:00 | | Run is enough |
-| `cna` (CVE Records and CISA SSVC) | Daily 15:30 | | `pnpm import:cna`. The first run downloads a bundle of about 600MB; Run alone reads only the last 25 hours |
+| `cna` (CVE Records and CISA SSVC) | Daily 15:30 | | **Load** on the dashboard: the first run downloads a bundle of about 600MB; after that a Run reads only the last 25 hours |
 | `advisory-checkpoint` / `-ivanti` / `-citrix` | Daily 16:00 / 16:30 / 16:45 | | Run is enough. `advisory-ivanti` renders about 90 pages in a headless browser and takes 10 to 15 minutes; `advisory-citrix` reads about 20 pages over plain HTTP in under a minute |
-| `advisory-microsoft` | Daily 18:30 | | `pnpm import:msrc` once: it reads all the MSRC documents since March 2021 (about 68) in about 3 minutes. Run alone reads only the documents revised in the last 7 days and the latest month |
+| `advisory-microsoft` | Daily 18:30 | | **Load** on the dashboard: it reads all the MSRC documents since March 2021 (about 68) in about 3 minutes; after that a Run reads only the documents revised in the last 7 days and the latest month |
 
-**First load.** A Run on a source that reads only changes (NVD, OSV) that was never loaded does the full import itself; the button then says **Load**. The schedule skips such a source until it is loaded, because a load can take hours and is a person's call. After that a Run is the schedule's delta. A full load of an OSV ecosystem counts as a heavy job (see `JOB_MAX_HEAVY`). The sources marked with a command (CVE Records, Microsoft) still need it: a Run reads only recent changes. Switching a job on is separate from running it: a new job is Off until switched on, and Run works either way. To load a source again from scratch, use the command (`docker compose exec app pnpm import:...`, after `pnpm build` when running from source).
+**First load.** A Run on a source that reads only changes (NVD, OSV, CVE Records, Microsoft) that was never loaded does the full import itself; the button then says **Load**. The schedule skips such a source until it is loaded, because a load can take hours (NVD) or download a large file (CVE Records, about 600 MB) and is a person's call. After that a Run is the schedule's delta. A full load of an OSV ecosystem or of CVE Records counts as a heavy job (see `JOB_MAX_HEAVY`). Switching a job on is separate from running it: a new job is Off until switched on, and Run works either way. To load a source again from scratch, use the command (`docker compose exec app pnpm import:...`, after `pnpm build` when running from source).
 
-Switch jobs on and off with the dashboard's On/Off toggle or `PATCH /api/v1/jobs/:source` (see [api.md](api.md#jobs)). On a fresh install only NVD, KEV and EPSS are enabled. The other jobs are high-volume scrapers, so switch on just the ones you need. Each OSV ecosystem job appears once that ecosystem has been imported.
+Switch jobs on and off with the dashboard's On/Off toggle or `PATCH /api/v1/jobs/:source` (see [api.md](api.md#jobs)). On a fresh install only NVD, KEV and EPSS are enabled. The other jobs are high-volume scrapers, so switch on just the ones you need. An OSV ecosystem job appears once you add the ecosystem on the dashboard (*Add and load*) or import it with the command.
 
 An existing install may have more jobs enabled; check the dashboard and switch off the ones you do not need.
 
@@ -99,7 +99,7 @@ Each job run is recorded in `CollectionJob`: status, counts, error message, peak
 
 Every job runs in a process of its own, started by the API process ([src/jobs/runner.ts](../src/jobs/runner.ts)). A job that blocks for seconds, fails in an unexpected way or runs out of memory therefore stops only its own process: searches keep answering, and the job's row says what happened (`Job process crashed, most likely out of memory (heap limit 3072 MB ...)`). Before, jobs ran inside the API process, and a search could wait up to 14 seconds during the EPSS import.
 
-At most `JOB_MAX_CONCURRENT` jobs run at once (2), and of those at most `JOB_MAX_HEAVY` (1) of the jobs that hold a large dataset in memory (EPSS, CNA, and the Red Hat OVAL and VEX imports). A job waiting for a slot shows as **queued** on the dashboard; a Run while it is queued or running is refused. With the defaults, jobs use at most about one 3GB heap plus a light job beside it; raise the limits only with the memory to match, since two heavy jobs together approach 6GB.
+At most `JOB_MAX_CONCURRENT` jobs run at once (2), and of those at most `JOB_MAX_HEAVY` (1) of the jobs that hold a large dataset in memory (EPSS, CNA, the Red Hat OVAL and VEX imports, and the full load of an OSV ecosystem). A job waiting for a slot shows as **queued** on the dashboard; a Run while it is queued or running is refused. With the defaults, jobs use at most about one 3GB heap plus a light job beside it; raise the limits only with the memory to match, since two heavy jobs together approach 6GB.
 
 Each job process opens its own connections to PostgreSQL (`JOB_DATABASE_POOL_MAX`, 5), so the most in use is the API's `DATABASE_POOL_MAX` plus `JOB_MAX_CONCURRENT` times that.
 

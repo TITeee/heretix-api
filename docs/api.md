@@ -326,7 +326,7 @@ GET /api/v1/vulnerabilities/stats
 
 ## Import status
 
-Takes the admin key (`ADMIN_API_KEY`). The JSON behind the dashboard: the latest job per source, record counts, and per-OSV-ecosystem status. `osvEcosystems[].maintained` is `false` for distro releases outside the [support policy](../README.md#supported-os-releases). Per-ecosystem record counts are cached for 5 minutes.
+Takes the admin key (`ADMIN_API_KEY`). The JSON behind the dashboard: the latest job per source, record counts, and per-OSV-ecosystem status. `osvEcosystems[].maintained` is `false` for distro releases outside the [support policy](../README.md#supported-os-releases). `needsFirstLoad` (on every source row and OSV ecosystem) is `true` while a Run would be the source's full load; an OSV ecosystem being loaded for the first time is listed already, with 0 records. Per-ecosystem record counts are cached for 5 minutes.
 
 ```
 GET /api/v1/import-status
@@ -339,11 +339,11 @@ Takes the admin key (`ADMIN_API_KEY`). `:source` is the job's source key (`nvd`,
 ```
 POST  /api/v1/jobs/:source/run    # Run now (fire-and-forget), regardless of the enabled state
 PATCH /api/v1/jobs/:source        # Enable/disable the scheduled run. Body: { "enabled": boolean }
-GET   /api/v1/jobs/osv-ecosystems # OSV's ecosystem names: [{ "name": "npm", "added": false }, ...]
+GET   /api/v1/jobs/osv-ecosystems # OSV's ecosystem names: [{ "name": "npm", "added": false, "group": "recommended" }, ...]
 POST  /api/v1/jobs/osv-ecosystems # Add one: switch its daily job on and run it. Body: { "name": "PyPI" }
 ```
 
-A Run on a source that was never loaded (NVD, OSV) is its full load; the response says which in `mode` (`"full"` or `"delta"`). Adding an ecosystem takes the names the import command does: `Ubuntu:22.04:LTS` is `Ubuntu`, and `pypi` is answered with `400` and `Did you mean "PyPI"?`.
+A Run on a source that was never loaded (NVD, OSV, CVE Records, Microsoft) is its full load; the response says which in `mode` (`"full"` or `"delta"`). Adding an ecosystem takes the names the import command does: `Ubuntu:22.04:LTS` is `Ubuntu`, and `pypi` is answered with `400` and `Did you mean "PyPI"?`. `group` is `recommended` (the language ecosystems and the maintained distros) or `other`. `Red Hat` and `GIT` are not listed, and adding them is `400` with the reason; a Run on `osv-Red Hat` is `404` (see [OSV](data-sources.md#osv)).
 
 | Case | Response |
 |---|---|

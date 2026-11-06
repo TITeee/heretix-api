@@ -110,7 +110,7 @@ On first start, the container creates the database schema and then starts the AP
 - **NVD** (every CVE, ~400k): press **Load** on the NVD row. It takes several hours; the row shows `running`, then `completed`. If it fails part way, **Load** again carries on from where it stopped.
 - **CISA KEV and EPSS**: after NVD completes, press **Run**. They only annotate CVEs that are already there, and their daily runs keep them current.
 - **OSV**: under *OSV Ecosystems*, choose each ecosystem you scan (`npm`, `PyPI`, `Ubuntu`, ... [which name?](docs/data-sources.md#which-name-to-import)) and press **Add and load**. That switches its daily job on and loads it in full.
-- **Other sources** (vendor advisories, the Debian security tracker `debian-tracker`): switch the job **On** and press **Run** once. CVE Records (`cna`) first needs `pnpm import:cna` ([why](docs/operations.md#scheduler)).
+- **Other sources** (vendor advisories, the Debian security tracker `debian-tracker`): switch the job **On** and press **Run** once. CVE Records (`cna`, a ~600 MB download) and Microsoft (`advisory-microsoft`) say **Load** the first time, like NVD.
 
 The commands (`docker compose exec app pnpm import:nvd full`, `pnpm import:osv ecosystem <name>`) still work, for scripts and for loading again from scratch.
 

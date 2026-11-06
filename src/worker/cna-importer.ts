@@ -144,6 +144,13 @@ function cveYear(cveId: string): string | undefined {
   return cveId.match(/^CVE-(\d{4})-/)?.[1];
 }
 
+// Recent CVEs are where the NVD CPE gap is worst (roughly half of the last
+// year's CVEs have no CPE row at all, against a fifth across all time), and
+// older records mostly predate the structured `versions` conventions this
+// import relies on. Widen this once the measured value justifies it. Only
+// restricts CNA-affected-products storage -- SSVC backfill is unaffected.
+export const CNA_BOOTSTRAP_YEARS = ['2025', '2026'];
+
 export interface CnaImportResult {
   scanned: number;
   usable: number;
