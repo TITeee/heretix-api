@@ -162,4 +162,4 @@ th.num { font-family: inherit; }
 .add-form .field-label { margin: 0; }
 .add-form select { width: auto; min-width: 14rem; }
 /* The opened list is drawn by the browser: give it the card's colours too. */
-.add-form option { background: var(--card); color: var(--card-foreground); }
+.add-form option, .add-form optgroup { background: var(--card); color: var(--card-foreground); }

@@ -98,6 +98,35 @@ export function staleBucketProblem(ecosystem: string, newestModified: Date | nul
 
 export const OSV_ECOSYSTEMS_URL = 'https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt';
 
+/**
+ * OSV ecosystems that are not imported, and why. Each is on OSV's list, so it can be chosen
+ * and would run; it would only do harm or nothing.
+ */
+export const OSV_NOT_FOR_IMPORT: Readonly<Record<string, string>> = {
+  'Red Hat':
+    "RHEL is imported from Red Hat's own OVAL and VEX (the advisory-redhat jobs). Its OSV records would duplicate them " +
+    'and disagree with them, and the file holds tens of thousands of records for every stream and product',
+  GIT: 'its records name no package, only git commit ranges, so no version can match them and nothing would be stored',
+};
+
+/** Why an ecosystem is not imported, or null when it can be. Takes a release too ("Red Hat:enterprise_linux:9"). */
+export function osvImportBlock(ecosystem: string): string | null {
+  return OSV_NOT_FOR_IMPORT[osvBucketName(ecosystem)] ?? null;
+}
+
+/**
+ * Ecosystems worth a person's first look: the language ecosystems heretix is checked against, and
+ * the distros in the support policy. The rest of OSV's list works on a best-effort basis.
+ */
+const RECOMMENDED_OSV_ECOSYSTEMS = new Set([
+  'npm', 'PyPI', 'Go', 'Maven', 'NuGet', 'RubyGems', 'crates.io', 'Packagist',
+  'Debian', 'Ubuntu', 'Alpine', 'AlmaLinux', 'Rocky Linux',
+]);
+
+export function osvEcosystemGroup(ecosystem: string): 'recommended' | 'other' {
+  return RECOMMENDED_OSV_ECOSYSTEMS.has(osvBucketName(ecosystem)) ? 'recommended' : 'other';
+}
+
 export type EcosystemResolution = { ok: true; bucket: string } | { ok: false; message: string };
 
 /**
@@ -108,6 +137,8 @@ export type EcosystemResolution = { ok: true; bucket: string } | { ok: false; me
  */
 export function resolveOsvEcosystem(input: string, official: readonly string[]): EcosystemResolution {
   const bucket = osvBucketName(input);
+  const blocked = osvImportBlock(bucket);
+  if (blocked) return { ok: false, message: `OSV ecosystem "${bucket}" is not imported: ${blocked}` };
   if (official.includes(bucket)) return { ok: true, bucket };
   const lower = bucket.toLowerCase();
   const sameLetters = official.find((o) => o.toLowerCase() === lower);

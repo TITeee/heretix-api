@@ -309,9 +309,12 @@ async function loadEcosystemChoices() {
     const res = await fetch('/api/v1/jobs/osv-ecosystems', { headers: { 'x-api-key': key } });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    addSelect.innerHTML = '<option value="">Choose an ecosystem…</option>' + data.ecosystems
-      .filter(e => !e.added)
+    const options = (group) => data.ecosystems
+      .filter(e => !e.added && e.group === group)
       .map(e => '<option value="' + esc(e.name) + '">' + esc(e.name) + '</option>').join('');
+    addSelect.innerHTML = '<option value="">Choose an ecosystem…</option>' +
+      '<optgroup label="Recommended">' + options('recommended') + '</optgroup>' +
+      '<optgroup label="Others (best effort)">' + options('other') + '</optgroup>';
     addSelect.disabled = false;
     addButton.disabled = false;
     addListLoaded = true;
