@@ -18,8 +18,8 @@ Import only what you scan. Each source adds import time, disk space and requests
 | You scan | Import |
 |---|---|
 | Anything | NVD, CISA KEV and EPSS. They are the baseline, and the only jobs enabled by default |
-| Application dependencies | The OSV ecosystem of each language you use (`npm`, `PyPI`, `Go`, `Maven`, ...); malicious packages (`MAL-*`) arrive with them |
-| Debian, Ubuntu, Alpine, AlmaLinux or Rocky Linux hosts and images | The OSV ecosystem of each release you run (e.g. `Ubuntu:22.04:LTS`). For Debian, also `debian-tracker` for fix status |
+| Application dependencies | The OSV ecosystem of each language you use ([names](#which-name-to-import)); malicious packages (`MAL-*`) arrive with them |
+| Debian, Ubuntu, Alpine, AlmaLinux or Rocky Linux hosts and images | The OSV ecosystem of each distro you run (`Debian`, `Ubuntu`, `Alpine`, ...; all releases at once). For Debian, also `debian-tracker` for fix status |
 | RHEL hosts and images | Red Hat OVAL for each major you run (`advisory-redhat-rhel9`, `-rhel8`) and Red Hat VEX (`advisory-redhat-vex`; the only source for RHEL 10) |
 | Oracle Linux | `advisory-oracle-linux` |
 | Network appliances and commercial products | The vendor advisory jobs of the products you run (Fortinet, Palo Alto Networks, Cisco, ...) |
@@ -89,6 +89,35 @@ After changing the catalog, run `pnpm build && pnpm validate:catalog`. It checks
 
 Fetcher: [src/worker/osv-fetcher.ts](../src/worker/osv-fetcher.ts). Source: the OSV API and its per-ecosystem bulk exports.
 
+### Which name to import
+
+Pick by what you scan. Names are case-sensitive (`PyPI`, not `pypi`); a wrong name is answered with the right one.
+
+| You scan | Name |
+|---|---|
+| Node.js | `npm` |
+| Python | `PyPI` |
+| Java, Kotlin | `Maven` |
+| Go | `Go` |
+| .NET | `NuGet` |
+| Ruby | `RubyGems` |
+| Rust | `crates.io` |
+| PHP | `Packagist` |
+| GitHub Actions | `GitHub Actions` |
+| Debian | `Debian` (all releases) |
+| Ubuntu | `Ubuntu` (all releases) |
+| Alpine | `Alpine` (all releases) |
+| AlmaLinux, Rocky Linux | `AlmaLinux`, `Rocky Linux` |
+
+A release suffix is accepted and ignored: `Ubuntu:22.04:LTS` imports `Ubuntu`. RHEL is not imported from OSV (see [Red Hat](#red-hat)). Malicious packages (`MAL-*`) arrive with `npm`, `PyPI`, `RubyGems`, `NuGet`, `crates.io`, `Go`, `Maven` and `Packagist`.
+
+All OSV ecosystems, as of 2026-11-06 ([live list](https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt)):
+`AlmaLinux`, `Alpaquita`, `Alpine`, `Android`, `Azure Linux`, `BellSoft Hardened Containers`, `Bitnami`, `CRAN`, `Chainguard`, `CleanStart`, `Debian`, `Echo`, `GHC`, `GIT`, `GSD`, `GitHub Actions`, `Go`, `Hackage`, `Hex`, `Julia`, `Linux`, `Mageia`, `Maven`, `MinimOS`, `NuGet`, `OSS-Fuzz`, `Packagist`, `Pub`, `PyPI`, `Red Hat`, `Red Hat Lightwell`, `Rocky Linux`, `Root`, `RubyGems`, `SUSE`, `SwiftURL`, `TuxCare`, `UVI`, `Ubuntu`, `VSCode`, `Wolfi`, `crates.io`, `npm`, `opam`, `openEuler`, `openSUSE`.
+
+`pnpm validate:osv-buckets` warns when OSV lists a name that is missing here.
+
+### Commands
+
 ```bash
 pnpm import:osv ecosystem npm            # Full import of one ecosystem
 pnpm import:osv update npm               # Changes since the last run
@@ -96,24 +125,15 @@ pnpm import:osv package npm lodash       # One package
 pnpm import:osv id GHSA-67hx-6x53-jw92   # One record (OSV or CVE ID)
 ```
 
-- Ecosystem names are case-sensitive: `npm`, `PyPI`, `Go`, `RubyGems`, `crates.io`, `Packagist`, `Maven`, `NuGet`, `Hex`, `Pub`, `ConanCenter`, `SwiftURL`, `CRAN`, `Linux`, `Android`, `OSS-Fuzz`, `Bitnami`, and distributions (`Debian`, `Ubuntu`, `Alpine`, `AlmaLinux`, `Rocky Linux`, with or without a release suffix).
-- Each ecosystem has its own daily job (`osv-<ecosystem>`, 08:00 UTC) that imports records modified since its last completed run. The releases of AlmaLinux, Rocky Linux, Debian, Alpine and Ubuntu (Pro and FIPS variants included) share one job and one OSV file (`osv-Debian` covers `Debian:12`, `Debian:13`, ...), because OSV serves them that way, and so do `Packagist:https://packages.drupal.org/8` and `Packagist`, and the feeds of vendors that hold several ecosystems (`osv-Echo` covers `Echo:PyPI`, `Echo:Maven`, ...; likewise Root, SUSE, openSUSE, openEuler, TuxCare, Mageia, Alpaquita, BellSoft Hardened Containers, Azure Linux, Red Hat and VSCode). Ubuntu's file is 792 MB, so its job reads the bucket's `modified_id.csv` and fetches only the records modified since the last run, instead of downloading the zip. Malicious-package records (`MAL-*`) are not a job of their own: OSV's `npm`, `PyPI`, `RubyGems`, `NuGet`, `crates.io`, `Go`, `Maven` and `Packagist` files carry them, so enabling those ecosystems is what brings malware detection in.
-- **Adding an ecosystem**: run the full `pnpm import:osv ecosystem <name>` once *before* enabling its daily job. The daily job only picks up records modified after its cursor, so it never backfills older ones. The full import is recorded as an `osv-full-<ecosystem>` job. Check completeness against OSV's live export at any time:
-  ```bash
-  pnpm validate:osv-coverage            # every tracked ecosystem
-  pnpm validate:osv-coverage Go PyPI    # selected ecosystems
-  ```
-- **A job fails, rather than reporting an empty success, when its OSV file is missing (404) or no longer written to** (the newest record is over 14 days old for a distro, 90 for anything else). This happened: OSV stopped updating the per-release Debian, Alpine and Ubuntu files in October 2024 and moved them into one file per distro, but the old files kept answering, so the jobs fetched the same records for months and imported nothing. If such a failure appears, compare the name with [OSV's list of ecosystems](https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt) and `SHARED_BUCKET_ECOSYSTEMS` in [osv-bucket.ts](../src/jobs/osv-bucket.ts). To check every file the jobs would fetch ahead of time:
-  ```bash
-  pnpm validate:osv-buckets   # exits 1 when a file is missing, frozen, or a distro OSV lists under its bare name
-  ```
-- **Backfilling after a job has read a stale or wrong file**: the daily job only looks at records modified after its last completed run, so what it missed stays missing. Re-import from a date with `--since`, choosing a date before the problem started (when in doubt, a few months before; the import is idempotent):
+- **Adding an ecosystem**: run the full `ecosystem` import once *before* enabling its daily job (`osv-<name>`, 08:00 UTC). The daily job only reads records modified after its last run, so it never backfills. Check completeness with `pnpm validate:osv-coverage [name ...]`.
+- **Releases of a distro share one job** (`osv-Debian` covers `Debian:12`, `Debian:13`, ...), as do the vendors that publish one feed for several ecosystems (`osv-Echo` covers `Echo:PyPI`, `Echo:Maven`, ...). The list is `SHARED_BUCKET_ECOSYSTEMS` in [osv-bucket.ts](../src/jobs/osv-bucket.ts), which also explains why.
+- **A job fails, rather than reporting an empty success, when its OSV file is missing (404) or no longer written to** (newest record over 14 days old for a distro, 90 for anything else). Check every file ahead of time with `pnpm validate:osv-buckets` (exits 1 on a problem).
+- **Backfilling after a job read a stale or wrong file**: re-import from a date before the problem started (the import is idempotent):
   ```bash
   pnpm import:osv update Debian --since=2026-08-01
   ```
-  `update Debian:13` is the same as `update Debian`.
-  Debian takes about 45 minutes for 60,000 records. Ubuntu is slower (about 3 records a second, its kernel records carrying thousands of package rows each), so a backfill of months takes hours; run it in the background. The daily run, a few thousand records, takes minutes.
-- Only the distro releases in the [support policy](../README.md#supported-os-releases) are maintained. Others are imported and searchable on a best-effort basis.
+  Debian takes about 45 minutes for 60,000 records; Ubuntu about 3 records a second, so months take hours. Run it in the background.
+- Only the distro releases in the [support policy](../README.md#supported-os-releases) are maintained. Others are searchable on a best-effort basis.
 - Severity: GHSA's `MODERATE` is stored as `MEDIUM`. A CVSS score is computed from OSV's vector when the record has none. Ubuntu priority and Debian urgency are kept per package as `distroPriority`.
 - AlmaLinux, Rocky Linux and Alpine data only lists fixed vulnerabilities, so unfixed vulnerabilities on those distributions are not reported.
 
