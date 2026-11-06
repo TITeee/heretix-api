@@ -1,3 +1,6 @@
+import os from 'node:os';
+import path from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../db/client.js';
 import { createManyChunked } from '../db/bulk-insert.js';
@@ -10,6 +13,7 @@ import {
   type SsvcAssessment,
   cveIdOf,
   downloadZip,
+  downloadToFile,
   findDeltaBundles,
   findFullBundle,
   listReleases,
@@ -17,6 +21,7 @@ import {
   parseCveRecord,
   parseSsvc,
   recordsFromZip,
+  recordsFromBundle,
 } from './cna-fetcher.js';
 import type { Prisma } from '@prisma/client';
 
@@ -198,10 +203,10 @@ function mergeDropped(into: CnaImportResult, from: Partial<Record<DropReason, nu
  * regardless of this filter, so passing `cnaYears` costs nothing beyond what
  * decompressing/parsing the full bundle already costs.
  */
-export async function importCveRecords(records: Iterable<CveRecord>, cnaYears: Set<string> | null = null): Promise<CnaImportResult> {
+export async function importCveRecords(records: Iterable<CveRecord> | AsyncIterable<CveRecord>, cnaYears: Set<string> | null = null): Promise<CnaImportResult> {
   const result = emptyResult();
 
-  for (const record of records) {
+  for await (const record of records) {
     result.scanned++;
     const cveId = cveIdOf(record);
 
@@ -286,10 +291,16 @@ export async function bootstrapCna(years: string[]): Promise<CnaImportResult> {
   if (!asset) throw new Error('No full CVE bundle found in recent cvelistV5 releases');
 
   logger.info({ asset: asset.name, sizeMB: Math.round(asset.size / 1e6), years }, 'Downloading full CVE bundle');
-  const zip = await downloadZip(asset.browser_download_url, 30 * 60 * 1000);
-  logger.info('Full CVE bundle downloaded, importing');
-
-  return importCveRecords(recordsFromZip(zip, null), new Set(years));
+  // On disk, not in memory: the bundle is 650 MB and the archive inside it as much again.
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'heretix-cna-'));
+  try {
+    const file = path.join(dir, 'full.zip');
+    await downloadToFile(asset.browser_download_url, file, 30 * 60 * 1000);
+    logger.info('Full CVE bundle downloaded, importing');
+    return await importCveRecords(recordsFromBundle(file, null, dir), new Set(years));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /**

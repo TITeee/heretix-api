@@ -121,6 +121,7 @@
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "seek-bzip": "^2.0.0",
     "tar-stream": "^3.2.1",
+    "yauzl": "^3.4.0",
     "zod": "^4.6.6"
   },
   "pnpm": {
@@ -166,6 +167,7 @@
     "@types/adm-zip": "^0.5.7",
     "@types/node": "^25.0.8",
     "@types/pg": "^8.16.0",
+    "@types/yauzl": "^3.4.0",
     "eslint": "^10.9.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
