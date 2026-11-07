@@ -60,6 +60,15 @@ export const KEV_MATCHES: KevMatch[] = [
   { entryId: 'docker-desktop', vendor: /^Docker$/, product: /^Desktop/ },
   { entryId: 'wordpress', vendor: /^WordPress$/, product: /^Core$/ },
   { entryId: 'drupal', vendor: /^Drupal$/, product: /^(Drupal )?core$/i },
+  // Edge devices and remote access, added in batch 4 (Cisco is not checked against KEV in this pass)
+  { entryId: 'zyxel-firewall', vendor: /^Zyxel$/, product: /^Multiple Firewalls$/ },
+  { entryId: 'zyxel-gs1900', vendor: /^Zyxel$/, product: /^GS1900/ },
+  { entryId: 'zyxel-dsl-cpe', vendor: /^Zyxel$/, product: /^(DSL CPE|EMG\d+ Routers)/ },
+  { entryId: 'beyondtrust-remote-support-pra', vendor: /^BeyondTrust$/, product: /Remote Support/ },
+  { entryId: 'versa-sd-wan', vendor: /^Versa$/, product: /^(Director|Concerto)$/ },
+  { entryId: 'array-networks-arrayos-ag', vendor: /^Array Networks$/, product: /ArrayOS|AG/ },
+  { entryId: 'microsoft-exchange-server', vendor: /^Microsoft$/, product: /^Exchange( Server)?$/ },
+  { entryId: 'microsoft-sharepoint-server', vendor: /^Microsoft$/, product: /^SharePoint( Server)?$/ },
 ];
 
 /**

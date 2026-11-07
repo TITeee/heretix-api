@@ -629,6 +629,87 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     nvd: [{ vendor: 'sangoma', products: ['freepbx'] }, { vendor: 'freepbx', products: ['freepbx'] }],
     cna: [],
   },
+  // ── Added: batch 4, entry points on CISA KEV that no vendor-advisory fetcher covers ──
+  {
+    id: 'zyxel-firewall', name: 'Zyxel Firewall (ZLD)', vendor: 'Zyxel', product: 'USG FLEX / ATP / VPN / USG firewalls (ZLD)', category: 'network',
+    aliases: ['zld', 'zyxel usg', 'usg flex', 'zyxel atp', 'zyxel vpn', 'zywall'], versionHint: '5.38',
+    // NVD files the firewall firmware as a CPE per model (usg_flex_*, atp*, vpn*, usg*, zywall_*) and
+    // the common ZLD firmware as "zld". vpn_orchestrator is a different product.
+    nvd: [{ vendor: 'zyxel', products: ['zld'], productPrefixes: ['usg', 'atp', 'vpn', 'zywall'], excludePrefixes: ['vpn_orchestrator'] }],
+    cna: [],
+  },
+  {
+    id: 'zyxel-gs1900', name: 'Zyxel GS1900 Switches', vendor: 'Zyxel', product: 'GS1900 Series Switches', category: 'network',
+    aliases: ['gs1900'], versionHint: '2.80',
+    nvd: [{ vendor: 'zyxel', productPrefixes: ['gs1900'] }],
+    cna: [],
+  },
+  {
+    id: 'zyxel-dsl-cpe', name: 'Zyxel DSL CPE (VMG, SBG, EMG)', vendor: 'Zyxel', product: 'VMG / SBG / EMG DSL gateways and routers', category: 'network',
+    aliases: ['vmg', 'sbg', 'emg', 'zyxel dsl'], versionHint: '5.13',
+    nvd: [{ vendor: 'zyxel', productPrefixes: ['vmg', 'sbg', 'emg'] }],
+    cna: [],
+  },
+  {
+    id: 'beyondtrust-remote-support-pra', name: 'BeyondTrust Remote Support and PRA', vendor: 'BeyondTrust', product: 'Remote Support / Privileged Remote Access', category: 'application',
+    aliases: ['beyondtrust', 'bomgar', 'remote support', 'privileged remote access', 'pra'], versionHint: '24.3.1',
+    // privilege_management_for_windows is an endpoint agent and a different product.
+    nvd: [{ vendor: 'beyondtrust', products: ['remote_support', 'privileged_remote_access'] }],
+    cna: [{ vendors: ['BeyondTrust'], products: ['Remote Support', 'Privileged Remote Access'] }],
+  },
+  {
+    id: 'versa-sd-wan', name: 'Versa SD-WAN', vendor: 'Versa Networks', product: 'Director / Concerto / VOS / Analytics', category: 'network',
+    aliases: ['versa', 'versa director', 'versa concerto', 'versa networks'], versionHint: '22.1.4',
+    nvd: [{ vendor: 'versa-networks', products: ['versa_director', 'concerto', 'versa_operating_system', 'versa_analytics'] }],
+    cna: [{ vendors: ['Versa'], products: ['Director', 'Concerto'] }],
+  },
+  {
+    id: 'array-networks-arrayos-ag', name: 'Array Networks ArrayOS AG', vendor: 'Array Networks', product: 'ArrayOS AG (SSL VPN)', category: 'network',
+    aliases: ['arrayos', 'array ag', 'array networks'], versionHint: '9.4.5.8',
+    nvd: [{ vendor: 'arraynetworks', products: ['arrayos_ag', 'array_os'] }],
+    cna: [{ vendors: ['Array Networks'], products: ['ArrayOS AG'] }],
+  },
+  {
+    id: 'microsoft-exchange-server', name: 'Microsoft Exchange Server', vendor: 'Microsoft', product: 'Exchange Server (on-premises)', category: 'application',
+    aliases: ['exchange', 'exchange server', 'ms exchange'], versionHint: '2019',
+    // NVD names the release (2013, 2016, 2019, subscription edition), not the build or the
+    // cumulative update, so every build of a release matches that release's CVEs. The CNA
+    // records name one product per cumulative update and are not listed here.
+    nvd: [{ vendor: 'microsoft', products: ['exchange_server', 'exchange_server_subscription_edition'] }],
+    cna: [],
+  },
+  {
+    id: 'microsoft-sharepoint-server', name: 'Microsoft SharePoint Server', vendor: 'Microsoft', product: 'SharePoint Server (on-premises)', category: 'application',
+    aliases: ['sharepoint', 'sharepoint server', 'ms sharepoint'], versionHint: '2019',
+    // As with Exchange, NVD names the release (2013, 2016, 2019), not the build.
+    nvd: [{ vendor: 'microsoft', products: ['sharepoint_server', 'sharepoint_enterprise_server', 'sharepoint_foundation'] }],
+    cna: [],
+  },
+  {
+    id: 'cisco-secure-email-gateway', name: 'Cisco Secure Email Gateway', vendor: 'Cisco', product: 'Secure Email Gateway (AsyncOS, formerly ESA)', category: 'network',
+    aliases: ['esa', 'email security appliance', 'cisco esa', 'asyncos'], versionHint: '15.0.0-050',
+    nvd: [{ vendor: 'cisco', products: ['secure_email_gateway', 'email_security_appliance', 'email_security_appliance_firmware'] }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco Secure Email'] }],
+  },
+  {
+    id: 'cisco-ios-xr', name: 'Cisco IOS XR', vendor: 'Cisco', product: 'IOS XR Software', category: 'network',
+    aliases: ['ios xr', 'iosxr'], versionHint: '7.11.2',
+    nvd: [{ vendor: 'cisco', products: ['ios_xr'] }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco IOS XR Software'] }],
+  },
+  {
+    id: 'cisco-small-business-rv', name: 'Cisco Small Business RV Routers', vendor: 'Cisco', product: 'Small Business RV series routers', category: 'network',
+    aliases: ['rv series', 'rv340', 'rv160', 'rv320', 'rv130', 'rv042'], versionHint: '1.0.03.29',
+    // A CPE per model and per spelling (rv340_firmware, rv340_dual_wan_gigabit_vpn_router_firmware, ...).
+    nvd: [{ vendor: 'cisco', productPrefixes: ['rv', 'small_business_rv'] }],
+    cna: [],
+  },
+  {
+    id: 'cisco-secure-client', name: 'Cisco Secure Client (AnyConnect)', vendor: 'Cisco', product: 'Secure Client / AnyConnect Secure Mobility Client', category: 'application',
+    aliases: ['anyconnect', 'secure client', 'cisco anyconnect'], versionHint: '5.1.3.62',
+    nvd: [{ vendor: 'cisco', products: ['secure_client', 'anyconnect_secure_mobility_client'] }],
+    cna: [{ vendors: ['Cisco'], products: ['Cisco Secure Client'] }],
+  },
 ];
 
 const BY_NAME = new Map(CATALOG_ENTRIES.map(e => [e.name, e]));
