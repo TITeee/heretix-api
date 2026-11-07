@@ -713,6 +713,114 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     nvd: [{ vendor: 'cisco', products: ['secure_client', 'anyconnect_secure_mobility_client'] }],
     cna: [{ vendors: ['Cisco'], products: ['Cisco Secure Client'] }],
   },
+  // ── Added: batch 5, file transfer, backup and operations tools seen on CISA KEV ──
+  {
+    id: 'fortra-goanywhere-mft', name: 'Fortra GoAnywhere MFT', vendor: 'Fortra', product: 'GoAnywhere MFT', category: 'application',
+    aliases: ['goanywhere', 'go anywhere', 'helpsystems goanywhere'], versionHint: '7.8.4',
+    nvd: [{ vendor: 'fortra', products: ['goanywhere_managed_file_transfer'] }],
+    cna: [{ vendors: ['Fortra'], products: ['GoAnywhere MFT', 'GoAnywhere'] }],
+  },
+  {
+    id: 'cleo-file-transfer', name: 'Cleo Harmony, VLTrader and LexiCom', vendor: 'Cleo', product: 'Harmony / VLTrader / LexiCom', category: 'application',
+    aliases: ['cleo', 'cleo harmony', 'vltrader', 'lexicom'], versionHint: '5.8.0.21',
+    nvd: [{ vendor: 'cleo', products: ['harmony', 'vltrader', 'lexicom'] }],
+    cna: [{ vendors: ['Cleo'], products: ['Harmony'] }],
+  },
+  {
+    id: 'wing-ftp-server', name: 'Wing FTP Server', vendor: 'Wing FTP', product: 'Wing FTP Server', category: 'application',
+    aliases: ['wingftp', 'wing ftp'], versionHint: '7.4.3',
+    nvd: [{ vendor: 'wftpserver', products: ['wing_ftp_server'] }],
+    cna: [{ vendors: ['wftpserver'], products: ['Wing FTP Server'] }],
+  },
+  {
+    id: 'progress-moveit-transfer', name: 'Progress MOVEit Transfer', vendor: 'Progress', product: 'MOVEit Transfer', category: 'application',
+    aliases: ['moveit', 'move it', 'ipswitch moveit'], versionHint: '2023.0.1',
+    nvd: [{ vendor: 'progress', products: ['moveit_transfer', 'moveit_cloud'] }],
+    cna: [{ vendors: ['Progress'], products: ['MOVEit Transfer'] }],
+  },
+  {
+    id: 'progress-whatsup-gold', name: 'Progress WhatsUp Gold', vendor: 'Progress', product: 'WhatsUp Gold', category: 'devops',
+    aliases: ['whatsup', 'whatsup gold', 'wug'], versionHint: '23.1.3',
+    nvd: [{ vendor: 'progress', products: ['whatsup_gold'] }],
+    cna: [{ vendors: ['Progress Software Corporation'], products: ['WhatsUp Gold'] }],
+  },
+  {
+    id: 'commvault', name: 'Commvault', vendor: 'Commvault', product: 'Commvault Backup & Recovery (Command Center)', category: 'application',
+    aliases: ['commvault command center', 'commcell', 'commvault cloud'], versionHint: '11.36.46',
+    nvd: [{ vendor: 'commvault', products: ['commvault', 'commcell'] }],
+    cna: [{ vendors: ['Commvault'], products: ['Commvault', 'Commvault Cloud', 'Command Center Innovation Release', 'Web Server'] }],
+  },
+  {
+    id: 'acronis-cyber-infrastructure', name: 'Acronis Cyber Infrastructure', vendor: 'Acronis', product: 'Cyber Infrastructure', category: 'application',
+    aliases: ['aci', 'acronis infrastructure'], versionHint: '5.4',
+    nvd: [{ vendor: 'acronis', products: ['cyber_infrastructure'] }],
+    cna: [{ vendors: ['Acronis'], products: ['Acronis Cyber Infrastructure'] }],
+  },
+  {
+    id: 'acronis-cyber-protect', name: 'Acronis Cyber Protect', vendor: 'Acronis', product: 'Cyber Protect / Cyber Backup', category: 'application',
+    aliases: ['acronis backup', 'cyber protect', 'cyber backup'], versionHint: '15.0.30',
+    // The agent, True Image and the hosting-panel plugins have versions of their own and are not listed.
+    nvd: [{ vendor: 'acronis', products: ['cyber_protect', 'cyber_backup'] }],
+    cna: [{ vendors: ['Acronis'], products: ['Acronis Cyber Protect 15', 'Acronis Cyber Protect 16', 'Acronis Cyber Protect 17'] }],
+  },
+  {
+    id: 'ahsay-ahsaycbs', name: 'Ahsay AhsayCBS', vendor: 'Ahsay', product: 'AhsayCBS', category: 'application',
+    aliases: ['ahsay', 'cloud backup suite', 'ahsay cbs'], versionHint: '9.1.4.0',
+    nvd: [{ vendor: 'ahsay', products: ['cloud_backup_suite'] }],
+    cna: [{ vendors: ['Ahsay'], products: ['AhsayCBS'] }],
+  },
+  {
+    id: 'sysaid-on-premises', name: 'SysAid On-Premises', vendor: 'SysAid', product: 'SysAid On-Prem', category: 'application',
+    aliases: ['sysaid', 'sysaid server'], versionHint: '23.3.38',
+    // help_desk, itil, the API and the Okta SSO module are other things NVD files under sysaid.
+    nvd: [{ vendor: 'sysaid', products: ['sysaid', 'sysaid_on-premises', 'sysaidsy_on-premises', 'on-premise'] }],
+    cna: [{ vendors: ['SysAid'], products: ['SysAid On-Prem'] }],
+  },
+  {
+    id: 'paessler-prtg', name: 'Paessler PRTG Network Monitor', vendor: 'Paessler', product: 'PRTG Network Monitor', category: 'devops',
+    aliases: ['prtg', 'paessler'], versionHint: '24.1.92.1554',
+    nvd: [{ vendor: 'paessler', products: ['prtg_network_monitor'] }],
+    cna: [{ vendors: ['Paessler GmbH'], products: ['PRTG Network Monitor'] }],
+  },
+  {
+    id: 'papercut-ng-mf', name: 'PaperCut NG/MF', vendor: 'PaperCut', product: 'PaperCut NG / MF', category: 'application',
+    aliases: ['papercut', 'papercut ng', 'papercut mf'], versionHint: '22.0.9',
+    nvd: [{ vendor: 'papercut', products: ['papercut_ng', 'papercut_mf'] }],
+    cna: [{ vendors: ['PaperCut'], products: ['PaperCut NG/MF', 'PaperCut MF/NG', 'Papercut NG/MF'] }],
+  },
+  {
+    id: 'sap-netweaver', name: 'SAP NetWeaver', vendor: 'SAP', product: 'NetWeaver (Application Server ABAP / Java and components)', category: 'application',
+    aliases: ['netweaver', 'sap', 'sap netweaver as java', 'sap visual composer'], versionHint: '7.50',
+    // NVD files NetWeaver as about 25 names: the platform, the ABAP and Java application servers and
+    // their components. The RFC SDK is a client library with its own versions. The CVE records are
+    // where SAP's monthly patch-day CVEs appear first (NVD lags by months), under many spellings of
+    // the server products; the client-side ones (Business Client, RFC SDK) are left out.
+    nvd: [{ vendor: 'sap', productPrefixes: ['netweaver'], excludePrefixes: ['netweaver_rfc_sdk'] }],
+    cna: [{ vendors: ['SAP_SE'], products: [
+      'SAP NetWeaver',
+      'SAP NetWeaver ABAP Platform',
+      'SAP NetWeaver and ABAP Platform',
+      'SAP NetWeaver Application Server ABAP',
+      'SAP NetWeaver Application Server ABAP and ABAP Platform',
+      'SAP NetWeaver Application Server for ABAP',
+      'SAP NetWeaver Application Server for ABAP and ABAP Platform',
+      'SAP NetWeaver AS ABAP and ABAP Platform',
+      'SAP Netweaver AS ABAP and ABAP Platform',
+      'SAP NetWeaver and ABAP Platform (Application Server ABAP)',
+      'SAP NetWeaver and SAP Web Dispatcher (Internet Communication Manager)',
+      'SAP NetWeaver (Message Server)',
+      'SAP NetWeaver Application Server ABAP (BIC Document)',
+      'SAP NetWeaver Application Server ABAP (applications based on SAP GUI for HTML)',
+      'SAP NetWeaver AS for ABAP and ABAP Platform(Internet Communication Manager)',
+    ] }],
+  },
+  {
+    id: 'atlassian-confluence', name: 'Atlassian Confluence', vendor: 'Atlassian', product: 'Confluence Server / Data Center', category: 'application',
+    aliases: ['confluence', 'confluence server', 'confluence data center'], versionHint: '8.5.4',
+    // Questions for Confluence is an app with versions of its own.
+    nvd: [{ vendor: 'atlassian', products: ['confluence_server', 'confluence_data_center', 'confluence'] }],
+    cna: [{ vendors: ['Atlassian'], products: ['Confluence Data Center'] }],
+  },
 ];
 
 const BY_NAME = new Map(CATALOG_ENTRIES.map(e => [e.name, e]));

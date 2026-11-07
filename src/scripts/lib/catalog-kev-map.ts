@@ -69,6 +69,20 @@ export const KEV_MATCHES: KevMatch[] = [
   { entryId: 'array-networks-arrayos-ag', vendor: /^Array Networks$/, product: /ArrayOS|AG/ },
   { entryId: 'microsoft-exchange-server', vendor: /^Microsoft$/, product: /^Exchange( Server)?$/ },
   { entryId: 'microsoft-sharepoint-server', vendor: /^Microsoft$/, product: /^SharePoint( Server)?$/ },
+  // File transfer, backup and operations tools, added in batch 5
+  { entryId: 'fortra-goanywhere-mft', vendor: /^Fortra$/, product: /^GoAnywhere MFT$/ },
+  { entryId: 'cleo-file-transfer', vendor: /^Cleo$/, product: /^Multiple Products$/ },
+  { entryId: 'wing-ftp-server', vendor: /^Wing FTP Server$/, product: /^Wing FTP Server$/ },
+  { entryId: 'progress-moveit-transfer', vendor: /^Progress$/, product: /^MOVEit Transfer$/ },
+  { entryId: 'progress-whatsup-gold', vendor: /^Progress$/, product: /^WhatsUp Gold$/ },
+  { entryId: 'commvault', vendor: /^Commvault$/, product: /^(Command Center|Web Server)$/ },
+  { entryId: 'acronis-cyber-infrastructure', vendor: /^Acronis$/, product: /^Cyber Infrastructure/ },
+  { entryId: 'ahsay-ahsaycbs', vendor: /^Ahsay$/, product: /^AhsayCBS$/ },
+  { entryId: 'sysaid-on-premises', vendor: /^SysAid$/, product: /^SysAid (On-Prem|Server)$/ },
+  { entryId: 'paessler-prtg', vendor: /^Paessler$/, product: /^PRTG Network Monitor$/ },
+  { entryId: 'papercut-ng-mf', vendor: /^PaperCut$/, product: /^(NG\/MF|MF\/NG)$/ },
+  { entryId: 'sap-netweaver', vendor: /^SAP$/, product: /^NetWeaver$/ },
+  { entryId: 'atlassian-confluence', vendor: /^Atlassian$/, product: /^Confluence (Server|Data Center)/ },
 ];
 
 /**
