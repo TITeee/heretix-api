@@ -39,20 +39,6 @@ It can also be used on its own, as a self-hosted vulnerability lookup API.
 - **Malware detection**: the malicious-package records (`MAL-*`, from [ossf/malicious-packages](https://github.com/ossf/malicious-packages)) that OSV carries in its `npm`, `PyPI`, ... files, searchable like any vulnerability
 - **Simple to run**: PostgreSQL only (no Redis), Docker Compose included, a built-in scheduler and an import dashboard
 
-## Supported OS releases
-
-OSV publishes data for distro releases going back to Debian 3.0, Alpine v3.2 and Ubuntu 14.04. Only the releases below are maintained, meaning they are covered by accuracy checks and fixes. The list is defined in [src/config/support-policy.ts](src/config/support-policy.ts) and was last reviewed on 2026-10-03.
-
-| Distro | Maintained releases | Notes |
-|---|---|---|
-| Debian | 11, 12, 13, 14 | 11 is past regular EOL but still under Debian LTS |
-| Ubuntu | 20.04, 22.04, 24.04, 26.04 LTS, including their Pro / FIPS / Realtime variants | 20.04 is kept for its ESM period. Interim releases (e.g. 25.10) are not maintained |
-| Alpine | v3.21 – v3.24 | |
-| AlmaLinux / Rocky Linux | 8, 9, 10 | |
-| Red Hat Enterprise Linux | 8, 9, 10 | Imported from Red Hat, not OSV: OVAL plus VEX for 8/9, VEX only for 10 (Red Hat publishes no RHEL 10 OVAL) |
-
-Data for other releases is **not deleted**. It stays searchable on a best-effort basis, without accuracy checks or fixes. Oracle Linux (imported from Oracle's OVAL feed) is also searchable on a best-effort basis. Language ecosystems (npm, PyPI, ...) are not affected by this policy.
-
 ## Requirements
 
 Minimum sizing for a PoC deployment, from the [heretix requirements](https://titeee.github.io/heretix-web/docs/). The figures cover heretix-api and heretix-management together; heretix-api's PostgreSQL accounts for most of them.
@@ -158,6 +144,23 @@ The `ecosystem` parameter changes which sources are queried and how versions are
 | `POST /api/v1/jobs/:source/run`, `PATCH /api/v1/jobs/:source` | Run or enable/disable an import job |
 
 Full reference, including every response field: [docs/api.md](docs/api.md).
+
+## Supported OS releases
+
+Searches for these releases are covered by accuracy checks and fixes:
+
+| Distro | Releases |
+|---|---|
+| Debian | 11, 12, 13, 14 |
+| Ubuntu | 20.04, 22.04, 24.04, 26.04 LTS |
+| Alpine | v3.21 to v3.24 |
+| AlmaLinux / Rocky Linux | 8, 9, 10 |
+| Red Hat Enterprise Linux | 8, 9, 10 |
+| Windows Server (beta) | 2016, 2019, 2022, 2025 (desktop and Server Core) |
+
+Windows Server is in beta: it has been checked against only a few real servers, and it is searched by its full OS build, not by release. Windows 10 and 11 are not covered.
+
+Other releases are **not deleted**: they stay searchable on a best-effort basis, without those checks. Oracle Linux is best-effort too. Language ecosystems (npm, PyPI, ...) are not affected. The reasons, the notes per distro and how the list is kept are in [docs/data-sources.md](docs/data-sources.md#supported-os-releases).
 
 ## Dashboard
 

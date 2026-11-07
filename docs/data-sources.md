@@ -119,6 +119,23 @@ All OSV ecosystems, as of 2026-11-06 ([live list](https://storage.googleapis.com
 
 `pnpm validate:osv-buckets` warns when OSV lists a name that is missing here.
 
+### Supported OS releases
+
+OSV publishes a separate ecosystem for every distro release, back to Debian 3.0, Alpine v3.2 and Ubuntu 14.04. Keeping all of them correct (matching rules, accuracy checks, upstream format changes) costs effort for releases that almost nobody still runs, so only some are **maintained**: covered by accuracy checks and fixes. The Linux list is defined in [src/config/support-policy.ts](../src/config/support-policy.ts), which also records when it was last reviewed; the Windows Server builds are there too.
+
+| Distro | Maintained releases | Notes |
+|---|---|---|
+| Debian | 11, 12, 13, 14 | 11 is past regular EOL but still under Debian LTS |
+| Ubuntu | 20.04, 22.04, 24.04, 26.04 LTS, including their Pro / FIPS / Realtime variants | 20.04 is kept for its ESM period. Interim releases (e.g. 25.10) are not maintained |
+| Alpine | v3.21 to v3.24 | |
+| AlmaLinux / Rocky Linux | 8, 9, 10 | |
+| Red Hat Enterprise Linux | 8, 9, 10 | Imported from Red Hat, not OSV: OVAL plus VEX for 8/9, VEX only for 10 (Red Hat publishes no RHEL 10 OVAL) |
+| Windows Server (beta) | 2016, 2019, 2022, 2025, each with the desktop experience and as Server Core | Imported from MSRC, not OSV, and searched by the full OS build (`10.0.20348.5622`), not by release. Checked against only a few real servers. 2012 / 2012 R2 and older, and Windows 10 / 11, are not covered. See [Microsoft (Windows Server)](#microsoft-windows-server) |
+
+Data for other releases is **not deleted**. It stays searchable on a best-effort basis, without accuracy checks or fixes, and the dashboard folds it away under *Outside support policy*. A daily OSV job for such a release is not stopped by the code; switch it off on the dashboard if you do not need it. Oracle Linux (imported from Oracle's OVAL feed) is best-effort as well. Language ecosystems (npm, PyPI, ...) are not affected.
+
+The list is reviewed when it is about six months old, and when a distro ships or retires a release. Upstream end-of-life dates come from [endoflife.date](https://endoflife.date).
+
 ### Commands
 
 ```bash
@@ -136,7 +153,7 @@ pnpm import:osv id GHSA-67hx-6x53-jw92   # One record (OSV or CVE ID)
   pnpm import:osv update Debian --since=2026-08-01
   ```
   Debian takes about 45 minutes for 60,000 records; Ubuntu about 3 records a second, so months take hours. Run it in the background.
-- Only the distro releases in the [support policy](../README.md#supported-os-releases) are maintained. Others are searchable on a best-effort basis.
+- Only the distro releases in [Supported OS releases](#supported-os-releases) are maintained. Others are searchable on a best-effort basis.
 - Severity: GHSA's `MODERATE` is stored as `MEDIUM`. A CVSS score is computed from OSV's vector when the record has none. Ubuntu priority and Debian urgency are kept per package as `distroPriority`.
 - AlmaLinux, Rocky Linux and Alpine data only lists fixed vulnerabilities, so unfixed vulnerabilities on those distributions are not reported.
 

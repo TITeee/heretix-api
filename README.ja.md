@@ -39,20 +39,6 @@ heretix の他のツールと組み合わせずに、単体の脆弱性検索 AP
 - **マルウェア検知**: [ossf/malicious-packages](https://github.com/ossf/malicious-packages) に登録された悪意のあるパッケージ（`MAL-*`）も、脆弱性と同じ方法で検索できる
 - **シンプルな構成**: 必要なミドルウェアは PostgreSQL だけ（Redis は不要）。Docker Compose の設定、スケジューラ、取り込み状況のダッシュボードを同梱
 
-## サポート対象の OS リリース
-
-OSV には、Debian 3.0、Alpine v3.2、Ubuntu 14.04 といった古いリリースのデータも含まれています。このうち保守の対象とするのは、次のリリースだけです。保守対象のリリースは、精度の検証と不具合修正の対象になります。一覧は [src/config/support-policy.ts](src/config/support-policy.ts) で定義しています（最終見直し: 2026-10-03）。
-
-| ディストリビューション | 保守対象のリリース | 備考 |
-|---|---|---|
-| Debian | 11、12、13、14 | 11 は通常のサポートが終了しているが、Debian LTS の期間中のため対象 |
-| Ubuntu | 20.04、22.04、24.04、26.04 LTS（Pro / FIPS / Realtime 版を含む） | 20.04 は ESM の期間中のため対象。中間リリース（25.10 など）は対象外 |
-| Alpine | v3.21 – v3.24 | |
-| AlmaLinux / Rocky Linux | 8、9、10 | |
-| Red Hat Enterprise Linux | 8、9、10 | OSV ではなく Red Hat のデータを取り込む。8/9 は OVAL と VEX、10 は VEX のみ（Red Hat が RHEL 10 の OVAL を公開していないため） |
-
-対象外のリリースのデータも**削除しません**。引き続き検索できますが、精度の検証や不具合修正の対象にはなりません。Oracle Linux（Oracle の OVAL フィードから取り込み）も、同じ扱いで検索できます。npm や PyPI などの言語エコシステムは、このポリシーの対象外です。
-
 ## 動作要件
 
 PoC 環境向けの最小構成です（出典: [heretix の要件ページ](https://titeee.github.io/heretix-web/docs/)）。数値は heretix-api と heretix-management の合計で、その大半を heretix-api の PostgreSQL が占めます。
@@ -157,6 +143,23 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-
 | `POST /api/v1/jobs/:source/run`、`PATCH /api/v1/jobs/:source` | 取り込みジョブの手動実行、有効・無効の切り替え |
 
 レスポンスの全項目を含むリファレンスは [docs/api.md](docs/api.md)（英語）にあります。
+
+## サポート対象の OS リリース
+
+次のリリースに対する検索は、精度の検証と不具合修正の対象です。
+
+| ディストリビューション | リリース |
+|---|---|
+| Debian | 11、12、13、14 |
+| Ubuntu | 20.04、22.04、24.04、26.04 LTS |
+| Alpine | v3.21 〜 v3.24 |
+| AlmaLinux / Rocky Linux | 8、9、10 |
+| Red Hat Enterprise Linux | 8、9、10 |
+| Windows Server（ベータ） | 2016、2019、2022、2025（デスクトップ版と Server Core） |
+
+Windows Server はベータ版です。実機数台でしか確認しておらず、リリースではなく、フルの OS ビルドで検索します。Windows 10 / 11 は対象外です。
+
+それ以外のリリースのデータも**削除しません**。精度の検証は行いませんが、ベストエフォートで検索できます。Oracle Linux も同じ扱いです。npm や PyPI などの言語エコシステムは対象外（この方針の影響を受けません）。理由、ディストリビューションごとの注記、一覧の見直し方は [docs/data-sources.md](docs/data-sources.md#supported-os-releases)（英語）にあります。
 
 ## ダッシュボード
 
