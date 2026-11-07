@@ -18,15 +18,7 @@ It works for language packages (npm, PyPI, Go, Maven, ...), Linux distribution p
 
 Where it sits in heretix:
 
-```
- servers / containers / appliances
-            │  inventory (package + version)
-            ▼
- heretix-cli, heretix-management ── search ──► heretix-api ◄── scheduled imports ── OSV, NVD, KEV, EPSS,
-            │                                  (PostgreSQL)                           CVE Records, vendor advisories
-            ▼
- vulnerability reports
-```
+![How heretix-cli, heretix-management and heretix-api fit together: servers, containers and appliances are scanned by heretix-cli, which sends SBOMs to heretix-management, which keeps the inventory and findings; both search heretix-api, which imports public vulnerability sources on a schedule into PostgreSQL](docs/overview.svg)
 
 - **[heretix-cli](https://github.com/TITeee/heretix-cli)** scans a host or image and asks this API about each package.
 - **[heretix-management](https://github.com/TITeee/heretix-management)** keeps the inventory and the findings.

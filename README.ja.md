@@ -18,15 +18,7 @@ GET /api/v1/vulnerabilities/search?package=openssl&version=3.0.2-0ubuntu1.10&eco
 
 heretix 全体の構成は次のとおりです。
 
-```
- サーバー / コンテナ / ネットワーク機器
-            │  インベントリ（パッケージとバージョン）
-            ▼
- heretix-cli, heretix-management ── 検索 ──► heretix-api ◄── 定期取り込み ── OSV, NVD, KEV, EPSS,
-            │                                (PostgreSQL)                     CVE レコード, ベンダーアドバイザリ
-            ▼
- 脆弱性レポート
-```
+![heretix-cli、heretix-management、heretix-api の関係: サーバー、コンテナ、ネットワーク機器を heretix-cli がスキャンして SBOM を heretix-management へ送り、heretix-management がインベントリと検出結果を管理します。両者は heretix-api を検索し、heretix-api は公開ソースを定期的に PostgreSQL へ取り込みます](docs/overview.ja.svg)
 
 - **[heretix-cli](https://github.com/TITeee/heretix-cli)**: ホストやコンテナイメージをスキャンし、検出したパッケージを heretix-api で照合します。
 - **[heretix-management](https://github.com/TITeee/heretix-management)**: インベントリと検出結果を管理します。
