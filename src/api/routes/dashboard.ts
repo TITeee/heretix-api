@@ -226,6 +226,18 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
   <div id="toast" class="toast hidden"></div>
 
+  <!-- The page's own confirmation, in place of the browser's confirm(). -->
+  <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <div class="dialog-card">
+      <h2 id="confirm-title" class="dialog-title"></h2>
+      <p id="confirm-message" class="dialog-message"></p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" type="button" class="btn-secondary">Cancel</button>
+        <button id="confirm-ok" type="button" class="btn-primary"></button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- Shown first: the dashboard opens once the server accepts the key. -->
   <main id="sign-in" class="sign-in hidden">
     <form id="sign-in-form" class="sign-in-card" novalidate>
@@ -278,7 +290,7 @@ ${statusPanel('Vendor Advisories', 'Per-vendor advisory feed import status', 'Ve
         <table>
           ${tableHead('Ecosystem')}
           <tbody id="osv-tbody">
-            <tr><td colspan="9" class="message">Loading...</td></tr>
+            <tr><td colspan="11" class="message">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -327,7 +339,9 @@ function tableHead(nameColumn: string): string {
               <th class="num">Inserted</th>
               <th class="num">Updated</th>
               <th>Error</th>
-              <th class="num">Actions</th>
+              <th class="act" title="Whether the daily schedule runs this source">Schedule</th>
+              <th class="act" title="Run now: the changes since the last run, or the first load">Run now</th>
+              <th class="act" title="Read everything again, writing over what is stored">Full reload</th>
             </tr>
           </thead>`;
 }
@@ -342,7 +356,7 @@ function statusPanel(title: string, description: string, nameColumn: string, tbo
         <table>
           ${tableHead(nameColumn)}
           <tbody id="${tbodyId}">
-            <tr><td colspan="9" class="message">Loading...</td></tr>
+            <tr><td colspan="11" class="message">Loading...</td></tr>
           </tbody>
         </table>
       </div>

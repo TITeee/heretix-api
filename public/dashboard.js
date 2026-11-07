@@ -148,24 +148,62 @@ function showToast(msg, kind) {
 // inline handler would need it escaped for the HTML attribute *and* the JS
 // string literal inside it -- a data attribute has only the one context.
 // The page's CSP refuses inline handlers anyway.
-function actionCell(row) {
+// One column each, so the header says what the button does: the daily schedule,
+// a run now, a full reload.
+function scheduleCell(row) {
+  const enabled = row.enabled !== false;
+  return '<button data-action="toggle" data-source="' + esc(row.source) + '" ' +
+    'data-enabled="' + (!enabled) + '" ' +
+    'class="btn-sm btn-toggle' + (enabled ? '' : ' btn-off') + '">' + (enabled ? 'On' : 'Off') + '</button>';
+}
+
+function runCell(row) {
   // A queued job waits for a free slot in the job runner; it runs once one opens.
   const busy = row.status === 'running' || row.status === 'queued';
-  const runBtn = '<button data-action="run" data-source="' + esc(row.source) + '" ' +
+  return '<button data-action="run" data-source="' + esc(row.source) + '" ' +
     (row.needsFirstLoad ? 'title="Not loaded yet: imports everything. This can take hours." ' : '') +
     (busy ? 'disabled ' : '') + 'class="btn-sm btn-run">' +
     (row.status === 'queued' ? 'Queued…' : busy ? 'Running…' : row.needsFirstLoad ? 'Load' : 'Run') + '</button>';
-  const enabled = row.enabled !== false;
-  const toggleBtn = '<button data-action="toggle" data-source="' + esc(row.source) + '" ' +
-    'data-enabled="' + (!enabled) + '" ' +
-    'class="btn-sm btn-toggle' + (enabled ? '' : ' btn-off') + '">' + (enabled ? 'On' : 'Off') + '</button>';
-  // A source that is loaded can be read in full again, e.g. after a change to how its records are read.
-  const reloadBtn = row.canReload
-    ? '<button data-action="reload" data-source="' + esc(row.source) + '" data-label="' + esc(row.label || row.ecosystem || row.source) + '" ' +
-      (busy ? 'disabled ' : '') + 'title="Read everything again, writing over what is stored" class="btn-sm btn-reload">Reload</button>'
-    : '';
-  return '<div class="actions">' + toggleBtn + runBtn + reloadBtn + '</div>';
 }
+
+// A source that is loaded can be read in full again, e.g. after a change to how its records
+// are read. The others have an empty cell.
+function reloadCell(row) {
+  if (!row.canReload) return '';
+  const busy = row.status === 'running' || row.status === 'queued';
+  return '<button data-action="reload" data-source="' + esc(row.source) + '" data-label="' + esc(row.label || row.ecosystem || row.source) + '" ' +
+    (busy ? 'disabled ' : '') + 'title="Read everything again, writing over what is stored" class="btn-sm btn-reload">Reload</button>';
+}
+
+// The page's own confirmation (a <dialog>), in place of the browser's confirm().
+// Resolves true on the confirm button, false on Cancel, Escape or a click outside.
+function askConfirm({ title, message, confirmLabel }) {
+  const dialog = document.getElementById('confirm-dialog');
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-message').textContent = message;
+  document.getElementById('confirm-ok').textContent = confirmLabel;
+  return new Promise((resolve) => {
+    const onClose = () => {
+      dialog.removeEventListener('close', onClose);
+      dialog.removeEventListener('click', onBackdrop);
+      resolve(dialog.returnValue === 'ok');
+    };
+    // A click on the backdrop lands on the <dialog> itself, outside its card.
+    const onBackdrop = (ev) => { if (ev.target === dialog) dialog.close('cancel'); };
+    dialog.addEventListener('close', onClose);
+    dialog.addEventListener('click', onBackdrop);
+    dialog.returnValue = '';
+    dialog.showModal();
+    document.getElementById('confirm-cancel').focus();
+  });
+}
+
+document.getElementById('confirm-cancel').addEventListener('click', () => {
+  document.getElementById('confirm-dialog').close('cancel');
+});
+document.getElementById('confirm-ok').addEventListener('click', () => {
+  document.getElementById('confirm-dialog').close('ok');
+});
 
 document.addEventListener('click', (ev) => {
   const btn = ev.target.closest('button[data-action]');
@@ -174,8 +212,13 @@ document.addEventListener('click', (ev) => {
   if (btn.dataset.action === 'reload') {
     const label = btn.dataset.label || btn.dataset.source;
     // Nothing is deleted first, so detection carries on while it runs; but it reads the whole dataset.
-    if (!confirm('Reload ' + label + ' in full?\n\nThis reads everything again and writes over the stored records. Nothing is deleted first. It can take from minutes to hours.')) return;
-    void runJob(btn.dataset.source, true);
+    void askConfirm({
+      title: 'Reload ' + label + ' in full?',
+      message: 'This reads everything again and writes over the stored records.\n' +
+        'Nothing is deleted first, so searches keep working while it runs.\n' +
+        'It can take from minutes to hours.',
+      confirmLabel: 'Reload',
+    }).then((ok) => { if (ok) void runJob(btn.dataset.source, true); });
   }
   if (btn.dataset.action === 'toggle') void toggleJob(btn.dataset.source, btn.dataset.enabled === 'true');
 });
@@ -233,11 +276,11 @@ function renderCards(counts) {
 }
 
 function messageRow(html) {
-  return '<tr><td colspan="9" class="message">' + html + '</td></tr>';
+  return '<tr><td colspan="11" class="message">' + html + '</td></tr>';
 }
 
 // Shared renderer for the three status tables (Core Sources, Vendor
-// Advisories, OSV Ecosystems) — all share the same 9-column layout.
+// Advisories, OSV Ecosystems) — all share the same 11-column layout.
 function renderTable(tbodyId, rows, getName, options) {
   options = options || {};
   const tbody = document.getElementById(tbodyId);
@@ -256,7 +299,9 @@ function renderTable(tbodyId, rows, getName, options) {
       '<td class="num">' + esc(fmt(r.totalInserted)) + '</td>' +
       '<td class="num">' + esc(fmt(r.totalUpdated)) + '</td>' +
       '<td>' + errorCell(r.errorMessage) + '</td>' +
-      '<td>' + actionCell(r) + '</td>' +
+      '<td class="act">' + scheduleCell(r) + '</td>' +
+      '<td class="act">' + runCell(r) + '</td>' +
+      '<td class="act">' + reloadCell(r) + '</td>' +
     '</tr>'
   ).join('');
 }
