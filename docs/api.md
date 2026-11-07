@@ -326,7 +326,7 @@ GET /api/v1/vulnerabilities/stats
 
 ## Import status
 
-Takes the admin key (`ADMIN_API_KEY`). The JSON behind the dashboard: the latest job per source, record counts, and per-OSV-ecosystem status. `osvEcosystems[].maintained` is `false` for distro releases outside the [support policy](../README.md#supported-os-releases). `needsFirstLoad` (on every source row and OSV ecosystem) is `true` while a Run would be the source's full load; an OSV ecosystem being loaded for the first time is listed already, with 0 records. Per-ecosystem record counts are cached for 5 minutes.
+Takes the admin key (`ADMIN_API_KEY`). The JSON behind the dashboard: the latest job per source, record counts, and per-OSV-ecosystem status. `osvEcosystems[].maintained` is `false` for distro releases outside the [support policy](../README.md#supported-os-releases). `needsFirstLoad` (on every source row and OSV ecosystem) is `true` while a Run would be the source's full load; `canReload` is `true` when the source has a full load and is loaded already, so `run?full=true` is possible; an OSV ecosystem being loaded for the first time is listed already, with 0 records. Per-ecosystem record counts are cached for 5 minutes.
 
 ```
 GET /api/v1/import-status
@@ -338,6 +338,7 @@ Takes the admin key (`ADMIN_API_KEY`). `:source` is the job's source key (`nvd`,
 
 ```
 POST  /api/v1/jobs/:source/run    # Run now (fire-and-forget), regardless of the enabled state
+POST  /api/v1/jobs/:source/run?full=true  # Read everything again (a reload) for a source that has a full load
 PATCH /api/v1/jobs/:source        # Enable/disable the scheduled run. Body: { "enabled": boolean }
 GET   /api/v1/jobs/osv-ecosystems # OSV's ecosystem names: [{ "name": "npm", "added": false, "group": "recommended" }, ...]
 POST  /api/v1/jobs/osv-ecosystems # Add one: switch its daily job on and run it. Body: { "name": "PyPI" }

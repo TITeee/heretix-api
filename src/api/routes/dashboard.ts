@@ -92,6 +92,11 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
       const def = STATIC_JOBS.find((j) => j.source === source) ?? (await resolveJob(source));
       return def?.firstLoad ? !(await def.firstLoad.isLoaded()) : false;
     };
+    // Whether a full reload can be asked for: the source has a full load and is loaded already.
+    const canReload = async (source: string): Promise<boolean> => {
+      const def = STATIC_JOBS.find((j) => j.source === source) ?? (await resolveJob(source));
+      return def?.firstLoad ? await def.firstLoad.isLoaded() : false;
+    };
 
     const enabledMap = await getEnabledMap();
     const isSourceEnabled = (source: string): boolean => enabledMap.get(source) ?? defaultEnabled(source);
@@ -107,6 +112,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         maintained: isMaintainedOsvEcosystem(ecosystem),
         recordCount,
         needsFirstLoad: await needsFirstLoad(source),
+        canReload: await canReload(source),
         status: job?.status ?? null,
         completedAt: job?.completedAt ?? null,
         durationMs: jobDurationMs(job),
@@ -162,6 +168,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         const j = latestBySource.get(def.source);
         return {
           needsFirstLoad: def.firstLoad ? !(await def.firstLoad.isLoaded()) : false,
+          canReload: def.firstLoad ? await def.firstLoad.isLoaded() : false,
           source: def.source,
           label: def.label,
           enabled: isSourceEnabled(def.source),

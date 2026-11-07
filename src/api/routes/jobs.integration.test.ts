@@ -51,6 +51,29 @@ describe('jobs', () => {
       expect((await run('advisory-microsoft')).json()).toMatchObject({ source: 'advisory-microsoft', mode: 'full' });
     });
 
+    it('reads a loaded source in full again when asked to (a reload), without emptying it', async () => {
+      await importNVDData({ id: 'CVE-2026-0001', published: '2026-01-01T00:00:00.000', lastModified: '2026-01-02T00:00:00.000', descriptions: [{ lang: 'en', value: 'x' }], configurations: [] } as never);
+      await prisma.collectionJob.create({ data: { source: 'nvd', status: 'completed', startedAt: new Date(), completedAt: new Date() } });
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/jobs/nvd/run?full=true', headers: ADMIN });
+      expect(res.statusCode).toBe(202);
+      expect(res.json()).toMatchObject({ source: 'nvd', mode: 'full' });
+      expect(request).toHaveBeenCalledWith(expect.objectContaining({ source: 'nvd' }), 'full');
+      expect(await prisma.nVDVulnerability.count()).toBe(1);
+    });
+
+    it('refuses a reload of a source that has no full load, and queues nothing', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/v1/jobs/kev/run?full=true', headers: ADMIN });
+      expect(res.statusCode).toBe(400);
+      expect(request).not.toHaveBeenCalled();
+    });
+
+    it('refuses a value of full that is not true or false', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/v1/jobs/nvd/run?full=yes', headers: ADMIN });
+      expect(res.statusCode).toBe(400);
+      expect(request).not.toHaveBeenCalled();
+    });
+
     it('treats a source that has no first load as a delta', async () => {
       expect((await run('kev')).json()).toMatchObject({ mode: 'delta' });
     });

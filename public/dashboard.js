@@ -159,21 +159,32 @@ function actionCell(row) {
   const toggleBtn = '<button data-action="toggle" data-source="' + esc(row.source) + '" ' +
     'data-enabled="' + (!enabled) + '" ' +
     'class="btn-sm btn-toggle' + (enabled ? '' : ' btn-off') + '">' + (enabled ? 'On' : 'Off') + '</button>';
-  return '<div class="actions">' + toggleBtn + runBtn + '</div>';
+  // A source that is loaded can be read in full again, e.g. after a change to how its records are read.
+  const reloadBtn = row.canReload
+    ? '<button data-action="reload" data-source="' + esc(row.source) + '" data-label="' + esc(row.label || row.ecosystem || row.source) + '" ' +
+      (busy ? 'disabled ' : '') + 'title="Read everything again, writing over what is stored" class="btn-sm btn-reload">Reload</button>'
+    : '';
+  return '<div class="actions">' + toggleBtn + runBtn + reloadBtn + '</div>';
 }
 
 document.addEventListener('click', (ev) => {
   const btn = ev.target.closest('button[data-action]');
   if (!btn) return;
   if (btn.dataset.action === 'run') void runJob(btn.dataset.source);
+  if (btn.dataset.action === 'reload') {
+    const label = btn.dataset.label || btn.dataset.source;
+    // Nothing is deleted first, so detection carries on while it runs; but it reads the whole dataset.
+    if (!confirm('Reload ' + label + ' in full?\n\nThis reads everything again and writes over the stored records. Nothing is deleted first. It can take from minutes to hours.')) return;
+    void runJob(btn.dataset.source, true);
+  }
   if (btn.dataset.action === 'toggle') void toggleJob(btn.dataset.source, btn.dataset.enabled === 'true');
 });
 
-async function runJob(source) {
+async function runJob(source, full) {
   const key = getApiKey();
   if (!key) { signOut(); return; }
   try {
-    const res = await fetch('/api/v1/jobs/' + encodeURIComponent(source) + '/run', {
+    const res = await fetch('/api/v1/jobs/' + encodeURIComponent(source) + '/run' + (full ? '?full=true' : ''), {
       method: 'POST',
       headers: { 'x-api-key': key },
     });

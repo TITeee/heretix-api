@@ -148,6 +148,7 @@ th.num { font-family: inherit; }
 .btn-sm:hover:not(:disabled) { background: var(--accent); }
 .btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-run { width: 72px; }
+.btn-reload { width: 72px; }
 .btn-toggle { width: 52px; }
 .btn-off { border-color: transparent; background: var(--destructive-soft); color: var(--destructive); }
 .btn-off:hover:not(:disabled) { background: var(--destructive-soft); }
