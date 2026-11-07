@@ -636,7 +636,10 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     // NVD files the firewall firmware as a CPE per model (usg_flex_*, atp*, vpn*, usg*, zywall_*) and
     // the common ZLD firmware as "zld". vpn_orchestrator is a different product.
     nvd: [{ vendor: 'zyxel', products: ['zld'], productPrefixes: ['usg', 'atp', 'vpn', 'zywall'], excludePrefixes: ['vpn_orchestrator'] }],
-    cna: [],
+    // NVD is slow to add CPEs to new Zyxel CVEs, so the CVE records (which give the ZLD ranges as
+    // text, read by the CNA parser) are what finds the newest ones. The uOS firmware of the
+    // USG FLEX H series has its own versions (1.x) and is left out.
+    cna: [{ vendors: ['Zyxel'], products: ['ATP series firmware', 'USG FLEX series firmware', 'USG FLEX 50(W) series firmware', 'USG20(W)-VPN series firmware'] }],
   },
   {
     id: 'zyxel-gs1900', name: 'Zyxel GS1900 Switches', vendor: 'Zyxel', product: 'GS1900 Series Switches', category: 'network',
