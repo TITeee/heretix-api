@@ -404,6 +404,39 @@ describe('extractCnaRows', () => {
     expect(extractCnaRows(undefined).rows).toEqual([]);
     expect(extractCnaRows({}).rows).toEqual([]);
   });
+
+  describe('Zyxel version text', () => {
+    const row = (version: string, vendor = 'Zyxel') => extractCnaRows([
+      { vendor, product: 'ATP series firmware', versions: [{ status: 'affected', version }] },
+    ]);
+
+    it('reads "versions V5.00 through V5.38" as an inclusive range', () => {
+      const { rows } = row('versions V5.00 through V5.38');
+      expect(rows).toEqual([expect.objectContaining({ versionStart: '5.00', lastAffected: '5.38' })]);
+    });
+
+    it('reads the other spellings of a firewall range, with or without "from" and a trailing patch', () => {
+      for (const text of ['from V4.32 through V5.42 Patch 1', 'versions from V4.32 through V5.42', '4.32 through 5.42 Patch 1']) {
+        expect(row(text).rows).toEqual([expect.objectContaining({ versionStart: '4.32', lastAffected: '5.42' })]);
+      }
+    });
+
+    it('reads a plain "<= 5.37" as an upper bound', () => {
+      const { rows } = row('<= 5.37');
+      expect(rows).toEqual([expect.objectContaining({ lastAffected: '5.37' })]);
+      expect(rows[0].versionStart).toBeUndefined();
+    });
+
+    it('drops a bound that carries a firmware build, which would flag the fixed builds of that release', () => {
+      expect(row('<= 7.10(ABRM.4)C0').rows).toEqual([]);
+      expect(row('versions V5.00(ABXX.0) through V5.38(ABXX.2)').rows).toEqual([]);
+    });
+
+    it('does not read the text for other vendors', () => {
+      expect(row('versions V5.00 through V5.38', 'Acme').rows).toEqual([]);
+      expect(row('<= 5.37', 'Acme').rows).toEqual([]);
+    });
+  });
 });
 
 describe('parseCveRecord', () => {

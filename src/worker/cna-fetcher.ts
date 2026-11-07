@@ -245,6 +245,26 @@ function bump(dropped: Partial<Record<DropReason, number>>, reason: DropReason):
 }
 
 /**
+ * Zyxel writes the affected versions as text inside `version` instead of using
+ * lessThan / lessThanOrEqual: "versions V5.00 through V5.38", "from V4.32 through V5.42
+ * Patch 1" or "4.60 through 5.35" for its firewalls and "<= 5.37" for some others. All are
+ * inclusive ranges. A trailing "Patch N" is dropped: a patch is not part of the version that
+ * is compared, so a release named with its patch matches as the whole release (the fixed
+ * patches of that release are flagged too, which errs towards a detection). Only the plain
+ * dotted forms are read: a bound with a firmware build ("<= 7.10(ABRM.4)C0") names one build of a
+ * release, and stored as "up to 7.10" it would flag the later, fixed builds of 7.10.
+ * Limited to Zyxel because other CNAs use these words differently.
+ */
+function zyxelTextRange(vendor: string, text: string | undefined): { start?: string; end: string } | undefined {
+  if (!text || !/^zyxel/i.test(vendor)) return undefined;
+  const through = text.trim().match(/^(?:versions?\s+)?(?:from\s+)?V?(\d+(?:\.\d+)*)\s+through\s+V?(\d+(?:\.\d+)*)(?:\s+Patch\s+\d+)?$/i);
+  if (through) return { start: through[1], end: through[2] };
+  const upTo = text.trim().match(/^<=\s*V?(\d+(?:\.\d+)*)$/);
+  if (upTo) return { end: upTo[1] };
+  return undefined;
+}
+
+/**
  * Turn one CVE Record's containers.cna.affected into the rows worth storing.
  *
  * Everything here exists to keep unusable declarations out of the database
@@ -390,6 +410,12 @@ export function extractCnaRows(affected: unknown): ExtractResult {
           versionEnd: lessThan !== undefined ? upperRaw : undefined,
           lastAffected: lessThan === undefined ? upperRaw : undefined,
         });
+        continue;
+      }
+
+      const textRange = zyxelTextRange(vendor, lower);
+      if (textRange && isEncodableBound(textRange.end) && (textRange.start === undefined || isEncodableBound(textRange.start))) {
+        rows.push({ vendor, product, packageName, versionType, versionStart: textRange.start, lastAffected: textRange.end });
         continue;
       }
 
