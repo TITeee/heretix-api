@@ -344,7 +344,7 @@ GET   /api/v1/jobs/osv-ecosystems # OSV's ecosystem names: [{ "name": "npm", "ad
 POST  /api/v1/jobs/osv-ecosystems # Add one: switch its daily job on and run it. Body: { "name": "PyPI" }
 ```
 
-A Run on a source that was never loaded (NVD, OSV, CVE Records, Microsoft) is its full load; the response says which in `mode` (`"full"` or `"delta"`). Adding an ecosystem takes the names the import command does: `Ubuntu:22.04:LTS` is `Ubuntu`, and `pypi` is answered with `400` and `Did you mean "PyPI"?`. `group` is `recommended` (the language ecosystems and the maintained distros) or `other`. `Red Hat` and `GIT` are not listed, and adding them is `400` with the reason; a Run on `osv-Red Hat` is `404` (see [OSV](data-sources.md#osv)).
+A Run on a source that was never loaded (NVD, OSV, CVE Records, Microsoft) is its full load; the response says which in `mode` (`"full"` or `"delta"`). `?full=true` asks for the full load of a source that is loaded already, e.g. after a change to how its records are read: it reads everything again and writes over what is stored, deleting nothing first, so searches keep working meanwhile. It is `400` for a source with no full load (KEV, the vendor advisories) and for a value other than `true` or `false`. Adding an ecosystem takes the names the import command does: `Ubuntu:22.04:LTS` is `Ubuntu`, and `pypi` is answered with `400` and `Did you mean "PyPI"?`. `group` is `recommended` (the language ecosystems and the maintained distros) or `other`. `Red Hat` and `GIT` are not listed, and adding them is `400` with the reason; a Run on `osv-Red Hat` is `404` (see [OSV](data-sources.md#osv)).
 
 | Case | Response |
 |---|---|
@@ -354,6 +354,7 @@ A Run on a source that was never loaded (NVD, OSV, CVE Records, Microsoft) is it
 
 ```bash
 curl -X POST -H "x-api-key: $ADMIN_API_KEY" "http://localhost:5000/api/v1/jobs/nvd/run"
+curl -X POST -H "x-api-key: $ADMIN_API_KEY" "http://localhost:5000/api/v1/jobs/cna/run?full=true"
 curl -X PATCH -H "x-api-key: $ADMIN_API_KEY" -H "Content-Type: application/json" \
   -d '{"enabled": false}' "http://localhost:5000/api/v1/jobs/osv-npm"
 ```

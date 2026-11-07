@@ -169,7 +169,7 @@ Full reference, including every response field: [docs/api.md](docs/api.md).
 
 ## Dashboard
 
-`http://localhost:5000/dashboard` shows each source's import status and record count. From the dashboard you can switch scheduled jobs on and off and run them on demand. The page opens on a sign-in screen: enter your admin key (`ADMIN_API_KEY`) to see the data. The key is kept for the open tab only; **Sign out** forgets it.
+`http://localhost:5000/dashboard` shows each source's import status and record count. Each source row has three buttons, one column each: **Schedule** (On/Off) switches the daily scheduled run; **Run now** runs it once (the changes since the last run, or the first load, where the button says **Load**); **Full reload** reads everything again and writes over what is stored, after a confirmation. Use it when how records are read has changed and the stored ones should follow (for example after an upgrade that reads more of the CVE Records); nothing is deleted first, so searches keep working meanwhile. The page opens on a sign-in screen: enter your admin key (`ADMIN_API_KEY`) to see the data. The key is kept for the open tab only; **Sign out** forgets it.
 
 ![Import Status Dashboard](docs/dashboard.png)
 
