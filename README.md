@@ -18,15 +18,7 @@ It works for language packages (npm, PyPI, Go, Maven, ...), Linux distribution p
 
 Where it sits in heretix:
 
-```
- servers / containers / appliances
-            │  inventory (package + version)
-            ▼
- heretix-cli, heretix-management ── search ──► heretix-api ◄── scheduled imports ── OSV, NVD, KEV, EPSS,
-            │                                  (PostgreSQL)                           CVE Records, vendor advisories
-            ▼
- vulnerability reports
-```
+![How heretix-cli, heretix-management and heretix-api fit together: servers, containers and appliances are scanned by heretix-cli, which sends SBOMs to heretix-management, which keeps the inventory and findings; both search heretix-api, which imports public vulnerability sources on a schedule into PostgreSQL](docs/overview.svg)
 
 - **[heretix-cli](https://github.com/TITeee/heretix-cli)** scans a host or image and asks this API about each package.
 - **[heretix-management](https://github.com/TITeee/heretix-management)** keeps the inventory and the findings.
@@ -46,20 +38,6 @@ It can also be used on its own, as a self-hosted vulnerability lookup API.
 - **Distro-aware matching**: dpkg and RPM version comparison for Linux distributions, and each distro's own rating (`distroPriority`) and fix status (`fixStatus`, e.g. "will not fix") per result
 - **Malware detection**: the malicious-package records (`MAL-*`, from [ossf/malicious-packages](https://github.com/ossf/malicious-packages)) that OSV carries in its `npm`, `PyPI`, ... files, searchable like any vulnerability
 - **Simple to run**: PostgreSQL only (no Redis), Docker Compose included, a built-in scheduler and an import dashboard
-
-## Supported OS releases
-
-OSV publishes data for distro releases going back to Debian 3.0, Alpine v3.2 and Ubuntu 14.04. Only the releases below are maintained, meaning they are covered by accuracy checks and fixes. The list is defined in [src/config/support-policy.ts](src/config/support-policy.ts) and was last reviewed on 2026-10-03.
-
-| Distro | Maintained releases | Notes |
-|---|---|---|
-| Debian | 11, 12, 13, 14 | 11 is past regular EOL but still under Debian LTS |
-| Ubuntu | 20.04, 22.04, 24.04, 26.04 LTS, including their Pro / FIPS / Realtime variants | 20.04 is kept for its ESM period. Interim releases (e.g. 25.10) are not maintained |
-| Alpine | v3.21 – v3.24 | |
-| AlmaLinux / Rocky Linux | 8, 9, 10 | |
-| Red Hat Enterprise Linux | 8, 9, 10 | Imported from Red Hat, not OSV: OVAL plus VEX for 8/9, VEX only for 10 (Red Hat publishes no RHEL 10 OVAL) |
-
-Data for other releases is **not deleted**. It stays searchable on a best-effort basis, without accuracy checks or fixes. Oracle Linux (imported from Oracle's OVAL feed) is also searchable on a best-effort basis. Language ecosystems (npm, PyPI, ...) are not affected by this policy.
 
 ## Requirements
 
@@ -167,9 +145,26 @@ The `ecosystem` parameter changes which sources are queried and how versions are
 
 Full reference, including every response field: [docs/api.md](docs/api.md).
 
+## Supported OS releases
+
+Searches for these releases are covered by accuracy checks and fixes:
+
+| Distro | Releases |
+|---|---|
+| Debian | 11, 12, 13, 14 |
+| Ubuntu | 20.04, 22.04, 24.04, 26.04 LTS |
+| Alpine | v3.21 to v3.24 |
+| AlmaLinux / Rocky Linux | 8, 9, 10 |
+| Red Hat Enterprise Linux | 8, 9, 10 |
+| Windows Server (beta) | 2016, 2019, 2022, 2025 (desktop and Server Core) |
+
+Windows Server is in beta: it has been checked against only a few real servers, and it is searched by its full OS build, not by release. Windows 10 and 11 are not covered.
+
+Other releases are **not deleted**: they stay searchable on a best-effort basis, without those checks. Oracle Linux is best-effort too. Language ecosystems (npm, PyPI, ...) are not affected. The reasons, the notes per distro and how the list is kept are in [docs/data-sources.md](docs/data-sources.md#supported-os-releases).
+
 ## Dashboard
 
-`http://localhost:5000/dashboard` shows each source's import status and record count. From the dashboard you can switch scheduled jobs on and off and run them on demand. The page opens on a sign-in screen: enter your admin key (`ADMIN_API_KEY`) to see the data. The key is kept for the open tab only; **Sign out** forgets it.
+`http://localhost:5000/dashboard` shows each source's import status and record count. Each source row has three buttons, one column each: **Schedule** (On/Off) switches the daily scheduled run; **Run now** runs it once (the changes since the last run, or the first load, where the button says **Load**); **Full reload** reads everything again and writes over what is stored, after a confirmation. Use it when how records are read has changed and the stored ones should follow (for example after an upgrade that reads more of the CVE Records); nothing is deleted first, so searches keep working meanwhile. The page opens on a sign-in screen: enter your admin key (`ADMIN_API_KEY`) to see the data. The key is kept for the open tab only; **Sign out** forgets it.
 
 ![Import Status Dashboard](docs/dashboard.png)
 

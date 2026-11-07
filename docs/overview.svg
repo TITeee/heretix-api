@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 450" width="1080" height="450" role="img" aria-labelledby="t d" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', sans-serif">
+<title id="t">heretix overview</title><desc id="d">Servers, containers and appliances are scanned by heretix-cli, which sends SBOMs to heretix-management; both search heretix-api, which imports public vulnerability sources on a schedule into PostgreSQL.</desc>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#475569"/></marker></defs>
+<rect x="1" y="1" width="1078" height="448" rx="14" fill="#ffffff" stroke="#e2e8f0"/>
+<rect x="30" y="150" width="170" height="130" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="115" y="196" font-size="15" font-weight="600" fill="#0f172a" text-anchor="middle">Servers, containers,</text>
+<text x="115" y="216" font-size="15" font-weight="600" fill="#0f172a" text-anchor="middle">network appliances</text>
+<text x="115" y="250" font-size="11" font-weight="400" fill="#475569" text-anchor="middle">package + version</text>
+<rect x="290" y="100" width="210" height="110" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="395" y="148" font-size="17" font-weight="700" fill="#0f172a" text-anchor="middle">heretix-cli</text>
+<text x="395" y="172" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">scans a host or image</text>
+<rect x="290" y="250" width="210" height="130" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="395" y="298" font-size="17" font-weight="700" fill="#0f172a" text-anchor="middle">heretix-management</text>
+<text x="395" y="322" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">keeps the inventory</text>
+<text x="395" y="340" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">and the findings</text>
+<rect x="590" y="120" width="200" height="290" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="2.2"/>
+<text x="690" y="152" font-size="18" font-weight="700" fill="#1d4ed8" text-anchor="middle">heretix-api</text>
+<text x="690" y="172" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">this repository</text>
+<rect x="612" y="190" width="156" height="38" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+<text x="690" y="214" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">Search API</text>
+<rect x="612" y="238" width="156" height="38" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+<text x="690" y="262" font-size="12" font-weight="600" fill="#0f172a" text-anchor="middle">Scheduler + dashboard</text>
+<path d="M632.0 330 v36 a58.0 14 0 0 0 116 0 v-36 a58.0 14 0 0 0 -116 0 z" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+<ellipse cx="690" cy="330" rx="58.0" ry="14" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>
+<text x="690" y="368" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">PostgreSQL</text>
+<rect x="870" y="100" width="180" height="320" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="960" y="134" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">Public sources</text>
+<rect x="886" y="152" width="148" height="28" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="960" y="171" font-size="12" font-weight="500" fill="#0f172a" text-anchor="middle">OSV</text>
+<rect x="886" y="187" width="148" height="28" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="960" y="206" font-size="12" font-weight="500" fill="#0f172a" text-anchor="middle">NVD</text>
+<rect x="886" y="222" width="148" height="28" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="960" y="241" font-size="12" font-weight="500" fill="#0f172a" text-anchor="middle">CISA KEV</text>
+<rect x="886" y="257" width="148" height="28" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="960" y="276" font-size="12" font-weight="500" fill="#0f172a" text-anchor="middle">EPSS</text>
+<rect x="886" y="292" width="148" height="28" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="960" y="311" font-size="11" font-weight="500" fill="#0f172a" text-anchor="middle">CVE Records (CNA)</text>
+<rect x="886" y="327" width="148" height="28" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="960" y="346" font-size="11" font-weight="500" fill="#0f172a" text-anchor="middle">Vendor advisories</text>
+<rect x="886" y="362" width="148" height="28" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="960" y="381" font-size="12" font-weight="500" fill="#0f172a" text-anchor="middle">Distro trackers</text>
+<path d="M200 200 L245 200 L245 155 L286 155" fill="none" stroke="#475569" stroke-width="1.8" marker-end="url(#ah)"/>
+<path d="M200 230 L245 230 L245 315 L286 315" fill="none" stroke="#475569" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="238" y="186" font-size="11" font-weight="400" fill="#0f172a" text-anchor="middle"></text>
+<path d="M500 155 L545 155 L545 209 L586 209" fill="none" stroke="#475569" stroke-width="1.8" marker-end="url(#ah)"/>
+<path d="M500 315 L545 315 L545 330 L586 330" fill="none" stroke="#475569" stroke-width="1.8" marker-end="url(#ah)"/>
+<path d="M866 265 L794 265" fill="none" stroke="#475569" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="518.0" y="252" width="54" height="18" fill="#ffffff"/>
+<text x="545" y="265" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">search</text>
+<text x="830" y="244" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">scheduled</text>
+<text x="830" y="258" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">imports</text>
+<path d="M395 210 L395 246" fill="none" stroke="#475569" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="408" y="219" width="42" height="18" fill="#ffffff"/><text x="429" y="232" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">SBOM</text>
+<rect x="217.0" y="171" width="56" height="18" fill="#ffffff"/><text x="245" y="184" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">collect</text>
+<rect x="204.0" y="263" width="82" height="18" fill="#ffffff"/><text x="245" y="276" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">manual / CSV</text>
+</svg>

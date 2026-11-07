@@ -326,7 +326,7 @@ GET /api/v1/vulnerabilities/stats
 
 ## Import status
 
-Takes the admin key (`ADMIN_API_KEY`). The JSON behind the dashboard: the latest job per source, record counts, and per-OSV-ecosystem status. `osvEcosystems[].maintained` is `false` for distro releases outside the [support policy](../README.md#supported-os-releases). `needsFirstLoad` (on every source row and OSV ecosystem) is `true` while a Run would be the source's full load; an OSV ecosystem being loaded for the first time is listed already, with 0 records. Per-ecosystem record counts are cached for 5 minutes.
+Takes the admin key (`ADMIN_API_KEY`). The JSON behind the dashboard: the latest job per source, record counts, and per-OSV-ecosystem status. `osvEcosystems[].maintained` is `false` for distro releases outside the [support policy](../README.md#supported-os-releases). `needsFirstLoad` (on every source row and OSV ecosystem) is `true` while a Run would be the source's full load; `canReload` is `true` when the source has a full load and is loaded already, so `run?full=true` is possible; an OSV ecosystem being loaded for the first time is listed already, with 0 records. Per-ecosystem record counts are cached for 5 minutes.
 
 ```
 GET /api/v1/import-status
@@ -338,12 +338,13 @@ Takes the admin key (`ADMIN_API_KEY`). `:source` is the job's source key (`nvd`,
 
 ```
 POST  /api/v1/jobs/:source/run    # Run now (fire-and-forget), regardless of the enabled state
+POST  /api/v1/jobs/:source/run?full=true  # Read everything again (a reload) for a source that has a full load
 PATCH /api/v1/jobs/:source        # Enable/disable the scheduled run. Body: { "enabled": boolean }
 GET   /api/v1/jobs/osv-ecosystems # OSV's ecosystem names: [{ "name": "npm", "added": false, "group": "recommended" }, ...]
 POST  /api/v1/jobs/osv-ecosystems # Add one: switch its daily job on and run it. Body: { "name": "PyPI" }
 ```
 
-A Run on a source that was never loaded (NVD, OSV, CVE Records, Microsoft) is its full load; the response says which in `mode` (`"full"` or `"delta"`). Adding an ecosystem takes the names the import command does: `Ubuntu:22.04:LTS` is `Ubuntu`, and `pypi` is answered with `400` and `Did you mean "PyPI"?`. `group` is `recommended` (the language ecosystems and the maintained distros) or `other`. `Red Hat` and `GIT` are not listed, and adding them is `400` with the reason; a Run on `osv-Red Hat` is `404` (see [OSV](data-sources.md#osv)).
+A Run on a source that was never loaded (NVD, OSV, CVE Records, Microsoft) is its full load; the response says which in `mode` (`"full"` or `"delta"`). `?full=true` asks for the full load of a source that is loaded already, e.g. after a change to how its records are read: it reads everything again and writes over what is stored, deleting nothing first, so searches keep working meanwhile. It is `400` for a source with no full load (KEV, the vendor advisories) and for a value other than `true` or `false`. Adding an ecosystem takes the names the import command does: `Ubuntu:22.04:LTS` is `Ubuntu`, and `pypi` is answered with `400` and `Did you mean "PyPI"?`. `group` is `recommended` (the language ecosystems and the maintained distros) or `other`. `Red Hat` and `GIT` are not listed, and adding them is `400` with the reason; a Run on `osv-Red Hat` is `404` (see [OSV](data-sources.md#osv)).
 
 | Case | Response |
 |---|---|
@@ -353,6 +354,7 @@ A Run on a source that was never loaded (NVD, OSV, CVE Records, Microsoft) is it
 
 ```bash
 curl -X POST -H "x-api-key: $ADMIN_API_KEY" "http://localhost:5000/api/v1/jobs/nvd/run"
+curl -X POST -H "x-api-key: $ADMIN_API_KEY" "http://localhost:5000/api/v1/jobs/cna/run?full=true"
 curl -X PATCH -H "x-api-key: $ADMIN_API_KEY" -H "Content-Type: application/json" \
   -d '{"enabled": false}' "http://localhost:5000/api/v1/jobs/osv-npm"
 ```

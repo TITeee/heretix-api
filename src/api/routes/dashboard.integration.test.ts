@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { createServer } from '../server.js';
 import { prisma } from '../../db/client.js';
 import { resetDb } from '../../test-utils/db.js';
+import { importNVDData } from '../../worker/nvd-fetcher.js';
 import { ECOSYSTEM_COUNTS_CACHE_TTL_MS } from './dashboard.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
@@ -234,6 +235,18 @@ describe('dashboard', () => {
       const { coreSources } = await status();
       const bySource = Object.fromEntries(coreSources.map((s: { source: string; needsFirstLoad: boolean }) => [s.source, s.needsFirstLoad]));
       expect(bySource).toMatchObject({ nvd: true, kev: false, epss: false });
+    });
+
+    it('offers a reload only for a source that has a full load and is loaded already', async () => {
+      await resetDb();
+      await importNVDData({ id: 'CVE-2026-0001', published: '2026-01-01T00:00:00.000', lastModified: '2026-01-02T00:00:00.000', descriptions: [{ lang: 'en', value: 'x' }], configurations: [] } as never);
+      await prisma.collectionJob.create({ data: { source: 'nvd', status: 'completed', startedAt: new Date(), completedAt: new Date() } });
+
+      const { coreSources } = await status();
+      const canReload = Object.fromEntries(coreSources.map((s: { source: string; canReload: boolean }) => [s.source, s.canReload]));
+
+      // NVD is loaded and has a full load; CVE Records have a full load but are not loaded; KEV has no full load.
+      expect(canReload).toMatchObject({ nvd: true, cna: false, kev: false });
     });
 
     it('shows an OSV ecosystem that is being loaded for the first time, before any record is here', async () => {

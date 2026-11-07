@@ -18,15 +18,7 @@ GET /api/v1/vulnerabilities/search?package=openssl&version=3.0.2-0ubuntu1.10&eco
 
 heretix 全体の構成は次のとおりです。
 
-```
- サーバー / コンテナ / ネットワーク機器
-            │  インベントリ（パッケージとバージョン）
-            ▼
- heretix-cli, heretix-management ── 検索 ──► heretix-api ◄── 定期取り込み ── OSV, NVD, KEV, EPSS,
-            │                                (PostgreSQL)                     CVE レコード, ベンダーアドバイザリ
-            ▼
- 脆弱性レポート
-```
+![heretix-cli、heretix-management、heretix-api の関係: サーバー、コンテナ、ネットワーク機器を heretix-cli がスキャンして SBOM を heretix-management へ送り、heretix-management がインベントリと検出結果を管理します。両者は heretix-api を検索し、heretix-api は公開ソースを定期的に PostgreSQL へ取り込みます](docs/overview.ja.svg)
 
 - **[heretix-cli](https://github.com/TITeee/heretix-cli)**: ホストやコンテナイメージをスキャンし、検出したパッケージを heretix-api で照合します。
 - **[heretix-management](https://github.com/TITeee/heretix-management)**: インベントリと検出結果を管理します。
@@ -46,20 +38,6 @@ heretix の他のツールと組み合わせずに、単体の脆弱性検索 AP
 - **ディストリビューション対応**: Linux ディストリビューションのパッケージは dpkg / RPM の規則でバージョンを比較する。ディストリビューション独自の重要度（`distroPriority`）と、「修正予定なし」などの修正状況（`fixStatus`）も返す
 - **マルウェア検知**: [ossf/malicious-packages](https://github.com/ossf/malicious-packages) に登録された悪意のあるパッケージ（`MAL-*`）も、脆弱性と同じ方法で検索できる
 - **シンプルな構成**: 必要なミドルウェアは PostgreSQL だけ（Redis は不要）。Docker Compose の設定、スケジューラ、取り込み状況のダッシュボードを同梱
-
-## サポート対象の OS リリース
-
-OSV には、Debian 3.0、Alpine v3.2、Ubuntu 14.04 といった古いリリースのデータも含まれています。このうち保守の対象とするのは、次のリリースだけです。保守対象のリリースは、精度の検証と不具合修正の対象になります。一覧は [src/config/support-policy.ts](src/config/support-policy.ts) で定義しています（最終見直し: 2026-10-03）。
-
-| ディストリビューション | 保守対象のリリース | 備考 |
-|---|---|---|
-| Debian | 11、12、13、14 | 11 は通常のサポートが終了しているが、Debian LTS の期間中のため対象 |
-| Ubuntu | 20.04、22.04、24.04、26.04 LTS（Pro / FIPS / Realtime 版を含む） | 20.04 は ESM の期間中のため対象。中間リリース（25.10 など）は対象外 |
-| Alpine | v3.21 – v3.24 | |
-| AlmaLinux / Rocky Linux | 8、9、10 | |
-| Red Hat Enterprise Linux | 8、9、10 | OSV ではなく Red Hat のデータを取り込む。8/9 は OVAL と VEX、10 は VEX のみ（Red Hat が RHEL 10 の OVAL を公開していないため） |
-
-対象外のリリースのデータも**削除しません**。引き続き検索できますが、精度の検証や不具合修正の対象にはなりません。Oracle Linux（Oracle の OVAL フィードから取り込み）も、同じ扱いで検索できます。npm や PyPI などの言語エコシステムは、このポリシーの対象外です。
 
 ## 動作要件
 
@@ -166,9 +144,26 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-
 
 レスポンスの全項目を含むリファレンスは [docs/api.md](docs/api.md)（英語）にあります。
 
+## サポート対象の OS リリース
+
+次のリリースに対する検索は、精度の検証と不具合修正の対象です。
+
+| ディストリビューション | リリース |
+|---|---|
+| Debian | 11、12、13、14 |
+| Ubuntu | 20.04、22.04、24.04、26.04 LTS |
+| Alpine | v3.21 〜 v3.24 |
+| AlmaLinux / Rocky Linux | 8、9、10 |
+| Red Hat Enterprise Linux | 8、9、10 |
+| Windows Server（ベータ） | 2016、2019、2022、2025（デスクトップ版と Server Core） |
+
+Windows Server はベータ版です。実機数台でしか確認しておらず、リリースではなく、フルの OS ビルドで検索します。Windows 10 / 11 は対象外です。
+
+それ以外のリリースのデータも**削除しません**。精度の検証は行いませんが、ベストエフォートで検索できます。Oracle Linux も同じ扱いです。npm や PyPI などの言語エコシステムは対象外（この方針の影響を受けません）。理由、ディストリビューションごとの注記、一覧の見直し方は [docs/data-sources.md](docs/data-sources.md#supported-os-releases)（英語）にあります。
+
 ## ダッシュボード
 
-`http://localhost:5000/dashboard` では、ソースごとの取り込み状況と件数を確認できます。定期ジョブの有効・無効の切り替えや、手動実行もここから行えます。データを表示するには、画面右上で API キーを入力する必要があります。
+`http://localhost:5000/dashboard` では、ソースごとの取り込み状況と件数を確認できます。ソースの各行には、3つのボタンが列ごとに並びます。**Schedule**（On/Off）は毎日の定期実行の切り替え、**Run now** は手動での一回の実行（前回からの差分。未読み込みのときは初回の取り込みで、ボタンは **Load**）、**Full reload** は全件を読み直して保存済みのデータに上書きします（実行前に確認が出ます）。レコードの読み方が変わり、保存済みのデータもそれに合わせたいとき（たとえば CVE レコードをより多く読めるようになった更新のあと）に使います。事前に削除はしないので、実行中も検索は使えます。データを表示するには、画面右上で API キーを入力する必要があります。
 
 ![Import Status Dashboard](docs/dashboard.png)
 

@@ -14,11 +14,17 @@ const enableSchema = z.object({
 
 const addEcosystemSchema = z.object({ name: z.string().min(1).max(100) });
 
-/** Queue a job the way a Run does: the full load for a source never loaded, the delta after. */
-async function runNow(def: JobDefinition) {
-  const mode = def.firstLoad && !(await def.firstLoad.isLoaded()) ? 'full' : 'delta';
+/**
+ * Queue a job the way a Run does: the full load for a source never loaded, the delta after.
+ * `full` asks for the full load of a source that is loaded already (a reload, after a change
+ * to how records are read): the load writes over what is there, so nothing is empty meanwhile.
+ */
+async function runNow(def: JobDefinition, full = false) {
+  const mode = def.firstLoad && (full || !(await def.firstLoad.isLoaded())) ? 'full' : 'delta';
   return { mode, outcome: await getJobRunner().request(def, mode) } as const;
 }
+
+const runQuerySchema = z.object({ full: z.enum(['true', 'false']).optional() });
 
 export default async function jobsRoute(fastify: FastifyInstance) {
   // The ecosystems OSV lists, for the dashboard's "add an ecosystem". `added` is true
@@ -62,15 +68,23 @@ export default async function jobsRoute(fastify: FastifyInstance) {
 
   // Manual trigger: queued with the scheduled jobs, started when a slot is
   // free. Works regardless of enabled state.
-  fastify.post<{ Params: { source: string } }>('/jobs/:source/run', async (request, reply) => {
+  fastify.post<{ Params: { source: string }; Querystring: { full?: string } }>('/jobs/:source/run', async (request, reply) => {
     const { source } = request.params;
+    const query = runQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({ error: 'full must be "true" or "false"' });
+    }
 
     const def = await resolveJob(source);
     if (!def) {
       return reply.status(404).send({ error: `Unknown job source: ${source}` });
     }
+    const full = query.data.full === 'true';
+    if (full && !def.firstLoad) {
+      return reply.status(400).send({ error: `${source} has no full load: a Run already reads everything it reads` });
+    }
     // The CollectionJob row tracks progress from here: queued, then running.
-    const { mode, outcome } = await runNow(def);
+    const { mode, outcome } = await runNow(def, full);
     if (outcome === 'busy') {
       return reply.status(409).send({ error: `Job already queued or running: ${source}` });
     }
