@@ -32,6 +32,19 @@ export async function requireApiKey(request: FastifyRequest, reply: FastifyReply
 }
 
 /**
+ * Whether the request carries the admin key. The rate limit lets such requests through
+ * (see server.ts): only an administrator holds that key, and the dashboard must keep
+ * working while heretix-management uses up the limit for the address they share. A
+ * request with a wrong key is not let through, and is refused by requireAdminKey.
+ * When ADMIN_API_KEY is the same as API_KEY, no request counts as an administrator's:
+ * every client's would, and the limit would be off for all of them.
+ */
+export function hasAdminKey(request: FastifyRequest): boolean {
+  if (process.env.ADMIN_API_KEY === process.env.API_KEY) return false;
+  return keyMatches(request, process.env.ADMIN_API_KEY);
+}
+
+/**
  * Fastify onRequest hook enforcing the admin key, for running and switching jobs and
  * for the import dashboard's data. It is a key of its own so that the shared key,
  * which sits on every client, cannot start scrapers or stop the imports. API_KEY is

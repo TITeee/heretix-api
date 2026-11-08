@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { createServer } from './server.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
+const ADMIN_API_KEY = 'test-admin-key';
 const headers = { 'x-api-key': API_KEY, 'content-type': 'application/json' };
 
 const LIMIT_ENV = ['RATE_LIMIT_MAX', 'RATE_LIMIT_BATCH_MAX', 'BATCH_SEARCH_MAX_CONCURRENT', 'BATCH_SEARCH_TIMEOUT_MS'];
@@ -16,6 +17,7 @@ describe('request limits', () => {
 
   afterEach(async () => {
     for (const name of LIMIT_ENV) delete process.env[name];
+    process.env.ADMIN_API_KEY = ADMIN_API_KEY;
     await app?.close();
     app = undefined;
   });
@@ -35,6 +37,35 @@ describe('request limits', () => {
     for (let i = 0; i < 10; i++) {
       expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
     }
+  });
+
+  it('keeps the dashboard working once the limit is used up: its page, and requests with the admin key', async () => {
+    process.env.RATE_LIMIT_MAX = '3';
+    app = await createServer();
+    for (let i = 0; i < 3; i++) await search();
+    expect((await search()).statusCode).toBe(429);
+
+    for (const url of ['/dashboard', '/dashboard.js', '/dashboard.css', '/icon.png']) {
+      expect((await app.inject({ method: 'GET', url })).statusCode).toBe(200);
+    }
+    const status = (key: string) => app!.inject({ method: 'GET', url: '/api/v1/import-status', headers: { 'x-api-key': key } });
+    for (let i = 0; i < 5; i++) expect((await status(ADMIN_API_KEY)).statusCode).toBe(200);
+
+    // Only the admin key is let through: the shared key stays limited, and a wrong key is
+    // refused by the key check as before.
+    expect((await search()).statusCode).toBe(429);
+    expect((await status('not-the-admin-key')).statusCode).toBe(401);
+    expect((await status(API_KEY)).statusCode).toBe(401);
+  });
+
+  it('lets nobody through when the admin key is the same as the shared key', async () => {
+    process.env.RATE_LIMIT_MAX = '3';
+    process.env.ADMIN_API_KEY = API_KEY;
+    app = await createServer();
+    for (let i = 0; i < 3; i++) await search();
+    expect((await search()).statusCode).toBe(429);
+    const status = await app.inject({ method: 'GET', url: '/api/v1/import-status', headers: { 'x-api-key': API_KEY } });
+    expect(status.statusCode).toBe(429);
   });
 
   it('does not limit when RATE_LIMIT_MAX is 0', async () => {
