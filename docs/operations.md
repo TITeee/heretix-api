@@ -42,7 +42,7 @@ ADMIN_API_KEY=              # Required for the dashboard and the job endpoints, 
 TRUST_PROXY=                # Optional. Address(es) of a reverse proxy in front, comma-separated, CIDR allowed (default: none)
 ALLOWED_ORIGINS=            # Optional, comma-separated browser origins allowed to read responses (default: none)
 DATABASE_POOL_MAX=20        # Optional. Postgres connection pool size
-RATE_LIMIT_MAX=1200         # Optional. Requests per client address per minute, over 429 (0 = off). /health is never limited
+RATE_LIMIT_MAX=1200         # Optional. Requests per client address per minute, over 429 (0 = off). /health, the dashboard page and requests with ADMIN_API_KEY are never limited
 RATE_LIMIT_BATCH_MAX=30     # Optional. Batch searches per client address per minute (0 = only the limit above)
 BATCH_SEARCH_MAX_CONCURRENT=2  # Optional. Batch searches running at once; more get 429 (0 = no cap)
 BATCH_SEARCH_TIMEOUT_MS=300000  # Optional. A batch search still running after this is answered 503 and its slot freed (0 = no limit)
@@ -55,7 +55,7 @@ CISCO_CLIENT_ID=            # Required for the Cisco import (openVuln API)
 CISCO_CLIENT_SECRET=
 ```
 
-Generate each key with `openssl rand -hex 32`; a key shorter than 32 characters is logged as a warning at startup. `API_KEY` sits on every client (heretix-management, heretix-cli), so it only searches: running and switching jobs and the dashboard's data take `ADMIN_API_KEY`.
+Generate each key with `openssl rand -hex 32`; a key shorter than 32 characters is logged as a warning at startup, and so is an `ADMIN_API_KEY` equal to `API_KEY`. `API_KEY` sits on every client (heretix-management, heretix-cli), so it only searches: running and switching jobs and the dashboard's data take `ADMIN_API_KEY`.
 
 `TRUST_PROXY`: behind a TLS reverse proxy every request comes from the proxy's address, and the per-address limits below would count all clients as one. Set it to the proxy's address so they read the client from `X-Forwarded-For`. Leave it unset without a proxy: a client could otherwise pick its own address with that header. Setup, with Caddy and nginx examples: [tls-proxy.md](tls-proxy.md).
 

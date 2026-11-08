@@ -9,7 +9,7 @@ import vulnerabilitiesRoute from './routes/vulnerabilities.js';
 import dashboardRoute from './routes/dashboard.js';
 import jobsRoute from './routes/jobs.js';
 import catalogRoute from './routes/catalog.js';
-import { MIN_KEY_LENGTH, requireAdminKey, requireApiKey } from './auth.js';
+import { MIN_KEY_LENGTH, hasAdminKey, requireAdminKey, requireApiKey } from './auth.js';
 import { trustProxyFromEnv } from './trust-proxy.js';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -22,6 +22,9 @@ function warnAboutKeys(log: FastifyBaseLogger): void {
     } else if (key.length < MIN_KEY_LENGTH) {
       log.warn(`${name} is shorter than ${MIN_KEY_LENGTH} characters; generate one with: openssl rand -hex 32`);
     }
+  }
+  if (process.env.API_KEY && process.env.API_KEY === process.env.ADMIN_API_KEY) {
+    log.warn('ADMIN_API_KEY is the same as API_KEY: every client holding the shared key can run and switch jobs, and the dashboard is rate-limited with them. Set a different ADMIN_API_KEY (openssl rand -hex 32).');
   }
 }
 
@@ -120,9 +123,21 @@ export async function createServer() {
   // enough for normal use (autocomplete, scans) and is a backstop. The heavier
   // protection is the cap on concurrent batch searches (see routes/vulnerabilities.ts).
   // RATE_LIMIT_MAX=0 turns it off.
+  //
+  // A request with the admin key is let through: heretix-management's Refresh Metadata
+  // uses the whole limit on purpose (it waits on 429 and goes on), and on one Docker host
+  // the administrator's browser reaches this API from the same address, so the dashboard
+  // would be refused while it runs. Only a request that already passes the admin key check
+  // is let through; a wrong key is refused by that check as on every route. The dashboard's
+  // page and files are not limited at all.
   const rateLimitMax = envInt('RATE_LIMIT_MAX', 1200);
   if (rateLimitMax > 0) {
-    await fastify.register(rateLimit, { global: true, max: rateLimitMax, timeWindow: '1 minute' });
+    await fastify.register(rateLimit, {
+      global: true,
+      max: rateLimitMax,
+      timeWindow: '1 minute',
+      allowList: (request) => hasAdminKey(request),
+    });
   }
 
   // Health check (monitoring polls it; never limited)

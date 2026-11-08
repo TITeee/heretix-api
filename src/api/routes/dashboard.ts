@@ -202,11 +202,14 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     const body = await readFile(path.join(process.cwd(), 'public', name));
     return reply.type(type).send(body);
   };
-  fastify.get('/icon.png', staticFile('icon.png', 'image/png'));
-  fastify.get('/dashboard.css', staticFile('dashboard.css', 'text/css; charset=utf-8'));
-  fastify.get('/dashboard.js', staticFile('dashboard.js', 'text/javascript; charset=utf-8'));
+  // The page and its files are fixed and small, and never rate-limited (see server.ts):
+  // the dashboard must open while heretix-management uses up the limit.
+  const unlimited = { config: { rateLimit: false as const } };
+  fastify.get('/icon.png', unlimited, staticFile('icon.png', 'image/png'));
+  fastify.get('/dashboard.css', unlimited, staticFile('dashboard.css', 'text/css; charset=utf-8'));
+  fastify.get('/dashboard.js', unlimited, staticFile('dashboard.js', 'text/javascript; charset=utf-8'));
 
-  fastify.get('/dashboard', async (_req, reply) => {
+  fastify.get('/dashboard', unlimited, async (_req, reply) => {
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
