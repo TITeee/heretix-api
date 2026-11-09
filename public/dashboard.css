@@ -41,11 +41,13 @@ body {
 }
 
 .nav { border-bottom-width: 1px; background: var(--background); }
-.nav-inner { max-width: 72rem; margin: 0 auto; padding: 0.75rem 1.5rem; display: flex; align-items: center; gap: 0.5rem; }
+.nav-inner { max-width: 90rem; margin: 0 auto; padding: 0.75rem 1.5rem; display: flex; align-items: center; gap: 0.5rem; }
 .nav-inner img { width: 1.5rem; height: 1.5rem; border-radius: 0.125rem; }
 .brand { font-weight: 700; font-size: 1.125rem; letter-spacing: -0.025em; }
 
-.page { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem; }
+/* Wide enough for the tables' 11 columns with room to spare: a table that does not fit scrolls sideways,
+   and a browser with a scrollbar of its own or a wider font needs more than the 72rem this once was. */
+.page { max-width: 90rem; margin: 0 auto; padding: 2rem 1.5rem; }
 
 .header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
 .header h1 { font-size: 1.5rem; line-height: 2rem; font-weight: 700; }
