@@ -120,6 +120,7 @@ tbody tr.row:hover { background: var(--row-hover); }
 tr.row-disabled { opacity: 0.5; }
 td.message { padding: 2rem 1.5rem; text-align: center; color: var(--muted-foreground); }
 .name { font-weight: 500; }
+.releases { font-size: 0.75rem; font-weight: 400; margin-left: 0.375rem; cursor: help; }
 .num { text-align: right; font-family: var(--font-mono); }
 th.num { font-family: inherit; }
 .text-destructive { color: var(--destructive); }

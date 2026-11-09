@@ -275,6 +275,14 @@ function renderCards(counts) {
   ).join('');
 }
 
+// An OSV job that imports several releases of a distro (one row, as it is one job): how many, and each
+// release with its own count in the tooltip. The row's Records is the job's own count, not their sum.
+function releasesNote(r) {
+  if (!r.releases || r.releases.length < 2) return '';
+  const detail = r.releases.map(x => x.ecosystem + ' ' + fmt(x.recordCount) + (x.maintained ? '' : ' (outside support policy)')).join('\n');
+  return ' <span class="releases muted" title="' + esc(detail) + '">' + r.releases.length + ' releases</span>';
+}
+
 function messageRow(html) {
   return '<tr><td colspan="11" class="message">' + html + '</td></tr>';
 }
@@ -291,7 +299,7 @@ function renderTable(tbodyId, rows, getName, options) {
   const ordered = options.sort ? [...rows].sort((a, b) => getName(a).localeCompare(getName(b))) : rows;
   tbody.innerHTML = ordered.map(r =>
     '<tr class="row' + (r.enabled === false ? ' row-disabled' : '') + '">' +
-      '<td class="name">' + esc(getName(r)) + '</td>' +
+      '<td class="name">' + esc(getName(r)) + releasesNote(r) + '</td>' +
       '<td>' + (r.needsFirstLoad && !r.status ? '<span class="badge badge-neutral">not loaded</span>' : statusBadge(r.status)) + fetchFailedBadge(r.fetchFailed) + '</td>' +
       '<td class="muted">' + esc(relativeTime(r.completedAt)) + '</td>' +
       '<td class="num muted">' + esc(formatDuration(r.durationMs)) + '</td>' +

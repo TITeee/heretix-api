@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { requireAdminKey } from '../auth.js';
@@ -6,7 +7,7 @@ import { prisma } from '../../db/client.js';
 import { STATIC_JOBS, resolveJob } from '../../jobs/registry.js';
 import { getEnabledMap, defaultEnabled } from '../../jobs/config.js';
 import { isMaintainedOsvEcosystem } from '../../config/support-policy.js';
-import { osvBucketName } from '../../jobs/osv-bucket.js';
+import { SHARED_BUCKET_ECOSYSTEMS, osvBucketName } from '../../jobs/osv-bucket.js';
 
 function isOsvEcosystemSource(source: string): boolean {
   return source.startsWith('osv-') && source !== 'osv-delta';
@@ -29,21 +30,48 @@ function jobDurationMs(job: { startedAt: Date | null; completedAt: Date | null }
 // re-running that scan on every poll buys nothing but load. Cached across all
 // callers for a few minutes instead.
 export const ECOSYSTEM_COUNTS_CACHE_TTL_MS = 5 * 60 * 1000;
-let ecosystemCountsCache: { rows: { ecosystem: string; count: bigint }[]; expiresAt: number } | null = null;
+type OsvCounts = { ecosystems: { ecosystem: string; count: bigint }[]; buckets: { bucket: string; count: bigint }[] };
+let ecosystemCountsCache: { counts: OsvCounts; expiresAt: number } | null = null;
 
-async function getEcosystemCounts(): Promise<{ ecosystem: string; count: bigint }[]> {
+// osvBucketName() in SQL: the shared bucket of an ecosystem ("Ubuntu:22.04:LTS" is "Ubuntu"), else the
+// ecosystem itself. Built from the same list, so the two cannot disagree.
+const BUCKET_SQL = Prisma.sql`CASE ${Prisma.join(
+  SHARED_BUCKET_ECOSYSTEMS.map((base) => Prisma.sql`WHEN ecosystem = ${base} OR starts_with(ecosystem, ${`${base}:`}) THEN ${base}`),
+  ' ',
+)} ELSE ecosystem END`;
+
+/** For tests. */
+export function resetOsvCountsCache(): void {
+  ecosystemCountsCache = null;
+}
+
+/**
+ * The distinct vulnerabilities of each ecosystem (a release of a distro is an ecosystem), and of each
+ * bucket, which is what a job imports: one vulnerability that affects three releases is one in the
+ * bucket, so the bucket's count is not the sum of its releases'. The two scans run side by side.
+ */
+async function getOsvCounts(): Promise<OsvCounts> {
   if (ecosystemCountsCache && ecosystemCountsCache.expiresAt > Date.now()) {
-    return ecosystemCountsCache.rows;
+    return ecosystemCountsCache.counts;
   }
-  const rows = await prisma.$queryRaw<{ ecosystem: string; count: bigint }[]>`
-    SELECT ecosystem, COUNT(DISTINCT "vulnerabilityId") AS count
-    FROM "OSVAffectedPackage"
-    WHERE ecosystem IS NOT NULL
-    GROUP BY ecosystem
-    ORDER BY ecosystem ASC
-  `;
-  ecosystemCountsCache = { rows, expiresAt: Date.now() + ECOSYSTEM_COUNTS_CACHE_TTL_MS };
-  return rows;
+  const [ecosystems, buckets] = await Promise.all([
+    prisma.$queryRaw<{ ecosystem: string; count: bigint }[]>`
+      SELECT ecosystem, COUNT(DISTINCT "vulnerabilityId") AS count
+      FROM "OSVAffectedPackage"
+      WHERE ecosystem IS NOT NULL
+      GROUP BY ecosystem
+      ORDER BY ecosystem ASC
+    `,
+    prisma.$queryRaw<{ bucket: string; count: bigint }[]>`
+      SELECT ${BUCKET_SQL} AS bucket, COUNT(DISTINCT "vulnerabilityId") AS count
+      FROM "OSVAffectedPackage"
+      WHERE ecosystem IS NOT NULL
+      GROUP BY 1
+    `,
+  ]);
+  const counts = { ecosystems, buckets };
+  ecosystemCountsCache = { counts, expiresAt: Date.now() + ECOSYSTEM_COUNTS_CACHE_TTL_MS };
+  return counts;
 }
 
 // Maps CollectionJob.source values to the AdvisoryVulnerability.source value
@@ -85,7 +113,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
 
     // Per-ecosystem distinct vulnerability counts (OSVAffectedPackage is source of truth;
     // OSVVulnerability.ecosystem only stores affected[0] and is not updated on re-import)
-    const ecosystemCounts = await getEcosystemCounts();
+    const osvCounts = await getOsvCounts();
 
     // Whether a Run would load the source in full: it has never been loaded (see JobDefinition.firstLoad).
     const needsFirstLoad = async (source: string): Promise<boolean> => {
@@ -101,16 +129,29 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
     const enabledMap = await getEnabledMap();
     const isSourceEnabled = (source: string): boolean => enabledMap.get(source) ?? defaultEnabled(source);
 
-    const osvRow = async (ecosystem: string, recordCount: number) => {
-      // The releases of a distro share one job (osv-Debian runs for Debian:12 and Debian:13 alike).
-      const source = `osv-${osvBucketName(ecosystem)}`;
+    // One row per job, not per release: the releases of a distro share one job (osv-Debian runs for
+    // Debian:12 and Debian:13 alike), so its On/Off, Run and Reload are one set of buttons. The
+    // releases, with their own counts, are listed inside the row.
+    const bucketCount = new Map(osvCounts.buckets.map((b) => [b.bucket, Number(b.count)]));
+    const releasesByBucket = new Map<string, { ecosystem: string; recordCount: number; maintained: boolean }[]>();
+    for (const r of osvCounts.ecosystems) {
+      const bucket = osvBucketName(r.ecosystem);
+      if (!releasesByBucket.has(bucket)) releasesByBucket.set(bucket, []);
+      releasesByBucket.get(bucket)!.push({ ecosystem: r.ecosystem, recordCount: Number(r.count), maintained: isMaintainedOsvEcosystem(r.ecosystem) });
+    }
+    const osvRow = async (bucket: string, recordCount: number, releases: { ecosystem: string; recordCount: number; maintained: boolean }[] = []) => {
+      const source = `osv-${bucket}`;
       const job = latestBySource.get(source);
       return {
-        ecosystem,
+        ecosystem: bucket,
         source,
         enabled: isSourceEnabled(source),
-        maintained: isMaintainedOsvEcosystem(ecosystem),
+        // A job is maintained when any of its releases is; one with none of its own (an ecosystem
+        // named like its bucket) is judged by the name.
+        maintained: releases.length > 0 ? releases.some((r) => r.maintained) : isMaintainedOsvEcosystem(bucket),
         recordCount,
+        // The releases the job imports, only when there is more than one to tell apart.
+        releases: releases.length > 1 ? [...releases].sort((a, b) => Number(b.maintained) - Number(a.maintained) || a.ecosystem.localeCompare(b.ecosystem)) : [],
         needsFirstLoad: await needsFirstLoad(source),
         canReload: await canReload(source),
         status: job?.status ?? null,
@@ -121,7 +162,7 @@ export default async function dashboardRoute(fastify: FastifyInstance) {
         errorMessage: job?.errorMessage ?? null,
       };
     };
-    const osvEcosystems = await Promise.all(ecosystemCounts.map((r) => osvRow(r.ecosystem, Number(r.count))));
+    const osvEcosystems = await Promise.all([...releasesByBucket].map(([bucket, releases]) => osvRow(bucket, bucketCount.get(bucket) ?? 0, releases)));
     // An ecosystem being loaded for the first time has a job but no records yet: show it already.
     const shown = new Set(osvEcosystems.map((e) => e.source));
     const pending = [...latestBySource.keys()].filter((src) => src.startsWith('osv-') && !src.startsWith('osv-full-') && !shown.has(src));
@@ -281,7 +322,7 @@ ${statusPanel('Vendor Advisories', 'Per-vendor advisory feed import status', 'Ve
     <div class="panel">
       <div class="panel-head">
         <h2>OSV Ecosystems</h2>
-        <p>Per-ecosystem import status and record counts</p>
+        <p>One row per import job. The releases of a distro are one job: hover &quot;N releases&quot; for each release's own count</p>
       </div>
       <!-- Switches the daily job on and loads the ecosystem in full: no command to run first. -->
       <form id="osv-add-form" class="add-form" novalidate>
