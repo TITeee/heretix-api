@@ -1,10 +1,10 @@
-import { describe, it, expect, afterAll, afterEach, beforeAll, vi } from 'vitest';
+import { describe, it, expect, afterAll, afterEach, beforeAll, beforeEach, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createServer } from '../server.js';
 import { prisma } from '../../db/client.js';
 import { resetDb } from '../../test-utils/db.js';
 import { importNVDData } from '../../worker/nvd-fetcher.js';
-import { ECOSYSTEM_COUNTS_CACHE_TTL_MS } from './dashboard.js';
+import { ECOSYSTEM_COUNTS_CACHE_TTL_MS, resetOsvCountsCache } from './dashboard.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
 const ADMIN_API_KEY = 'test-admin-key'; // likewise
@@ -116,8 +116,8 @@ describe('dashboard', () => {
 
     describe('OSV rows of a distro that shares one bucket', () => {
       // OSV serves every Debian release from one bucket, so one job ("osv-Debian") imports them
-      // all. A row for "Debian:13" that looked up "osv-Debian:13" would show the status of a
-      // job that no longer runs (and its old enabled flag), hiding the real one.
+      // all, and the dashboard has one row for it. A row that looked up "osv-Debian:13" would show
+      // the status of a job that no longer runs (and its old enabled flag), hiding the real one.
       const ecosystem = 'Debian:13';
 
       afterEach(async () => {
@@ -139,9 +139,85 @@ describe('dashboard', () => {
         await prisma.collectionJob.create({ data: { source: 'osv-Debian:13', status: 'completed', startedAt: new Date(0), completedAt: new Date(0) } });
         await prisma.jobConfig.create({ data: { source: 'osv-Debian', enabled: true } });
 
-        const row = (await get({ 'x-api-key': ADMIN_API_KEY })).json().osvEcosystems.find((e: { ecosystem: string }) => e.ecosystem === ecosystem);
+        const row = (await get({ 'x-api-key': ADMIN_API_KEY })).json().osvEcosystems.find((e: { ecosystem: string }) => e.ecosystem === 'Debian');
 
         expect(row).toMatchObject({ source: 'osv-Debian', enabled: true, status: 'failed', errorMessage: 'frozen bucket' });
+      });
+    });
+
+    describe('one OSV row per job', () => {
+      // The releases of a distro are one job, with one On/Off, Run and Reload: one row, with the
+      // releases and their own counts inside it, and the job's own distinct count as its Records.
+      const prefix = 'one-row-test';
+      type Row = { ecosystem: string; source: string; recordCount: number; maintained: boolean; releases: { ecosystem: string; recordCount: number; maintained: boolean }[] };
+
+      async function vuln(name: string, ecosystems: string[]) {
+        const master = await prisma.vulnerability.create({ data: {} });
+        const osv = await prisma.oSVVulnerability.create({ data: { osvId: `${prefix}-${name}`, rawData: {}, masterVulnId: master.id } });
+        for (const ecosystem of ecosystems) {
+          await prisma.oSVAffectedPackage.create({ data: { vulnerabilityId: osv.id, ecosystem, packageName: `pkg-${name}` } });
+        }
+      }
+      const rows = async (): Promise<Row[]> => {
+        resetOsvCountsCache();
+        return (await get({ 'x-api-key': ADMIN_API_KEY })).json().osvEcosystems;
+      };
+
+      // Other tests, and other files on this database, leave OSV rows behind; these count exact numbers.
+      beforeEach(async () => {
+        await resetDb();
+      });
+
+      afterEach(async () => {
+        resetOsvCountsCache();
+        await prisma.oSVAffectedPackage.deleteMany({ where: { vulnerability: { osvId: { startsWith: prefix } } } });
+        await prisma.oSVVulnerability.deleteMany({ where: { osvId: { startsWith: prefix } } });
+      });
+
+      it('lists the releases of a distro as one row, counting each vulnerability once', async () => {
+        await vuln('a', ['Ubuntu:22.04:LTS', 'Ubuntu:24.04:LTS']);
+        await vuln('b', ['Ubuntu:22.04:LTS']);
+        await vuln('c', ['Debian:12']);
+
+        const all = await rows();
+
+        expect(all.filter((r) => r.ecosystem.startsWith('Ubuntu'))).toEqual([
+          expect.objectContaining({
+            ecosystem: 'Ubuntu', source: 'osv-Ubuntu', recordCount: 2, maintained: true,
+            releases: [
+              { ecosystem: 'Ubuntu:22.04:LTS', recordCount: 2, maintained: true },
+              { ecosystem: 'Ubuntu:24.04:LTS', recordCount: 1, maintained: true },
+            ],
+          }),
+        ]);
+        // A distro with one release in the data has nothing to tell apart inside its row.
+        expect(all.find((r) => r.ecosystem === 'Debian')).toMatchObject({ source: 'osv-Debian', recordCount: 1, releases: [] });
+        expect(all.some((r) => r.ecosystem === 'Ubuntu:22.04:LTS' || r.ecosystem === 'Debian:12')).toBe(false);
+      });
+
+      it('is maintained when any release is, and says which releases are outside the policy', async () => {
+        await vuln('d', ['Debian:12']);
+        await vuln('e', ['Debian:3.0']);
+        await vuln('f', ['Alpine:v3.2']);
+
+        const all = await rows();
+
+        const debian = all.find((r) => r.ecosystem === 'Debian')!;
+        expect(debian.maintained).toBe(true);
+        expect(debian.releases.map((r) => [r.ecosystem, r.maintained])).toEqual([['Debian:12', true], ['Debian:3.0', false]]);
+        // Only a release outside the policy: the job goes under "Outside support policy".
+        expect(all.find((r) => r.ecosystem === 'Alpine')).toMatchObject({ maintained: false });
+      });
+
+      it('puts an ecosystem in the bucket the importer uses (osvBucketName), and leaves the others as they are', async () => {
+        await vuln('g', ['AlmaLinux:9', 'Rocky Linux:9', 'Root:Debian:13', 'Red Hat:9', 'npm', 'Debian']);
+
+        const all = await rows();
+        const names = new Set(all.map((r) => r.ecosystem));
+
+        for (const name of ['AlmaLinux', 'Rocky Linux', 'Root', 'Red Hat', 'npm', 'Debian']) expect(names.has(name), name).toBe(true);
+        for (const name of ['AlmaLinux:9', 'Rocky Linux:9', 'Root:Debian:13', 'Red Hat:9']) expect(names.has(name), name).toBe(false);
+        expect(all.find((r) => r.ecosystem === 'Root')?.source).toBe('osv-Root');
       });
     });
   });
