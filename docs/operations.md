@@ -136,6 +136,26 @@ The Compose file sets `shared_buffers` to 1GB. Change it with `POSTGRES_SHARED_B
 
 The name suggestions (`/vulnerabilities/suggest`) match a prefix on `lower(name)`. Unless the database uses the `C` collation, a plain index cannot serve `LIKE 'x%'`, so migration `20261010150000_add_lowercase_prefix_indexes` adds `lower(...) text_pattern_ops` indexes on `NVDAffectedPackage` (`packageName`, `vendor`), `OSVAffectedPackage` (`packageName`) and `CnaAffectedProduct` (`product`). Prisma's schema cannot express an expression index and ignores one when it compares the database with `schema.prisma`, so they do not appear there and `prisma migrate dev` leaves them alone. They take a few seconds per million rows to build and hold a write lock on their table meanwhile, so the first start after the upgrade builds them before any import runs. A second migration, `20261010150100_analyze_prefix_search_tables`, analyzes the three tables: until a table is analyzed the planner ignores the new indexes. Without the indexes the suggestions still work, only slowly (two to five seconds on a database with millions of rows).
 
+## Backup and rebuild
+
+heretix-api's database holds public data only, so it is not backed up: after a lost disk or a move to a new server, it is rebuilt by loading the sources again. What has to be kept is small:
+
+- **`.env`**: `API_KEY` (heretix-management and heretix-cli are set up with it), `ADMIN_API_KEY` and `POSTGRES_PASSWORD`. A new `API_KEY` works too, but every client then needs it.
+- **Which jobs are on.** Note them, or save the list now and then:
+
+  ```bash
+  docker compose exec db psql -U postgres -d heretix -c 'SELECT source, enabled FROM "JobConfig" ORDER BY source'
+  ```
+
+### Rebuilding
+
+1. **Pause automatic scans in heretix-management first** (Settings → Vulnerability API → Pause Automatic Scans). Until the loads have finished, a scan finds alerts gone: their grace period starts, and after about three days they are closed. heretix-management warns about an ecosystem with no data at all and leaves its alerts alone, but it cannot tell a partly loaded one.
+2. Start heretix-api with an empty database (on a new server, as in the [quick start](../README.md#quick-start); on the old one, `docker compose down -v` deletes the data first) and load what you had, as in [step 3](../README.md#3-load-data): NVD (several hours), KEV and EPSS after it, each OSV ecosystem, and the other sources you had switched on.
+3. Wait until every row of the dashboard shows `completed`.
+4. **Resume automatic scans** in heretix-management. The next scan brings the alerts up to date.
+
+A database copy (`pg_dump`) is a few GB and saves the hours of loading. If that matters more to you than the disk space, back it up the way heretix-management's `scripts/backup.sh` does, with `-d heretix`; a restored copy then catches up on its next scheduled runs. Pause scans while it does, as above.
+
 ## Troubleshooting
 
 **`P1001: Can't reach database server`**: check `DATABASE_URL`, check that PostgreSQL is running, and check firewall / security group rules.
