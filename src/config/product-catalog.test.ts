@@ -80,3 +80,18 @@ describe('the catalog entries as data', () => {
     expect(CATALOG_ENTRIES.length).toBeGreaterThanOrEqual(20);
   });
 });
+
+describe('the Node.js entry', () => {
+  it('covers every spelling the Node.js security team has used in CVE records', () => {
+    const cna = CATALOG_ENTRIES.find((e) => e.id === 'nodejs')!.cna;
+    const covers = (vendor: string, product: string) =>
+      cna.some((p) => p.vendors.includes(vendor) && p.products.includes(product));
+    expect(covers('nodejs', 'node')).toBe(true);
+    expect(covers('NodeJS', 'Node')).toBe(true);
+    expect(covers('nodejs', 'nodejs')).toBe(true);
+  });
+
+  it('Nagios XI is searched in NVD only, as no CVE record names it', () => {
+    expect(CATALOG_ENTRIES.find((e) => e.id === 'nagios-xi')!.cna).toEqual([]);
+  });
+});

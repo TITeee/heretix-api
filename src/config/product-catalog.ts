@@ -188,7 +188,8 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     id: 'nagios-xi', name: 'Nagios XI', vendor: 'Nagios', product: 'Nagios XI', category: 'devops',
     aliases: ['nagios'], versionHint: '5.11.3',
     nvd: [{ vendor: 'nagios', products: ['nagios_xi'] }],
-    cna: [{ vendors: ['Nagios'], products: ['Nagios XI'] }],
+    // No CVE record names Nagios XI (its CNA rows are all Nagios Core), so only NVD finds it.
+    cna: [],
   },
 
   // ── Applications ────────────────────────────────────────────────────────
@@ -287,7 +288,11 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     id: 'nodejs', name: 'Node.js', vendor: 'OpenJS Foundation', product: 'Node.js', category: 'middleware',
     aliases: ['nodejs', 'node'], versionHint: '20.11.1',
     nvd: [{ vendor: 'nodejs', products: ['node.js'] }],
-    cna: [{ vendors: ['The Node.js Project'], products: ['Node.js'] }],
+    // The Node.js security team's records name the product three ways: nodejs / node (the
+    // current ones), NodeJS / Node and nodejs / nodejs. "The Node.js Project" / "Node.js"
+    // matched no row, so a CVE that only the CNA described (NVD still Received, no CPE) was
+    // not found by the catalog entry.
+    cna: [{ vendors: ['nodejs', 'NodeJS'], products: ['node', 'Node', 'nodejs'] }],
   },
   {
     id: 'kubernetes', name: 'Kubernetes', vendor: 'Kubernetes', product: 'Kubernetes', category: 'middleware',
