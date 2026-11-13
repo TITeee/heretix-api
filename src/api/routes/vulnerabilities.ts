@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
+import { ecosystemsWithoutData } from '../../utils/osv-coverage.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { compareRpmVersions } from '../../utils/rpm-version.js';
 import { compareDpkgVersions } from '../../utils/dpkg-version.js';
@@ -1386,7 +1387,9 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
         }
       }
 
-      return { results };
+      // An empty result for an ecosystem OSV has no record of says nothing about its packages.
+      const noData = await ecosystemsWithoutData(packages.map(p => p.ecosystem));
+      return { results, coverage: { noData } };
     } catch (err) {
       if (!(err instanceof BatchTimeoutError)) throw err;
       request.log.error(
