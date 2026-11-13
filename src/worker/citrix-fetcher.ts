@@ -17,8 +17,6 @@ import { nextCitrixBranch, parseCitrixVersion } from '../utils/citrix-version.js
 // word their versions differently and are not read.
 const SITEMAP_INDEX_URL = 'https://support.citrix.com/sitemap.xml';
 const ARTICLE_URL = /<loc>(https:\/\/support\.citrix\.com\/external\/article\/(CTX\d+)\/([^<]+?)\.html)<\/loc>/g;
-// The slug is cut at about 40 characters, so the family is recognized by its prefix.
-const BULLETIN_SLUG = /^(?:(?:netscaler|citrix)-(?:adc|gateway)-and-(?:netscaler|citrix)-(?:gateway|adc)-secu|netscaler-console-agent-and-sdx-svm-secu)/;
 const CVE_ID = /CVE-\d{4}-\d{4,}/g;
 
 // ─── Text ──────────────────────────────────────────────────────
@@ -304,6 +302,28 @@ export function buildCitrixAdvisories(b: Bulletin): NormalizedAdvisory[] {
   });
 }
 
+// ─── Which articles are read ───────────────────────────────────
+
+/**
+ * Whether a sitemap slug may be a NetScaler security bulletin. The slug is the article's title
+ * cut at about 40 characters, and Citrix words the titles of one product family in more than one
+ * way: "NetScaler ADC and NetScaler Gateway Security Bulletin for ...", "NetScaler Console, Agent
+ * and SDX (SVM) Security Bulletin ..." and, from November 2026, "Citrix NetScaler Console
+ * Security Bulletin for CVE-2026-...". A list of prefixes missed the third, and would miss the
+ * next. So the rule is the words, not the shape: a slug naming NetScaler and a security bulletin
+ * (the cut can end "secu" or "bullet"), or the old Citrix ADC / Gateway pair.
+ *
+ * It only chooses what to fetch. A page is turned into advisories only when it holds a CVE and
+ * a "<product> before <build>" line, so a how-to article that matches the words yields nothing.
+ */
+export function isBulletinSlug(slug: string): boolean {
+  // "netscaler" anywhere, or the old names "citrix-adc" / "citrix-gateway" at the start: a
+  // "citrix-gateway-plugin-for-windows" client is another product.
+  const product = /(?:^|-)netscaler(?:-|$)|^citrix-(?:adc|gateway)-and-/.test(slug);
+  const bulletin = /(?:^|-)(?:secu|secur|securi|securit|security)(?:-|$)|(?:^|-)bullet(?:i|in)?(?:-|$)/.test(slug);
+  return product && bulletin;
+}
+
 // ─── Data fetching ─────────────────────────────────────────────
 
 const HTTP = {
@@ -321,7 +341,7 @@ async function listBulletins(): Promise<{ id: string; url: string }[]> {
   const found = new Map<string, string>();
   for (const sitemap of sitemaps) {
     const { data } = await axios.get<string>(sitemap, HTTP);
-    for (const m of data.matchAll(ARTICLE_URL)) if (BULLETIN_SLUG.test(m[3])) found.set(m[2], m[1]);
+    for (const m of data.matchAll(ARTICLE_URL)) if (isBulletinSlug(m[3])) found.set(m[2], m[1]);
   }
   return [...found].map(([id, url]) => ({ id, url }));
 }

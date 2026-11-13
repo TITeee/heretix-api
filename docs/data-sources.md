@@ -358,7 +358,9 @@ Rows for Ivanti's own cloud services are skipped, since no customer runs a versi
 
 [citrix-fetcher.ts](../src/worker/citrix-fetcher.ts) · `pnpm import:citrix` · daily 16:45 UTC
 
-The security bulletins of NetScaler ADC and Gateway (formerly Citrix ADC and Gateway), read from the knowledge articles on support.citrix.com. The sitemap lists them; plain HTTP is enough, no browser. A bulletin becomes one advisory per CVE (`<CTX id>/<cveId>`), with the CVSS v4 score from its CVE table.
+The security bulletins of NetScaler ADC, Gateway and Console (formerly Citrix ADC and Gateway), read from the knowledge articles on support.citrix.com. The sitemap lists them; plain HTTP is enough, no browser. A bulletin becomes one advisory per CVE (`<CTX id>/<cveId>`), with the CVSS v4 score from its CVE table.
+
+Which articles are read is decided by the words of the sitemap slug, not by its shape. A slug is the article's title cut at about 40 characters, and Citrix words the title of one family in more than one way (`netscaler-adc-and-netscaler-gateway-secu...`, `netscaler-console-agent-and-sdx-svm-secu...`, and from November 2026 `citrix-netscaler-console-security-bullet...`): a list of prefixes missed the third. A slug naming NetScaler (or the old `citrix-adc-and-` / `citrix-gateway-and-`) and a security bulletin is fetched, which includes a few how-to articles; a page yields advisories only when it holds a CVE and a "`<product>` before `<build>`" line, so those yield none.
 
 The bulletins of 2022 and later share a template, one line per product and release branch:
 

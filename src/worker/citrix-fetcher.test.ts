@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildCitrixAdvisories, htmlToLines, parseAffectedLines, parseCveTable, productNames, articleTitle,
+  buildCitrixAdvisories, htmlToLines, isBulletinSlug, parseAffectedLines, parseCveTable, productNames, articleTitle,
 } from './citrix-fetcher.js';
 import { citrixVersionToInt } from '../utils/citrix-version.js';
 
@@ -232,5 +232,67 @@ describe('articleTitle', () => {
   it('takes the page title, or the first "Security Bulletin" line when the title is empty', () => {
     expect(articleTitle('<title> Citrix ADC Security Update (CVE-2019-0140) </title>', [])).toBe('Citrix ADC Security Update (CVE-2019-0140)');
     expect(articleTitle('<title></title>', ['x', 'NetScaler Security Bulletin for CVE-2025-1'])).toBe('NetScaler Security Bulletin for CVE-2025-1');
+  });
+});
+
+// The slugs of the real sitemap (support.citrix.com, 2026-11-12): a title cut at about 40 characters.
+describe('isBulletinSlug', () => {
+  it('takes every family of NetScaler security bulletin, including the Console one of November 2026', () => {
+    for (const slug of [
+      'netscaler-adc-and-netscaler-gateway-secu',
+      'citrix-adc-and-citrix-gateway-security-b',
+      'netscaler-console-agent-and-sdx-svm-secu',
+      // "Citrix NetScaler Console Security Bulletin for CVE-2026-120869", cut: it was missed by the prefixes.
+      'citrix-netscaler-console-security-bullet',
+    ]) expect(isBulletinSlug(slug), slug).toBe(true);
+  });
+
+  it('leaves the other Citrix products to their own wording, and what is not a bulletin to the page check', () => {
+    for (const slug of [
+      'citrix-workspace-app-for-windows-securit',
+      'citrix-hypervisor-security-update',
+      'xenserver-and-citrix-hypervisor-security',
+      'citrix-storefront-security-bulletin-for',
+      'citrix-sdwan-security-bulletin-for-cve20',
+      'citrix-gateway-plugin-for-windows-securi',
+      'citrix-secure-access-client-for-windows',
+      'netscaler-securing-ha-management-ips-and',
+      'how-to-secure-netscaler-persistent-cooki',
+    ]) expect(isBulletinSlug(slug), slug).toBe(false);
+  });
+});
+
+// CTX697320, published 2026-11-12, in the shape of the real page: its title is not one of the
+// "<products> Security Bulletin" titles the earlier slug list knew, but the page reads like the others.
+describe('the NetScaler Console bulletin of November 2026', () => {
+  const html = bulletin(
+    'Citrix NetScaler Console Security Bulletin for CVE-2026-120869',
+    `<p>Citrix NetScaler Console is affected by the vulnerability identified below</p>`,
+    `<table>
+      <tr><th>CVE-ID</th><th>Description</th><th>Pre-conditions</th><th>CWE</th><th>CVSSv4</th></tr>
+      ${row(['CVE-2026-120869', 'An unauthenticated attacker can bypass authentication controls to access restricted resources on the appliance', 'Access to Citrix NetScaler Console IP', 'CWE-287 - Improper Authentication', 'CVSS v4.0 Base Score: 9.4<br>(CVSS:4.0/AV:A/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H)'])}
+    </table>
+    <p>What Customers Should Do</p>
+    <p>Citrix NetScaler Console 14.1-74.34 and later releases</p>
+    <p>Severity - Critical</p>
+    <p>Affected Versions</p>
+    <p>The following supported versions of Citrix NetScaler Console are affected by the vulnerabilities:</p>
+    <p>Citrix NetScaler Console 14.1 BEFORE 14.1-74.34</p>`,
+  );
+
+  it('is read: its CVE with the CVSS v4 score and vector, and Console 14.1 before 14.1-74.34', () => {
+    const [a, ...rest] = buildCitrixAdvisories({ id: 'CTX697320', url: 'https://support.citrix.com/external/article/CTX697320/citrix-netscaler-console-security-bullet.html', html });
+    expect(rest).toEqual([]);
+    expect(a).toMatchObject({
+      externalId: 'CTX697320/CVE-2026-120869', cveId: 'CVE-2026-120869', severity: 'CRITICAL', cvssScore: 9.4,
+      cvssVector: 'CVSS:4.0/AV:A/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H',
+    });
+    expect(a.affectedProducts).toEqual([
+      { vendor: 'citrix', product: 'NetScaler Console', versionStart: '14.1', versionFixed: '14.1-74.34', patchAvailable: true },
+    ]);
+  });
+
+  it('is found by its slug', () => {
+    expect(isBulletinSlug('citrix-netscaler-console-security-bullet')).toBe(true);
   });
 });
