@@ -168,6 +168,15 @@ function scopeOf(line: string): string[] | undefined {
   return cves ? [...new Set(cves)] : undefined;
 }
 
+/**
+ * The sentence that opens the version lines of the whole bulletin: "The following supported
+ * versions of NetScaler ADC and NetScaler Gateway are affected by the vulnerabilities:", naming
+ * no CVE. A "CVE-x:" heading above it opens a section about that CVE (how to tell if an appliance
+ * is configured for it), not a range, so it must not keep limiting the lines below: it left the
+ * range with the last heading's CVE only, and the rest of the bulletin's CVEs with no product.
+ */
+const ALL_CVES_INTRO = /\bare\s+(?:also\s+)?affected\s+by\s+(?:the\s+)?(?:above\s+|following\s+)?vulnerabilit/i;
+
 export function parseAffectedLines(lines: string[]): { affected: AffectedLine[]; endOfLife: EndOfLifeLine[] } {
   const affected: AffectedLine[] = [];
   const endOfLife: EndOfLifeLine[] = [];
@@ -176,6 +185,7 @@ export function parseAffectedLines(lines: string[]): { affected: AffectedLine[];
   for (const line of lines) {
     const intro = scopeOf(line);
     if (intro) { scope = intro; continue; }
+    if (ALL_CVES_INTRO.test(line) && !line.match(CVE_ID)) scope = undefined;
     if (CVE_HEADING.test(line)) { scope = line.match(CVE_ID) ?? undefined; continue; }
     if (/^What Customers Should Do/i.test(line)) scope = undefined;
 

@@ -359,3 +359,59 @@ describe('the NetScaler ADC and Gateway bulletin of November 2026', () => {
     expect(isBulletinTitle(articleTitle(html, htmlToLines(html)))).toBe(true);
   });
 });
+
+// CTX696604 (2026-07-20) and CTX694938 (2025-08-26): "CVE-x:" headings in "What Customers Should Do" tell
+// how to see whether an appliance is configured for that CVE; the ranges come much later, under
+// "The following supported versions ... are affected by the vulnerabilities:", and are the whole
+// bulletin's. The headings used to keep limiting them, so only the last heading's CVE had a range.
+describe('a bulletin whose CVE headings explain a configuration, not a range', () => {
+  const table = `<table>
+    <tr><th>CVE-ID</th><th>Description</th><th>Pre-conditions</th><th>CWE</th><th>CVSSv4</th></tr>
+    ${row(['CVE-2026-8451', 'Insufficient input validation leading to memory overread', 'NetScaler ADC or NetScaler Gateway must be configured as a SAML IDP', 'CWE-125', 'CVSS v4.0 Base Score: 8.8<br>(CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:L/VA:H/SC:N/SI:N/SA:N)'])}
+    ${row(['CVE-2026-8452', 'Memory overflow vulnerability leading to Denial of Service', 'Gateway or AAA virtual server', 'CWE-119', 'CVSS v4.0 Base Score: 8.8<br>(CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:L/VA:H/SC:L/SI:L/SA:L)'])}
+    ${row(['CVE-2026-13474', 'Out-of-bounds write', 'LB virtual server', 'CWE-787', 'CVSS v4.0 Base Score: 9.3<br>(CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:L/SI:L/SA:L)'])}
+  </table>`;
+  const html = bulletin(
+    'NetScaler ADC and NetScaler Gateway Security Bulletin for CVE-2026-8451, CVE-2026-8452 and CVE-2026-13474',
+    `<p>NetScaler ADC and NetScaler Gateway are affected by the vulnerabilities mentioned below:</p>`,
+    table + `
+    <p>What Customers Should Do</p>
+    <p>CVE-2026-8451:</p>
+    <p>Customers can determine if they have an appliance configured as a SAML IDP by inspecting the configuration</p>
+    <p>add authentication samlIdPProfile .*</p>
+    <p>CVE-2026-13474:</p>
+    <p>Customers can determine if they have a load balancing virtual server</p>
+    <p>Affected Versions:</p>
+    <p>The following supported versions of NetScaler ADC and NetScaler Gateway are affected by the vulnerabilities:</p>
+    <p>NetScaler ADC and NetScaler Gateway 14.1 BEFORE 14.1-72.61</p>
+    <p>NetScaler ADC and NetScaler Gateway 13.1 BEFORE 13.1-63.18</p>
+    <p>NetScaler ADC FIPS BEFORE 14.1-72.61 FIPS</p>
+    <p>NetScaler ADC FIPS and NDcPP BEFORE 13.1-37.272</p>`,
+  );
+
+  it('gives every CVE of the bulletin the ranges, not only the CVE of the last heading', () => {
+    const advisories = buildCitrixAdvisories({ id: 'CTX696604', url: 'u', html });
+    expect(advisories.map(a => a.cveId)).toEqual(['CVE-2026-8451', 'CVE-2026-8452', 'CVE-2026-13474']);
+    for (const a of advisories) {
+      expect(a.affectedProducts.map(p => `${p.product} ${p.versionStart}..${p.versionFixed}`), a.cveId).toEqual([
+        'NetScaler ADC 14.1..14.1-72.61', 'NetScaler Gateway 14.1..14.1-72.61',
+        'NetScaler ADC 13.1..13.1-63.18', 'NetScaler Gateway 13.1..13.1-63.18',
+        'NetScaler ADC FIPS and NDcPP 14.1..14.1-72.61', 'NetScaler ADC FIPS and NDcPP 13.1..13.1-37.272',
+      ]);
+    }
+  });
+
+  it('still limits the lines under "affected by CVE-x :" to the CVE it names, and leaves the lines after "the vulnerabilities" to all', () => {
+    const scoped = bulletin(
+      'NetScaler Console Security Bulletin for CVE-2024-6235 and CVE-2024-6236',
+      `<p>The following supported version of NetScaler Console is affected by CVE-2024-6235 :</p>
+       <p>NetScaler Console 14.1 before 14.1-25.53</p>
+       <p>The following supported versions of NetScaler Console are affected by the vulnerabilities:</p>
+       <p>NetScaler Console 13.1 before 13.1-53.22</p>`,
+      `<table><tr><th>CVE-ID</th><th>Description</th></tr>${row(['CVE-2024-6235', 'x'])}${row(['CVE-2024-6236', 'y'])}</table>`,
+    );
+    const [a, b] = buildCitrixAdvisories({ id: 'CTX1', url: 'u', html: scoped });
+    expect(a.affectedProducts.map(p => `${p.versionStart}..${p.versionFixed}`)).toEqual(['14.1..14.1-25.53', '13.1..13.1-53.22']);
+    expect(b.affectedProducts.map(p => `${p.versionStart}..${p.versionFixed}`)).toEqual(['13.1..13.1-53.22']);
+  });
+});
