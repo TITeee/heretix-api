@@ -6,6 +6,7 @@ import { createServer } from '../server.js';
 import { importAdvisoryData } from '../../worker/advisory-fetcher.js';
 import { importOSVData } from '../../worker/osv-fetcher.js';
 import { normalizeVersion } from '../../utils/version.js';
+import { resetOsvCoverageCache } from '../../utils/osv-coverage.js';
 
 const API_KEY = 'test-api-key'; // matches vitest.integration.config.ts
 
@@ -1110,5 +1111,78 @@ describe('search — why an unfixed Ubuntu row has no fix (Ubuntu CVE Tracker)',
 
     const { body } = await search(app, 'package=perl&version=5.34.0-3&ecosystem=Ubuntu:22.04:LTS');
     expect(body.results[0]).toMatchObject({ externalId: 'CVE-2026-0020', fixedVersion: '5.34.0-3ubuntu1.5', fixStatus: null });
+  });
+});
+
+describe('POST /api/v1/vulnerabilities/search/batch: coverage', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+    resetOsvCoverageCache();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  async function batch(packages: { package: string; version: string; ecosystem?: string }[]) {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/vulnerabilities/search/batch',
+      headers: { 'x-api-key': API_KEY },
+      payload: { packages },
+    });
+    return res.json();
+  }
+
+  // What a finished load of one OSV ecosystem leaves: its job and a record.
+  async function loaded(ecosystem: string, bucket = ecosystem) {
+    await prisma.collectionJob.create({ data: { source: `osv-${bucket}`, status: 'completed', startedAt: new Date(), completedAt: new Date() } });
+    await prisma.oSVVulnerability.create({
+      data: { osvId: `GHSA-cover-${ecosystem}`, cveId: null, source: 'osv', ecosystem, rawData: {} },
+    });
+  }
+
+  it('names the ecosystems OSV answers that have not been loaded, with their package counts', async () => {
+    await loaded('PyPI');
+    // A few records without a completed load, as osv-mal or an earlier test leaves: not loaded.
+    await prisma.oSVVulnerability.create({ data: { osvId: 'MAL-cover-0001', source: 'osv', ecosystem: 'Go', rawData: {} } });
+
+    const body = await batch([
+      { package: 'requests', version: '2.31.0', ecosystem: 'PyPI' },
+      { package: 'lodash', version: '4.17.20', ecosystem: 'npm' },
+      { package: 'left-pad', version: '1.3.0', ecosystem: 'npm' },
+      { package: 'curl', version: '8.0.0-r0', ecosystem: 'Alpine:v3.24' },
+      { package: 'gin', version: '1.6.0', ecosystem: 'Go' },
+      { package: 'Windows Server 2022', version: '10.0.20348.5000', ecosystem: 'advisory' },
+      { package: 'nginx', version: '1.25.0' },
+    ]);
+
+    expect(body.results).toHaveLength(7);
+    expect(body.coverage).toEqual({
+      noData: [
+        { ecosystem: 'npm', packages: 2 },
+        { ecosystem: 'Alpine:v3.24', packages: 1 },
+        { ecosystem: 'Go', packages: 1 },
+      ],
+    });
+  });
+
+  it('counts the releases of a distro as loaded with their shared job', async () => {
+    await loaded('Alpine:v3.24', 'Alpine');
+    const body = await batch([{ package: 'curl', version: '8.0.0-r0', ecosystem: 'Alpine:v3.23' }]);
+    expect(body.coverage).toEqual({ noData: [] });
+  });
+
+  it('has nothing to say when every ecosystem searched has been loaded', async () => {
+    await loaded('npm');
+    const body = await batch([{ package: 'lodash', version: '4.17.21', ecosystem: 'npm' }]);
+    expect(body.coverage).toEqual({ noData: [] });
   });
 });

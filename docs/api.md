@@ -197,6 +197,14 @@ Each entry of `results` repeats `package`, `version` and `ecosystem`, and carrie
 | `total` | How many matched |
 | `truncated` | `true` when `vulnerabilities` holds fewer than `total` |
 
+The response also has a `coverage` object. `coverage.noData` lists the ecosystems of the request that OSV is meant to answer (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `NuGet`, `Maven`, and the `Debian`, `Ubuntu`, `Alpine`, `AlmaLinux` and `Rocky Linux` releases) but not loaded in heretix-api (the ecosystem's OSV job has never completed, or its records are gone), each with how many of the request's packages belong to it:
+
+```json
+"coverage": { "noData": [ { "ecosystem": "npm", "packages": 451 }, { "ecosystem": "Alpine:v3.24", "packages": 205 } ] }
+```
+
+For those packages an empty result only means nothing is loaded: load the ecosystem first (see [Data sources](data-sources.md)). The releases of a distro share one load (`Alpine:v3.24` is loaded with `Alpine`). The list is empty when every ecosystem has data. Ecosystems with their own feeds (Red Hat, Oracle Linux, Windows Server, the vendor advisories) are not judged. An answer is kept for up to a minute when there is no data and up to 5 minutes when there is.
+
 A package returns up to 20,000 matches, and a batch up to 500,000 in all: when the packages together match more, the cap of the largest ones is lowered just enough to fit, never below 500. A package over its cap keeps its most severe matches (known exploited first, then by severity tier — the severity rating when there is one, otherwise the CVSS score — then by CVSS, then by EPSS), so check `truncated` before treating the list as complete. In practice only a batch of many outdated kernels or Windows Server builds comes near these limits. Very large batches may also have their `summary` text shortened to fit the response.
 
 ## CPE search
