@@ -110,7 +110,7 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-nginx',        label: 'Nginx',              cron: '45 14 * * *', run: () => runAdvisory('advisory-nginx', new NginxFetcher()) },
   { source: 'advisory-checkpoint',   label: 'Check Point',        cron: '0 16 * * *',  run: () => runAdvisory('advisory-checkpoint', new CheckpointFetcher()) },
   { source: 'advisory-ivanti',       label: 'Ivanti',             cron: '30 16 * * *', run: () => runAdvisory('advisory-ivanti', new IvantiFetcher()) },
-  { source: 'advisory-citrix',       label: 'NetScaler',          cron: '45 16 * * *', run: () => runAdvisory('advisory-citrix', new CitrixFetcher()) },
+  { source: 'advisory-citrix',       label: 'Citrix NetScaler',   cron: '45 16 * * *', run: () => runAdvisory('advisory-citrix', new CitrixFetcher()) },
   // Recently revised MSRC documents only; the history from March 2021 is
   // imported by hand (`pnpm import:msrc`). Patch Tuesday updates are released
   // around 17:00 UTC.

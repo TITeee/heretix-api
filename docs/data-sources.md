@@ -358,7 +358,9 @@ Rows for Ivanti's own cloud services are skipped, since no customer runs a versi
 
 [citrix-fetcher.ts](../src/worker/citrix-fetcher.ts) · `pnpm import:citrix` · daily 16:45 UTC
 
-The security bulletins of NetScaler ADC and Gateway (formerly Citrix ADC and Gateway), read from the knowledge articles on support.citrix.com. The sitemap lists them; plain HTTP is enough, no browser. A bulletin becomes one advisory per CVE (`<CTX id>/<cveId>`), with the CVSS v4 score from its CVE table.
+The security bulletins of NetScaler ADC, Gateway and Console (formerly Citrix ADC and Gateway), read from the knowledge articles on support.citrix.com. The sitemap lists them; plain HTTP is enough, no browser. A bulletin becomes one advisory per CVE (`<CTX id>/<cveId>`), with the CVSS v4 score from its CVE table.
+
+Which articles are read is decided in two steps, and the slug of the sitemap is asked for as little as possible. The slug is the article's title cut at about 40 characters, and Citrix words the title of one family in more than one way (`netscaler-adc-and-netscaler-gateway-secu...`, `netscaler-console-agent-and-sdx-svm-secu...`, and from October 2026 `citrix-netscaler-adc-and-citrix-netscale...`, cut before the word "security"), so a list of prefixes, or asking the slug for a security word, silently dropped the bulletins of October and November 2026. Every article whose slug names NetScaler (or starts with `citrix-adc-and-` / `citrix-gateway-and-`) is fetched, about 460 pages, one at a time with a 200 ms pause (about four minutes); the page decides: it is read only when its title says "Security Bulletin", and it yields advisories only when it holds a CVE and a "`<product>` before `<build>`" line. The how-to and FAQ pages the slug lets through are counted and left out. If no page at all is titled a bulletin, the job logs a warning that the site may have changed.
 
 The bulletins of 2022 and later share a template, one line per product and release branch:
 
@@ -367,7 +369,7 @@ NetScaler ADC and NetScaler Gateway 14.1 BEFORE 14.1-73.32
 NetScaler ADC 13.1-FIPS before 13.1-37.277
 ```
 
-Each line becomes a range from the branch (`14.1`) to the first fixed build, for each product it names. A line under "affected by CVE-x :" applies to that CVE only (the NetScaler Console bulletin). A branch the bulletin calls end of life and vulnerable (`12.1`) is affected with no fix (`fixStatus: out_of_support`). The FIPS / NDcPP builds run on their own numbering (`13.1-37.x` against `13.1-6x.x`), so they are a separate product, `NetScaler ADC FIPS and NDcPP`.
+Each line becomes a range from the branch (`14.1`) to the first fixed build, for each product it names. A line under "affected by CVE-x :" applies to that CVE only (the NetScaler Console bulletin); the next sentence that names no CVE ("... are affected by the vulnerabilities:") ends that limit, and the lines after it are the whole bulletin's. A `CVE-x:` heading elsewhere in the page, such as the ones under "What Customers Should Do" that tell how to check an appliance's configuration for that CVE, is not a range, and does not limit the version lines far below it (it once left all but the last heading's CVE with no product). A branch the bulletin calls end of life and vulnerable (`12.1`) is affected with no fix (`fixStatus: out_of_support`). The FIPS / NDcPP builds run on their own numbering (`13.1-37.x` against `13.1-6x.x`), so they are a separate product, `NetScaler ADC FIPS and NDcPP`.
 
 A NetScaler version is a branch and a build (`14.1-73.32`); it is ordered with its own order ([citrix-version.ts](../src/utils/citrix-version.ts)), because the generic encoding keeps only the 73 of 73.32, and a bound written as a branch plus a bare build (`14.1` up to `56.73`, how the CVE record gives it) reads as 14.1.0 up to 56.73.0 and flags every later build. The CVE-record (CNA) ranges of NetScaler are therefore not stored.
 
