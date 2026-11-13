@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildCitrixAdvisories, htmlToLines, isBulletinSlug, parseAffectedLines, parseCveTable, productNames, articleTitle,
+  buildCitrixAdvisories, htmlToLines, isBulletinTitle, isCandidateSlug, parseAffectedLines, parseCveTable, productNames, articleTitle,
 } from './citrix-fetcher.js';
 import { citrixVersionToInt } from '../utils/citrix-version.js';
 
@@ -236,18 +236,20 @@ describe('articleTitle', () => {
 });
 
 // The slugs of the real sitemap (support.citrix.com, 2026-11-12): a title cut at about 40 characters.
-describe('isBulletinSlug', () => {
-  it('takes every family of NetScaler security bulletin, including the Console one of November 2026', () => {
+describe('isCandidateSlug', () => {
+  it('takes every NetScaler article, whatever word the cut of the title ends on', () => {
     for (const slug of [
       'netscaler-adc-and-netscaler-gateway-secu',
       'citrix-adc-and-citrix-gateway-security-b',
       'netscaler-console-agent-and-sdx-svm-secu',
-      // "Citrix NetScaler Console Security Bulletin for CVE-2026-120869", cut: it was missed by the prefixes.
       'citrix-netscaler-console-security-bullet',
-    ]) expect(isBulletinSlug(slug), slug).toBe(true);
+      // "Citrix NetScaler ADC and Citrix NetScaler Gateway Security Bulletin ...", cut before "security":
+      // CTX697096, 697174, 697191 and 697305 (38 CVEs) were never fetched for it.
+      'citrix-netscaler-adc-and-citrix-netscale',
+    ]) expect(isCandidateSlug(slug), slug).toBe(true);
   });
 
-  it('leaves the other Citrix products to their own wording, and what is not a bulletin to the page check', () => {
+  it('leaves the other Citrix products out', () => {
     for (const slug of [
       'citrix-workspace-app-for-windows-securit',
       'citrix-hypervisor-security-update',
@@ -256,9 +258,28 @@ describe('isBulletinSlug', () => {
       'citrix-sdwan-security-bulletin-for-cve20',
       'citrix-gateway-plugin-for-windows-securi',
       'citrix-secure-access-client-for-windows',
-      'netscaler-securing-ha-management-ips-and',
-      'how-to-secure-netscaler-persistent-cooki',
-    ]) expect(isBulletinSlug(slug), slug).toBe(false);
+    ]) expect(isCandidateSlug(slug), slug).toBe(false);
+  });
+});
+
+describe('isBulletinTitle', () => {
+  it('takes a security bulletin, in every wording of its title', () => {
+    for (const title of [
+      'NetScaler ADC and NetScaler Gateway Security Bulletin for CVE-2026-19489 and CVE-2026-19490',
+      'Citrix ADC and Citrix Gateway Security Bulletin for CVE-2023-3519, CVE-2023-3466 and CVE-2023-3467',
+      'Citrix NetScaler ADC and Citrix NetScaler Gateway Security Bulletin',
+      'Citrix NetScaler Console Security Bulletin for CVE-2026-120869',
+    ]) expect(isBulletinTitle(title), title).toBe(true);
+  });
+
+  it('leaves out how-to, FAQ and guide pages, and a 2019 "Security Update" with no range to read', () => {
+    for (const title of [
+      'NetScaler Fails Secure Cookie Security Vulnerability Scan When Using useSecuredPersistence',
+      'Netscaler CVE & Security Guide',
+      'NetScaler GUI shows Security Updates Alert',
+      'NetScaler ADC: WAF Cookie Hijacking Security Check Malfunctioning After Upgrade to 14.1 Build 66.59.nc',
+      'Citrix ADC and Citrix Gateway Security Update (CVE-2019-0140)',
+    ]) expect(isBulletinTitle(title), title).toBe(false);
   });
 });
 
@@ -292,7 +313,49 @@ describe('the NetScaler Console bulletin of November 2026', () => {
     ]);
   });
 
-  it('is found by its slug', () => {
-    expect(isBulletinSlug('citrix-netscaler-console-security-bullet')).toBe(true);
+  it('is found by its slug and its title', () => {
+    expect(isCandidateSlug('citrix-netscaler-console-security-bullet')).toBe(true);
+    expect(isBulletinTitle('Citrix NetScaler Console Security Bulletin for CVE-2026-120869')).toBe(true);
+  });
+});
+
+// CTX697305, published 2026-11-12: 28 CVEs in one bulletin, three of them here, with the wording of
+// the real page, whose title carries no CVE and whose slug ("citrix-netscaler-adc-and-citrix-netscale")
+// was cut before "security". It was never fetched.
+describe('the NetScaler ADC and Gateway bulletin of November 2026', () => {
+  const table = `<table>
+    <tr><th>CVE-ID</th><th>Description</th><th>Pre-conditions</th><th>CWE</th><th>CVSSv4</th></tr>
+    ${row(['CVE-2026-120868', 'Memory overflow in Packet Processing can lead&nbsp; to unpredictable or erroneous behavior or Denial of Service', 'All NetScaler ADC and NetScaler Gateway deployments', 'CWE-119', 'CVSS v4.0 Base Score: 9.3<br>(CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:L/SI:L/SA:L)'])}
+    ${row(['CVE-2026-107412', 'Multiple Memory overflow vulnerabilities can lead&nbsp; to unpredictable or erroneous behavior and Denial of Service', 'NetScaler configured as a Gateway or an AAA virtual server', 'CWE-119', 'CVSS v4.0 Base Score: 9.5<br>(CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H)'])}
+    ${row(['CVE-2026-111344', 'Memory overflow in Endpoint Analysis (EPA/EPAS) can lead to unpredictable or erroneous behavior or Denial of Service', 'NetScaler configured as a VPN virtual server or an authentication (AAA) virtual server with Endpoint Analysis', 'CWE-119', 'CVSS v4.0 Base Score: 9.3<br>(CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:L/SI:L/SA:L)'])}
+  </table>`;
+  const html = bulletin(
+    'Citrix NetScaler ADC and Citrix NetScaler Gateway Security Bulletin',
+    `<p>Severity - Critical</p>
+     <p>The following supported versions of Citrix NetScaler ADC and Citrix NetScaler Gateway are affected by the vulnerabilities:</p>
+     <p>Citrix NetScaler ADC and Citrix NetScaler Gateway 14.1 BEFORE 14.1-73.57</p>
+     <p>Citrix NetScaler ADC and Citrix NetScaler Gateway 13.1 BEFORE 13.1-64.39</p>
+     <p>Citrix NetScaler ADC FIPS BEFORE 14.1-73.58 FIPS</p>
+     <p>Citrix NetScaler ADC FIPS and NDcPP BEFORE 13.1-37.293</p>`,
+    table,
+  );
+  const advisories = buildCitrixAdvisories({ id: 'CTX697305', url: 'https://support.citrix.com/external/article/CTX697305/citrix-netscaler-adc-and-citrix-netscale.html', html });
+
+  it('gives each CVE its CVSS v4 score and the same ranges, one per product and branch, with the Citrix-prefixed names read as NetScaler', () => {
+    expect(advisories.map(a => `${a.cveId} ${a.cvssScore} ${a.severity}`)).toEqual([
+      'CVE-2026-120868 9.3 CRITICAL', 'CVE-2026-107412 9.5 CRITICAL', 'CVE-2026-111344 9.3 CRITICAL',
+    ]);
+    for (const a of advisories) {
+      expect(a.affectedProducts.map(p => `${p.product} ${p.versionStart}..${p.versionFixed}`)).toEqual([
+        'NetScaler ADC 14.1..14.1-73.57', 'NetScaler Gateway 14.1..14.1-73.57',
+        'NetScaler ADC 13.1..13.1-64.39', 'NetScaler Gateway 13.1..13.1-64.39',
+        'NetScaler ADC FIPS and NDcPP 14.1..14.1-73.58', 'NetScaler ADC FIPS and NDcPP 13.1..13.1-37.293',
+      ]);
+    }
+  });
+
+  it('is a candidate by its slug and a bulletin by its title, though neither says "CVE" or "security" in the slug', () => {
+    expect(isCandidateSlug('citrix-netscaler-adc-and-citrix-netscale')).toBe(true);
+    expect(isBulletinTitle(articleTitle(html, htmlToLines(html)))).toBe(true);
   });
 });

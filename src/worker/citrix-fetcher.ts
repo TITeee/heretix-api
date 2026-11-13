@@ -305,23 +305,25 @@ export function buildCitrixAdvisories(b: Bulletin): NormalizedAdvisory[] {
 // ─── Which articles are read ───────────────────────────────────
 
 /**
- * Whether a sitemap slug may be a NetScaler security bulletin. The slug is the article's title
- * cut at about 40 characters, and Citrix words the titles of one product family in more than one
- * way: "NetScaler ADC and NetScaler Gateway Security Bulletin for ...", "NetScaler Console, Agent
- * and SDX (SVM) Security Bulletin ..." and, from November 2026, "Citrix NetScaler Console
- * Security Bulletin for CVE-2026-...". A list of prefixes missed the third, and would miss the
- * next. So the rule is the words, not the shape: a slug naming NetScaler and a security bulletin
- * (the cut can end "secu" or "bullet"), or the old Citrix ADC / Gateway pair.
+ * Whether a sitemap slug may be a NetScaler article: it names NetScaler, or starts with the old
+ * "citrix-adc-and-" / "citrix-gateway-and-" (a "citrix-gateway-plugin-for-windows" client is
+ * another product). Nothing more is asked of the slug.
  *
- * It only chooses what to fetch. A page is turned into advisories only when it holds a CVE and
- * a "<product> before <build>" line, so a how-to article that matches the words yields nothing.
+ * The slug is the article's title cut at about 40 characters, and Citrix words the titles of one
+ * product family in more than one way: "NetScaler ADC and NetScaler Gateway Security Bulletin for
+ * ...", "NetScaler Console, Agent and SDX (SVM) Security Bulletin ...", and from October 2026
+ * "Citrix NetScaler ADC and Citrix NetScaler Gateway Security Bulletin ...", cut at "...-citrix-
+ * netscale", before "security" is reached. A list of prefixes missed the October and November
+ * bulletins (CTX697096, 697174, 697191, 697305 and 697320, 38 CVEs); so did asking the slug for a
+ * "security" word. What the page is decides: see isBulletinTitle.
  */
-export function isBulletinSlug(slug: string): boolean {
-  // "netscaler" anywhere, or the old names "citrix-adc" / "citrix-gateway" at the start: a
-  // "citrix-gateway-plugin-for-windows" client is another product.
-  const product = /(?:^|-)netscaler(?:-|$)|^citrix-(?:adc|gateway)-and-/.test(slug);
-  const bulletin = /(?:^|-)(?:secu|secur|securi|securit|security)(?:-|$)|(?:^|-)bullet(?:i|in)?(?:-|$)/.test(slug);
-  return product && bulletin;
+export function isCandidateSlug(slug: string): boolean {
+  return /(?:^|-)netscaler(?:-|$)|^citrix-(?:adc|gateway)-and-/.test(slug);
+}
+
+/** Whether a fetched page is a security bulletin, by its title: how-to and FAQ pages are not. */
+export function isBulletinTitle(title: string): boolean {
+  return /Security Bulletin/i.test(title);
 }
 
 // ─── Data fetching ─────────────────────────────────────────────
@@ -333,6 +335,9 @@ const HTTP = {
   responseType: 'text' as const,
 };
 
+// Pause between two article requests.
+const ARTICLE_PAUSE_MS = process.env.NODE_ENV === 'test' ? 0 : 200;
+
 async function listBulletins(): Promise<{ id: string; url: string }[]> {
   const { data: index } = await axios.get<string>(SITEMAP_INDEX_URL, HTTP);
   const sitemaps = [...index.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1]);
@@ -341,7 +346,7 @@ async function listBulletins(): Promise<{ id: string; url: string }[]> {
   const found = new Map<string, string>();
   for (const sitemap of sitemaps) {
     const { data } = await axios.get<string>(sitemap, HTTP);
-    for (const m of data.matchAll(ARTICLE_URL)) if (isBulletinSlug(m[3])) found.set(m[2], m[1]);
+    for (const m of data.matchAll(ARTICLE_URL)) if (isCandidateSlug(m[3])) found.set(m[2], m[1]);
   }
   return [...found].map(([id, url]) => ({ id, url }));
 }
@@ -358,27 +363,41 @@ export class CitrixFetcher implements AdvisoryFetcher {
   async fetch(): Promise<NormalizedAdvisory[]> {
     this.failedCount = 0;
     logger.info('Fetching NetScaler security bulletins');
-    const bulletins = await listBulletins();
-    logger.info({ count: bulletins.length }, 'Listed NetScaler security bulletins');
+    const candidates = await listBulletins();
+    logger.info({ count: candidates.length }, 'Listed NetScaler articles');
 
     const results: NormalizedAdvisory[] = [];
+    let bulletins = 0;
+    let notBulletins = 0;
     let noCve = 0;
-    for (const { id, url } of bulletins) {
+    for (const { id, url } of candidates) {
       try {
         const { data: html } = await axios.get<string>(url, HTTP);
-        const advisories = buildCitrixAdvisories({ id, url, html });
-        if (advisories.length === 0) noCve++;
-        results.push(...advisories);
+        // Most candidates are how-to and FAQ pages; a bulletin says so in its title.
+        if (!isBulletinTitle(articleTitle(html, htmlToLines(html)))) {
+          notBulletins++;
+        } else {
+          bulletins++;
+          const advisories = buildCitrixAdvisories({ id, url, html });
+          if (advisories.length === 0) noCve++;
+          results.push(...advisories);
+        }
       } catch (err) {
         this.failedCount++;
-        logger.warn({ id, err }, 'Failed to fetch NetScaler security bulletin');
+        logger.warn({ id, err }, 'Failed to fetch NetScaler article');
       }
+      // About 460 pages: one at a time, and not in a burst.
+      await new Promise(resolve => setTimeout(resolve, ARTICLE_PAUSE_MS));
     }
 
     logger.info(
-      { bulletins: bulletins.length, advisories: results.length, withoutCve: noCve, failed: this.failedCount },
+      { candidates: candidates.length, bulletins, notBulletins, advisories: results.length, withoutCve: noCve, failed: this.failedCount },
       'NetScaler advisory fetch complete',
     );
+    // A site that stopped serving titles or bulletins would otherwise look like a quiet day.
+    if (candidates.length > 0 && bulletins === 0 && this.failedCount < candidates.length) {
+      logger.warn({ candidates: candidates.length }, 'No NetScaler article is titled a security bulletin -- the site may have changed');
+    }
     return results;
   }
 }
