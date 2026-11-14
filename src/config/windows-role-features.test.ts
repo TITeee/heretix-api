@@ -14,12 +14,28 @@ describe('requiredWindowsFeatures', () => {
     expect(requiredWindowsFeatures('Windows Active Directory Certificate Services')).toEqual(['ADCertificateServicesRole']);
   });
 
+  it('judges RD Licensing, Fax Server and the OCSP responder by their own feature', () => {
+    expect(requiredWindowsFeatures('Windows Remote Desktop Licensing Service')).toEqual(['Licensing']);
+    expect(requiredWindowsFeatures('Role: Windows Fax Service')).toEqual(['FaxServiceRole']);
+    expect(requiredWindowsFeatures('Windows Online Certificate Status Protocol (OCSP)')).toEqual(['OnlineRevocationServices']);
+  });
+
+  it('judges every NFS tag by any one NFS feature, client side included', () => {
+    const nfs = ['ServerForNFS-Infrastructure', 'ClientForNFS-Infrastructure', 'ServicesForNFS-ServerAndClient'];
+    for (const component of ['Windows Network File System', 'Windows Server for NFS', 'Windows Client for NFS',
+      'Windows Services for NFS ONCRPC XDR Driver', 'Windows NFS Portmapper']) {
+      expect(requiredWindowsFeatures(component), component).toEqual(nfs);
+    }
+  });
+
   it('is null for a component on every server, one left out on purpose, or none', () => {
     for (const component of ['Windows Kernel', 'Windows Hyper-V', 'Role: Windows Hyper-V', 'Windows Print Spooler Components',
       'Windows SMB Server', 'Windows Remote Desktop Protocol', 'WebDAV', 'Windows iSCSI', 'Active Directory Domain Services',
       // Older tags that also cover client parts on every server.
       'Windows DNS', 'Microsoft Windows DNS', 'Windows DHCP Client', 'Windows Remote Access Connection Manager',
-      'Role: Active Directory Certificate Services; Active Directory Domain Services']) {
+      'Role: Active Directory Certificate Services; Active Directory Domain Services',
+      // A client app and a management console, not the roles.
+      'Windows Fax and Scan Service', 'Windows Online Certificate Status Protocol (OCSP) SnapIn']) {
       expect(requiredWindowsFeatures(component), component).toBeNull();
     }
     expect(requiredWindowsFeatures(null)).toBeNull();
