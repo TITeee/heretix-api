@@ -15,11 +15,16 @@
  * share the tag), Active Directory Domain Services and Failover Cluster (may
  * cover member servers too), and Print Spooler, SMB, Remote Desktop
  * Protocol / Client, WebDAV and iSCSI, which are on every server or whose tag
- * does not say whether the client or the server part is affected.
+ * does not say whether the client or the server part is affected. Also left
+ * out: "Windows Fax and Scan Service" (the client app's tag) and "Windows
+ * Online Certificate Status Protocol (OCSP) SnapIn" (the management console).
  *
  * The tags are matched exactly, as MSRC writes them; one MSRC renames is no
  * longer matched and its CVEs are reported as before.
  */
+/** The features of Services for NFS: the server side, the client side and their parent. */
+const NFS_FEATURES = ['ServerForNFS-Infrastructure', 'ClientForNFS-Infrastructure', 'ServicesForNFS-ServerAndClient'] as const;
+
 export const WINDOWS_ROLE_FEATURES: Readonly<Record<string, readonly string[]>> = {
   // "Windows DNS" and "Microsoft Windows DNS", MSRC's older tags, are not
   // here: they cover the DNS client as well as the server.
@@ -44,6 +49,20 @@ export const WINDOWS_ROLE_FEATURES: Readonly<Record<string, readonly string[]>> 
   'Windows Active Directory Certificate Services': ['ADCertificateServicesRole'],
   'Role: Windows Active Directory Certificate Services': ['ADCertificateServicesRole'],
   'Windows Deployment Services': ['Microsoft-Windows-Deployment-Services'],
+  'Windows Remote Desktop Licensing Service': ['Licensing'],
+  // MSRC: the Fax service is not installed by default, and a server without
+  // the feature enabled and the service running is not vulnerable.
+  'Role: Windows Fax Service': ['FaxServiceRole'],
+  'Windows Online Certificate Status Protocol (OCSP)': ['OnlineRevocationServices'],
+  // Network File System. The client side alone installs and starts the
+  // ONCRPC XDR driver (rpcxdr.sys) too, and most tags do not say which side a
+  // CVE is in, so every NFS tag needs any one of the NFS features. Without
+  // them none of the NFS drivers is on the server.
+  'Windows Network File System': NFS_FEATURES,
+  'Windows Server for NFS': NFS_FEATURES,
+  'Windows Client for NFS': NFS_FEATURES,
+  'Windows Services for NFS ONCRPC XDR Driver': NFS_FEATURES,
+  'Windows NFS Portmapper': NFS_FEATURES,
 };
 
 /**
