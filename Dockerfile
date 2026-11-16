@@ -51,17 +51,20 @@ WORKDIR /app
 RUN addgroup --system --gid 1001 nodejs && \
     adduser  --system --uid 1001 heretix
 
-COPY --from=builder /app/node_modules     ./node_modules
-COPY --from=builder /app/dist             ./dist
-COPY --from=builder /app/public           ./public
-COPY --from=builder /app/package.json     ./package.json
-COPY --from=builder /app/pnpm-lock.yaml   ./pnpm-lock.yaml
-COPY --from=builder /app/.npmrc           ./.npmrc
-COPY --from=builder /app/prisma           ./prisma
-COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
+# Owned by heretix as they are copied: a chown -R of /app in a step of its own
+# copies all of node_modules into another layer, 420 MB more image.
+COPY --from=builder --chown=heretix:nodejs /app/node_modules     ./node_modules
+COPY --from=builder --chown=heretix:nodejs /app/dist             ./dist
+COPY --from=builder --chown=heretix:nodejs /app/public           ./public
+COPY --from=builder --chown=heretix:nodejs /app/package.json     ./package.json
+COPY --from=builder --chown=heretix:nodejs /app/pnpm-lock.yaml   ./pnpm-lock.yaml
+COPY --from=builder --chown=heretix:nodejs /app/.npmrc           ./.npmrc
+COPY --from=builder --chown=heretix:nodejs /app/prisma           ./prisma
+COPY --from=builder --chown=heretix:nodejs /app/prisma.config.ts ./prisma.config.ts
 
-COPY entrypoint.sh ./entrypoint.sh
-RUN chmod +x ./entrypoint.sh && chown -R heretix:nodejs /app
+COPY --chown=heretix:nodejs --chmod=755 entrypoint.sh ./entrypoint.sh
+# /app itself, which the copies above leave to root.
+RUN chown heretix:nodejs /app
 
 USER heretix
 
