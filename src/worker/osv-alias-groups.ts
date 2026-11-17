@@ -48,8 +48,11 @@ export async function pruneOrphanOsvMasters(): Promise<{ deleted: number }> {
       osvId: { not: null },
       osvVulnerabilities: { none: {} },
       advisoryVulnerabilities: { none: {} },
-      nvdVulnerability: { is: null },
-      cnaVulnerability: { is: null },
+      // No condition on NVD or CNA rows: they hang off CVE-keyed masters only, so a
+      // master with no cveId has none. Prisma writes `nvdVulnerability: { is: null }` as
+      // NOT IN (SELECT ...), which PostgreSQL could not hash over 435,000 NVD rows: it
+      // compared each of 88,000 candidates against all of them, for hours, while the
+      // server waited for this migration to start.
     },
   });
   return { deleted: count };
