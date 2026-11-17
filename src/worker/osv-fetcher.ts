@@ -480,7 +480,27 @@ export async function importOSVEcosystemDelta(ecosystem: string, since: Date): P
  * Upsert into master table and update OSVVulnerability.masterVulnId
  * If NVD already has a master row, do not overwrite CVSS/severity values
  */
-async function upsertMasterFromOSV(
+const CVE_ID = /^CVE-\d{4}-\d{4,}$/;
+
+/**
+ * The CVE an OSV record is about: the record's own id when that is a CVE ID,
+ * else the first CVE among its aliases, then its upstream.
+ *
+ * The own id comes first because some records are named by their CVE and list
+ * no aliases (the Debian ecosystem has a few hundred, "CVE-2023-53025" with
+ * aliases []). Taking only the aliases left those without a CVE: each became a
+ * master row of its own, keyed by osvId "CVE-2023-53025", beside the CVE's real
+ * master with its NVD, vendor and EPSS data. A lookup by the CVE then returned
+ * either row, so scans and metadata refreshes kept swapping an alert's severity.
+ */
+export function osvRecordCveId(osvData: Pick<OSVVulnerability, 'id' | 'aliases' | 'upstream'>): string | null {
+  if (CVE_ID.test(osvData.id)) return osvData.id;
+  return (osvData.aliases ?? []).find((a: string) => a.startsWith('CVE-')) ??
+    (osvData.upstream ?? []).find((u: string) => u.startsWith('CVE-')) ??
+    null;
+}
+
+export async function upsertMasterFromOSV(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
   osvRecord: { id: string; cveId: string | null; osvId: string },
   osvData: OSVVulnerability,
@@ -591,11 +611,7 @@ const OSV_IMPORT_TRANSACTION_TIMEOUT_MS = 60_000;
 export async function importOSVData(osvData: OSVVulnerability): Promise<'inserted' | 'updated'> {
   logger.info({ osvId: osvData.id }, 'Importing OSV vulnerability');
 
-  // Extract CVE ID from aliases, then upstream
-  const cveId =
-    (osvData.aliases ?? []).find((a: string) => a.startsWith('CVE-')) ??
-    (osvData.upstream ?? []).find((u: string) => u.startsWith('CVE-')) ??
-    null;
+  const cveId = osvRecordCveId(osvData);
 
   const { severity, cvssScore } = extractOSVSeverityFields(osvData);
   const recordDistroPriority = extractRecordDistroPriority(osvData);

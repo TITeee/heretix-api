@@ -299,3 +299,98 @@ describe('importOSVEcosystemDelta — a bucket read from its modified-ID list (U
     await expect(importOSVEcosystemDelta('Ubuntu', new Date(0))).rejects.toThrow(/OSV has no bucket "Ubuntu"/);
   });
 });
+
+// Some records are named by their CVE and list no aliases (the Debian ecosystem
+// has a few hundred). Read only from the aliases, they got no CVE and a master
+// row of their own beside the CVE's.
+describe('importOSVData — a record named by its CVE', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('joins the CVE master that NVD made, with no master of its own', async () => {
+    const cve = await prisma.vulnerability.create({ data: { cveId: 'CVE-2023-53025', severity: 'HIGH', cvssScore: 7.8 } });
+
+    await importOSVData(makeOsv({
+      id: 'CVE-2023-53025',
+      aliases: [],
+      affected: [{ package: { ecosystem: 'Debian:11', name: 'linux' } }],
+    }));
+
+    const osv = await prisma.oSVVulnerability.findUnique({ where: { osvId: 'CVE-2023-53025' } });
+    expect(osv?.cveId).toBe('CVE-2023-53025');
+    expect(osv?.masterVulnId).toBe(cve.id);
+    expect(await prisma.vulnerability.findUnique({ where: { osvId: 'CVE-2023-53025' } })).toBeNull();
+    // The CVE master keeps its own rating.
+    const master = await prisma.vulnerability.findUnique({ where: { id: cve.id } });
+    expect(master).toMatchObject({ severity: 'HIGH', cvssScore: 7.8 });
+  });
+
+  it('does not take an id that only starts like one for a CVE', async () => {
+    await importOSVData(makeOsv({ id: 'CVE-NOT-A-CVE', aliases: [] }));
+    const osv = await prisma.oSVVulnerability.findUnique({ where: { osvId: 'CVE-NOT-A-CVE' } });
+    expect(osv?.cveId).toBeNull();
+  });
+});
+
+describe('moveOsvRecordsOntoTheirCve — records imported before the fix', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('moves the record and the rows on its master onto the CVE master, and deletes the twin', async () => {
+    const { moveOsvRecordsOntoTheirCve } = await import('./osv-own-cve-ids.js');
+    const cve = await prisma.vulnerability.create({ data: { cveId: 'CVE-2023-53025', severity: 'HIGH', cvssScore: 7.8, epssScore: 0.01 } });
+    // The state the old importer left: a master keyed by the CVE as an osvId,
+    // made from the record (so the record's rawData holds all the twin had).
+    const twin = await prisma.vulnerability.create({ data: { osvId: 'CVE-2023-53025', summary: 'from Debian' } });
+    const osv = await prisma.oSVVulnerability.create({
+      data: {
+        osvId: 'CVE-2023-53025', cveId: null, source: 'osv', ecosystem: 'Debian:11', aliases: [],
+        rawData: { id: 'CVE-2023-53025', modified: '2026-01-01T00:00:00Z', aliases: [], summary: 'from Debian' },
+        masterVulnId: twin.id,
+      },
+    });
+
+    const first = await moveOsvRecordsOntoTheirCve();
+    expect(first).toEqual({ moved: 1, skipped: 0 });
+
+    const after = await prisma.oSVVulnerability.findUnique({ where: { id: osv.id } });
+    expect(after).toMatchObject({ cveId: 'CVE-2023-53025', masterVulnId: cve.id });
+    expect(await prisma.vulnerability.findUnique({ where: { id: twin.id } })).toBeNull();
+    // The CVE master keeps its values and gains only what it lacked.
+    const master = await prisma.vulnerability.findUnique({ where: { id: cve.id } });
+    expect(master).toMatchObject({ severity: 'HIGH', cvssScore: 7.8, epssScore: 0.01, summary: 'from Debian' });
+
+    // Run again: nothing left to do.
+    expect(await moveOsvRecordsOntoTheirCve()).toEqual({ moved: 0, skipped: 0 });
+  });
+
+  it('turns the record into the CVE master when the CVE has none yet', async () => {
+    const { moveOsvRecordsOntoTheirCve } = await import('./osv-own-cve-ids.js');
+    const twin = await prisma.vulnerability.create({ data: { osvId: 'CVE-2024-0001' } });
+    await prisma.oSVVulnerability.create({
+      data: {
+        osvId: 'CVE-2024-0001', cveId: null, source: 'osv', ecosystem: 'Debian:12', aliases: [],
+        rawData: { id: 'CVE-2024-0001', modified: '2026-01-01T00:00:00Z' },
+        masterVulnId: twin.id,
+      },
+    });
+
+    await moveOsvRecordsOntoTheirCve();
+
+    const master = await prisma.vulnerability.findUnique({ where: { cveId: 'CVE-2024-0001' } });
+    expect(master).not.toBeNull();
+    expect(await prisma.vulnerability.findUnique({ where: { osvId: 'CVE-2024-0001' } })).toBeNull();
+    const osv = await prisma.oSVVulnerability.findUnique({ where: { osvId: 'CVE-2024-0001' } });
+    expect(osv?.masterVulnId).toBe(master?.id);
+  });
+});
