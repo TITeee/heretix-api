@@ -58,6 +58,8 @@
     "migrate:broadcom-composite-externalid": "node dist/scripts/migrate-broadcom-composite-externalid.js",
     "migrate:sophos-sonicwall-composite-externalid": "node dist/scripts/migrate-sophos-sonicwall-composite-externalid.js",
     "migrate:prune-orphaned-advisory-masters": "node dist/scripts/migrate-prune-orphaned-advisory-masters.js",
+    "migrate:osv-own-cve-ids": "node dist/scripts/migrate-osv-own-cve-ids.js",
+    "migrate:osv-shared-alias-masters": "node dist/scripts/migrate-osv-shared-alias-masters.js",
     "migrate:remove-withdrawn-osv-packages": "node dist/scripts/migrate-remove-withdrawn-osv-packages.js",
     "migrate:remove-netscaler-cna-build-ranges": "node dist/scripts/migrate-remove-netscaler-cna-build-ranges.js",
     "migrate:osv-legacy-job-names": "node dist/scripts/migrate-osv-legacy-job-names.js",

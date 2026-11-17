@@ -1422,12 +1422,15 @@ export default async function vulnerabilitiesRoute(fastify: FastifyInstance) {
   fastify.get('/vulnerabilities/:id', async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
 
-    // Search master table by canonicalId (cveId, osvId, or advisoryId)
-    const master = await prisma.vulnerability.findFirst({
-      where: { OR: [{ cveId: id }, { osvId: id }, { advisoryId: id }] },
-      include: masterInclude,
-    });
-    if (master) return master;
+    // Search the master table by its keys, the CVE first. One id can key two rows
+    // (an OSV record named by its CVE once got a master of its own, keyed by
+    // osvId, beside the CVE's), and an unordered OR returned either: the CVE's
+    // row is the one with the NVD, vendor and EPSS data.
+    const byKey: Prisma.VulnerabilityWhereUniqueInput[] = [{ cveId: id }, { osvId: id }, { advisoryId: id }];
+    for (const where of byKey) {
+      const master = await prisma.vulnerability.findUnique({ where, include: masterInclude });
+      if (master) return master;
+    }
 
     // Not found directly on a master row: id may be one a finding used to be
     // reported by, whose master has since been merged into a later CVE-keyed one

@@ -1186,3 +1186,73 @@ describe('POST /api/v1/vulnerabilities/search/batch: coverage', () => {
     expect(body.coverage).toEqual({ noData: [] });
   });
 });
+
+describe('GET /api/v1/vulnerabilities/:id', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  // One id can key two master rows: an OSV record named by its CVE once got a
+  // master of its own, keyed by osvId, beside the CVE's. The lookup answered
+  // either, so a metadata refresh kept clearing what a scan had set.
+  it('answers with the CVE master when the same id also keys another row', async () => {
+    await prisma.vulnerability.create({ data: { osvId: 'CVE-2023-53025' } });
+    await prisma.vulnerability.create({ data: { cveId: 'CVE-2023-53025', severity: 'HIGH', cvssScore: 7.8 } });
+
+    for (let i = 0; i < 3; i++) {
+      const res = await app.inject({
+        method: 'GET', url: '/api/v1/vulnerabilities/CVE-2023-53025', headers: { 'x-api-key': API_KEY },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ cveId: 'CVE-2023-53025', severity: 'HIGH', cvssScore: 7.8 });
+    }
+  });
+
+  it('still finds a master keyed only by its OSV id or advisory id', async () => {
+    await prisma.vulnerability.create({ data: { osvId: 'GHSA-only-0001', severity: 'LOW' } });
+    await prisma.vulnerability.create({ data: { advisoryId: 'FG-IR-26-001', severity: 'MEDIUM' } });
+
+    const osv = await app.inject({ method: 'GET', url: '/api/v1/vulnerabilities/GHSA-only-0001', headers: { 'x-api-key': API_KEY } });
+    expect(osv.json()).toMatchObject({ osvId: 'GHSA-only-0001', severity: 'LOW' });
+    const adv = await app.inject({ method: 'GET', url: '/api/v1/vulnerabilities/FG-IR-26-001', headers: { 'x-api-key': API_KEY } });
+    expect(adv.json()).toMatchObject({ advisoryId: 'FG-IR-26-001', severity: 'MEDIUM' });
+  });
+});
+
+describe('GET /api/v1/vulnerabilities/search — aliased records without a CVE', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  it('reports one finding under the GHSA id, not one per id', async () => {
+    const affected = [{ package: { ecosystem: 'PyPI', name: 'demo-certifi' }, versions: ['2026.1.1'] }];
+    await importOSVData({ id: 'PYSEC-2026-4320', modified: '2026-01-01T00:00:00Z', aliases: ['GHSA-6q48-6c7w-9gw2'], affected });
+    await importOSVData({ id: 'GHSA-6q48-6c7w-9gw2', modified: '2026-01-01T00:00:00Z', aliases: ['PYSEC-2026-4320'], affected });
+
+    const res = await search(app, 'package=demo-certifi&version=2026.1.1&ecosystem=PyPI');
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].externalId).toBe('GHSA-6q48-6c7w-9gw2');
+  });
+});
