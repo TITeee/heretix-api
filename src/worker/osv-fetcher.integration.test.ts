@@ -394,3 +394,90 @@ describe('moveOsvRecordsOntoTheirCve — records imported before the fix', () =>
     expect(osv?.masterVulnId).toBe(master?.id);
   });
 });
+
+// One vulnerability published under several ids with no CVE used to get a
+// master per id, and a search reports one finding per master.
+describe('importOSVData — aliased records without a CVE share one master', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  const pkg = [{ package: { ecosystem: 'PyPI', name: 'certifi' }, versions: ['2026.1.1'] }];
+
+  it('keys the master by GHSA whichever record comes first', async () => {
+    await importOSVData(makeOsv({ id: 'PYSEC-2026-4320', aliases: ['GHSA-6q48-6c7w-9gw2'], affected: pkg }));
+    await importOSVData(makeOsv({ id: 'GHSA-6q48-6c7w-9gw2', aliases: ['PYSEC-2026-4320'], affected: pkg, summary: 'from GHSA' }));
+
+    const masters = await prisma.vulnerability.findMany();
+    expect(masters).toHaveLength(1);
+    expect(masters[0]).toMatchObject({ osvId: 'GHSA-6q48-6c7w-9gw2', summary: 'from GHSA' });
+    const rows = await prisma.oSVVulnerability.findMany({ select: { masterVulnId: true } });
+    expect(rows.every((r) => r.masterVulnId === masters[0].id)).toBe(true);
+  });
+
+  it('ranks the source id above MAL', async () => {
+    await importOSVData(makeOsv({ id: 'MAL-2025-6794', aliases: ['PYSEC-2025-72'], affected: pkg }));
+    await importOSVData(makeOsv({ id: 'PYSEC-2025-72', aliases: ['MAL-2025-6794'], affected: pkg }));
+    const masters = await prisma.vulnerability.findMany();
+    expect(masters.map((m) => m.osvId)).toEqual(['PYSEC-2025-72']);
+  });
+
+  it('keeps its own id when the better ranked alias is not in the database', async () => {
+    await importOSVData(makeOsv({ id: 'PYSEC-2026-1', aliases: ['GHSA-not-imported'], affected: pkg }));
+    const masters = await prisma.vulnerability.findMany();
+    expect(masters.map((m) => m.osvId)).toEqual(['PYSEC-2026-1']);
+  });
+
+  it('joins the CVE master of an aliased record that knows its CVE', async () => {
+    await importOSVData(makeOsv({ id: 'GHSA-with-cve1', aliases: ['CVE-2026-7001'], affected: pkg }));
+    await importOSVData(makeOsv({ id: 'MAL-2026-1', aliases: ['GHSA-with-cve1'], affected: pkg }));
+
+    const cve = await prisma.vulnerability.findUnique({ where: { cveId: 'CVE-2026-7001' } });
+    const mal = await prisma.oSVVulnerability.findUnique({ where: { osvId: 'MAL-2026-1' } });
+    expect(mal?.masterVulnId).toBe(cve?.id);
+    expect(await prisma.vulnerability.count()).toBe(1);
+  });
+});
+
+describe('mergeOsvAliasGroups and pruneOrphanOsvMasters — data imported before', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('folds an aliased pair onto one master keyed by GHSA, once', async () => {
+    const { mergeOsvAliasGroups } = await import('./osv-alias-groups.js');
+    // The state the old importer left: one master per id.
+    const pysecMaster = await prisma.vulnerability.create({ data: { osvId: 'PYSEC-2026-4320' } });
+    const ghsaMaster = await prisma.vulnerability.create({ data: { osvId: 'GHSA-6q48-6c7w-9gw2', severity: 'HIGH' } });
+    const raw = (id: string, alias: string) => ({ id, modified: '2026-01-01T00:00:00Z', aliases: [alias] });
+    await prisma.oSVVulnerability.create({ data: { osvId: 'PYSEC-2026-4320', source: 'osv', aliases: ['GHSA-6q48-6c7w-9gw2'], rawData: raw('PYSEC-2026-4320', 'GHSA-6q48-6c7w-9gw2'), masterVulnId: pysecMaster.id } });
+    await prisma.oSVVulnerability.create({ data: { osvId: 'GHSA-6q48-6c7w-9gw2', source: 'osv', aliases: ['PYSEC-2026-4320'], rawData: raw('GHSA-6q48-6c7w-9gw2', 'PYSEC-2026-4320'), masterVulnId: ghsaMaster.id } });
+
+    expect((await mergeOsvAliasGroups()).records).toBeGreaterThan(0);
+
+    const masters = await prisma.vulnerability.findMany();
+    expect(masters).toHaveLength(1);
+    expect(masters[0]).toMatchObject({ id: ghsaMaster.id, osvId: 'GHSA-6q48-6c7w-9gw2', severity: 'HIGH' });
+    expect(await mergeOsvAliasGroups()).toEqual({ records: 0 });
+  });
+
+  it('deletes a master keyed by an OSV id that no record points at, and keeps the rest', async () => {
+    const { pruneOrphanOsvMasters } = await import('./osv-alias-groups.js');
+    await prisma.vulnerability.create({ data: { osvId: 'RHEA-2024:5245', severity: 'HIGH' } });
+    await importOSVData(makeOsv({ id: 'GHSA-kept-0001' }));
+    await prisma.vulnerability.create({ data: { cveId: 'CVE-2026-7002' } });
+
+    expect(await pruneOrphanOsvMasters()).toEqual({ deleted: 1 });
+    expect(await prisma.vulnerability.findUnique({ where: { osvId: 'RHEA-2024:5245' } })).toBeNull();
+    expect(await prisma.vulnerability.findUnique({ where: { osvId: 'GHSA-kept-0001' } })).not.toBeNull();
+    expect(await prisma.vulnerability.findUnique({ where: { cveId: 'CVE-2026-7002' } })).not.toBeNull();
+  });
+});

@@ -500,6 +500,103 @@ export function osvRecordCveId(osvData: Pick<OSVVulnerability, 'id' | 'aliases' 
     null;
 }
 
+type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/** GHSA first, then each source's own ids (PYSEC, RUSTSEC, GO, ...), malicious-package reports (MAL) last. */
+function osvIdRank(id: string): number {
+  if (id.startsWith('GHSA-')) return 0;
+  if (id.startsWith('MAL-')) return 2;
+  return 1;
+}
+
+/** The id a group of aliased OSV records is reported by: the best ranked, then the first in order. */
+export function canonicalOsvId(ids: string[]): string {
+  return [...ids].sort((a, b) => osvIdRank(a) - osvIdRank(b) || a.localeCompare(b))[0];
+}
+
+type MasterFields = {
+  severity: string | null;
+  cvssScore: number | null;
+  cvssVector: string | null;
+  summary: string | null;
+  publishedAt: Date | null;
+  modifiedAt: Date | null;
+};
+
+/**
+ * The master of an OSV record that names no CVE, shared with the records it is
+ * an alias of. One vulnerability is often published under several ids with no
+ * CVE (GHSA-6q48-6c7w-9gw2 and PYSEC-2026-4320 for one certifi issue, or a
+ * malicious package as MAL-… and PYSEC-…). Each used to get a master of its own,
+ * and a search reports one finding per master, so a package got the same
+ * finding twice.
+ *
+ * The group is the record's own id and its non-CVE aliases. When a record of the
+ * group knows a CVE, the group is that CVE and joins its master. Otherwise the
+ * group's masters become one, keyed by the best ranked id among the group's
+ * records in the database (canonicalOsvId). Ids only named in an alias are not
+ * candidates: picking them would re-key masters that were never duplicated, and
+ * re-report their findings under another id.
+ */
+async function upsertAliasGroupMaster(
+  tx: Tx,
+  osvRecord: { osvId: string },
+  osvData: OSVVulnerability,
+  fields: MasterFields,
+): Promise<string> {
+  const group = [...new Set([osvRecord.osvId, ...(osvData.aliases ?? []).filter((a) => !a.startsWith('CVE-'))])];
+  const members = await tx.oSVVulnerability.findMany({
+    where: { osvId: { in: group } },
+    select: { osvId: true, cveId: true, masterVulnId: true },
+  });
+  const memberMasterIds = members.map((m) => m.masterVulnId).filter((id): id is string => !!id);
+  const masters = await tx.vulnerability.findMany({
+    where: { OR: [{ id: { in: memberMasterIds } }, { osvId: { in: group } }] },
+  });
+
+  const cveId = members.find((m) => m.cveId && m.osvId !== osvRecord.osvId)?.cveId ?? null;
+  const canonical = canonicalOsvId([...new Set([osvRecord.osvId, ...members.map((m) => m.osvId)])]);
+  const target =
+    (cveId ? await tx.vulnerability.findUnique({ where: { cveId } }) : null) ??
+    masters.find((m) => m.cveId) ??
+    masters.find((m) => m.osvId === canonical) ??
+    masters.find((m) => !m.cveId) ??
+    null;
+
+  // Fold the group's other CVE-less masters into the target.
+  for (const m of masters) {
+    if (!target || m.id === target.id || m.cveId) continue;
+    await tx.oSVVulnerability.updateMany({ where: { masterVulnId: m.id }, data: { masterVulnId: target.id } });
+    await tx.advisoryVulnerability.updateMany({ where: { masterVulnId: m.id }, data: { masterVulnId: target.id } });
+    await tx.vulnerability.delete({ where: { id: m.id } });
+  }
+
+  if (!target) {
+    const created = await tx.vulnerability.create({ data: { osvId: canonical, ...fields } });
+    return created.id;
+  }
+
+  // The canonical record's own values lead; any other record only fills what is
+  // missing. A value the canonical record lacks stays as another alias gave it:
+  // it describes the same vulnerability.
+  const leads = !target.cveId && osvRecord.osvId === canonical;
+  const current = normalizeSeverity(target.severity);
+  await tx.vulnerability.update({
+    where: { id: target.id },
+    data: {
+      ...(!target.cveId && target.osvId !== canonical ? { osvId: canonical } : {}),
+      severity: leads ? (fields.severity ?? current) : (current ?? fields.severity),
+      ...(fields.cvssScore !== null && (leads || target.cvssScore === null)
+        ? { cvssScore: fields.cvssScore, cvssVector: fields.cvssVector } : {}),
+      summary: leads ? (fields.summary ?? target.summary) : (target.summary ?? fields.summary),
+      publishedAt: target.publishedAt ?? fields.publishedAt,
+      modifiedAt: fields.modifiedAt && (!target.modifiedAt || fields.modifiedAt > target.modifiedAt)
+        ? fields.modifiedAt : target.modifiedAt,
+    },
+  });
+  return target.id;
+}
+
 export async function upsertMasterFromOSV(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
   osvRecord: { id: string; cveId: string | null; osvId: string },
@@ -548,27 +645,10 @@ export async function upsertMasterFromOSV(
       masterId = master.id;
     }
   } else {
-    // No CVE → upsert keyed by osvId
-    const master = await tx.vulnerability.upsert({
-      where: { osvId: osvRecord.osvId },
-      create: {
-        osvId: osvRecord.osvId,
-        severity,
-        cvssScore,
-        cvssVector,
-        summary: osvData.summary ?? null,
-        publishedAt,
-        modifiedAt,
-      },
-      update: {
-        severity,
-        cvssScore,
-        cvssVector,
-        summary: osvData.summary ?? null,
-        modifiedAt,
-      },
+    // No CVE → the master of the record's alias group
+    masterId = await upsertAliasGroupMaster(tx, osvRecord, osvData, {
+      severity, cvssScore, cvssVector, summary: osvData.summary ?? null, publishedAt, modifiedAt,
     });
-    masterId = master.id;
   }
 
   // Clean up orphaned master row when CVE is assigned after initial import.

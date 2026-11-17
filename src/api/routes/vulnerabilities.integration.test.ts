@@ -1229,3 +1229,30 @@ describe('GET /api/v1/vulnerabilities/:id', () => {
     expect(adv.json()).toMatchObject({ advisoryId: 'FG-IR-26-001', severity: 'MEDIUM' });
   });
 });
+
+describe('GET /api/v1/vulnerabilities/search — aliased records without a CVE', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createServer();
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await prisma.$disconnect();
+  });
+
+  it('reports one finding under the GHSA id, not one per id', async () => {
+    const affected = [{ package: { ecosystem: 'PyPI', name: 'demo-certifi' }, versions: ['2026.1.1'] }];
+    await importOSVData({ id: 'PYSEC-2026-4320', modified: '2026-01-01T00:00:00Z', aliases: ['GHSA-6q48-6c7w-9gw2'], affected });
+    await importOSVData({ id: 'GHSA-6q48-6c7w-9gw2', modified: '2026-01-01T00:00:00Z', aliases: ['PYSEC-2026-4320'], affected });
+
+    const res = await search(app, 'package=demo-certifi&version=2026.1.1&ecosystem=PyPI');
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].externalId).toBe('GHSA-6q48-6c7w-9gw2');
+  });
+});
