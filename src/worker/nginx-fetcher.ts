@@ -110,7 +110,9 @@ export function parseNginxPage(html: string): RawEntry[] {
     const ranges = parseVulnerableText(vulnMatch[1].trim());
     if (ranges.length === 0) continue;
 
-    const sevMatch = block.match(/Severity:\s*(\w+)/i);
+    // nginx.org writes the serious ones in bold ("Severity: <b>major</b>"), so skip any tags
+    // between the label and the word.
+    const sevMatch = block.match(/Severity:\s*(?:<[^>]*>\s*)*(\w+)/i);
     const severity = sevMatch ? sevMatch[1].toLowerCase() : 'unknown';
 
     for (const cveMatch of cveMatches) {
@@ -123,10 +125,14 @@ export function parseNginxPage(html: string): RawEntry[] {
   return entries;
 }
 
+// nginx.org's own scale is major, medium, minor and none (it publishes no CVSS score):
+// major is read as HIGH and minor as LOW. "none" has no rating.
 const SEVERITY_MAP: Record<string, string> = {
   critical: 'CRITICAL',
+  major: 'HIGH',
   high: 'HIGH',
   medium: 'MEDIUM',
+  minor: 'LOW',
   low: 'LOW',
 };
 
