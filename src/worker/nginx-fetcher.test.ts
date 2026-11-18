@@ -39,6 +39,18 @@ describe('parseNginxPage', () => {
     ]);
   });
 
+  it('reads a severity written in bold, as nginx.org does for the serious ones', () => {
+    const html = `
+      <li><p>Memory corruption in HTTP/2 flow control<br>Severity: <b>major</b><br><a href="https://my.f5.com/manage/s/article/K000163926">Advisory</a><br><a href="https://www.cve.org/CVERecord?id=CVE-2026-123007">CVE-2026-123007</a><br>Not vulnerable: 1.31.9+, 1.30.7+<br>Vulnerable: 1.9.5-1.31.8</p></li>
+      <li><p>Another<br>Severity: <strong> minor </strong><br>CVE-2026-1235<br>Vulnerable: 1.0.0-1.0.5</p></li>
+    `;
+    // The CVE is named in the link's URL and in its text, so it is read twice (groupByAdvisory() merges them).
+    expect([...new Set(parseNginxPage(html).map(e => `${e.cveId} ${e.severity}`))]).toEqual([
+      'CVE-2026-123007 major',
+      'CVE-2026-1235 minor',
+    ]);
+  });
+
   it('picks the fix candidate that is exactly one patch past the range\'s lastAffected', () => {
     const html = `
       <li>
@@ -114,6 +126,16 @@ describe('groupByAdvisory', () => {
       { vendor: 'nginx', product: 'nginx', versionStart: '0.6.18', lastAffected: '1.25.2', versionFixed: '1.25.3', patchAvailable: true },
       { vendor: 'nginx', product: 'nginx', versionStart: '1.21.0', lastAffected: '1.25.1', versionFixed: undefined, patchAvailable: false },
     ]);
+  });
+
+  it("maps nginx.org's own scale: major is HIGH, minor is LOW, and none or unknown has no rating", () => {
+    const range = { introduced: '1.0.0', lastAffected: '1.0.1' };
+    const severityOf = (severity: string) => groupByAdvisory([{ cveId: 'CVE-2026-4444', severity, range }])[0].severity;
+    expect(severityOf('major')).toBe('HIGH');
+    expect(severityOf('medium')).toBe('MEDIUM');
+    expect(severityOf('minor')).toBe('LOW');
+    expect(severityOf('none')).toBeUndefined();
+    expect(severityOf('unknown')).toBeUndefined();
   });
 
   it('keeps distinct CVEs separate', () => {
