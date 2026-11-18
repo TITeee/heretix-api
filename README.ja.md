@@ -1,43 +1,43 @@
 # Heretix API
 
-heretix-api は、**[heretix](https://titeee.github.io/heretix-web/)** の脆弱性データベースです。heretix は、サーバー・コンテナ・ネットワーク機器（ファイアウォール、VPN など）の CVE を 1 つのインベントリで管理する、セルフホスト型のツール群です（Apache-2.0）。
+heretix-api は、**[heretix](https://titeee.github.io/heretix-web/)** の脆弱性検索 API サービスです。heretix は、サーバー・コンテナ・ネットワーク機器（ファイアウォール、VPN など）の CVE を 1 つのインベントリで管理する、セルフホスト型のツール群です（Apache-2.0）。
 
 [English README](README.md)
 
 ## 概要
 
-パッケージ名とバージョンを指定すると、そのバージョンに該当する脆弱性を返す API です。脆弱性データは各公開ソースから事前に取り込んでおき、そのデータを検索します。
+パッケージ名とバージョンを指定すると、そのバージョンに該当する脆弱性を返す API です。NVD や OSV など、公開されている脆弱性データを事前に取り込んでおき、その手元のコピーから検索して答えます。
 
 ```
-GET /api/v1/vulnerabilities/search?package=openssl&version=3.0.2-0ubuntu1.10&ecosystem=Ubuntu:22.04:LTS
-→ 46 件。そのうちの 1 件:
-  CVE-2024-6119  severity HIGH  distroPriority medium  fixedVersion 3.0.2-0ubuntu1.18  isKev false  epssScore 0.67
+GET /api/v1/vulnerabilities/search?package=FortiOS&version=7.4.3
+→ 82 件。そのうちの 1 件:
+  CVE-2026-24858  severity CRITICAL  fixedVersion 7.4.11  isKev true  epssScore 0.87
 ```
 
 言語パッケージ（npm、PyPI、Go、Maven など）、Linux ディストリビューションのパッケージ（Debian、Ubuntu、Alpine、RHEL など）、ネットワーク機器や商用製品（FortiOS、PAN-OS、Cisco IOS XE、vCenter など）を検索できます。各脆弱性について、深刻度、悪用状況、修正バージョンを返します。
 
 heretix 全体の構成は次のとおりです。
 
-![heretix-cli、heretix-management、heretix-api の関係: サーバー、コンテナ、ネットワーク機器を heretix-cli がスキャンして SBOM を heretix-management へ送り、heretix-management がインベントリと検出結果を管理します。両者は heretix-api を検索し、heretix-api は公開ソースを定期的に PostgreSQL へ取り込みます](docs/overview.ja.svg)
+![heretix-cli、heretix-management、heretix-api の関係: サーバー、コンテナ、ネットワーク機器を heretix-cli がスキャンして SBOM を heretix-management へ送り、heretix-management がインベントリと検出結果を管理します。heretix-cli と heretix-management はどちらも heretix-api を検索し、heretix-api は公開されている脆弱性データを定期的に PostgreSQL へ取り込みます](docs/overview.ja.svg)
 
-- **[heretix-cli](https://github.com/TITeee/heretix-cli)**: ホストやコンテナイメージをスキャンし、検出したパッケージを heretix-api で照合します。
+- **[heretix-cli](https://github.com/TITeee/heretix-cli)**: ホストやコンテナイメージをスキャンし、検出したパッケージを heretix-api と照合します。
 - **[heretix-management](https://github.com/TITeee/heretix-management)**: インベントリと検出結果を管理します。
-- **heretix-api**（このリポジトリ）: 各公開ソースのデータを定期的に PostgreSQL へ取り込みます。検索時に外部へアクセスすることはありません。
+- **heretix-api**（このリポジトリ）: NVD や OSV など、公開されているデータを定期的に PostgreSQL へ取り込みます。検索時に外部へアクセスすることはありません。
 
-heretix の他のツールと組み合わせずに、単体の脆弱性検索 API として使うこともできます。
+heretix の他のツールを使わず、脆弱性検索 API として単体で利用することもできます。
 
 ### 処理の流れ
 
+1 と 2 は、定期ジョブによる取り込みのときに行います。3 は、API が呼ばれるたびに、取り込み済みのデータに対して行います。
+
 1. **取り込み**: 定期ジョブが各ソース（OSV、NVD、CISA KEV、EPSS、CVE レコード、ベンダーアドバイザリ）からデータを取得し、ソースごとのテーブルに保存します。
-2. **統合**: 同じ CVE のデータをソースをまたいで 1 件にまとめ、KEV、EPSS、CISA の SSVC 評価といった悪用状況の情報を付与します。
-3. **検索**: 指定されたバージョンが各ソースの影響範囲に含まれるかを判定します。バージョンの比較にはエコシステムごとの規則（semver、dpkg、RPM、ベンダー独自の規則）を使います。同じ脆弱性が複数のソースで見つかっても、結果は 1 件にまとめて返します。
+2. **統合**: ソースをまたいで同じ CVE のデータを 1 件にまとめ、KEV、EPSS、CISA の SSVC 評価といった悪用状況の情報を付け加えます。
+3. **検索**（API リクエスト時）: 指定されたバージョンが各ソースの影響範囲に含まれるかを判定します。バージョンの比較にはエコシステムごとの規則（semver、dpkg、RPM、ベンダー独自の規則）を使います。同じ脆弱性が複数のソースで見つかっても、結果は 1 件にまとめて返します。
 
 ## 特長
 
 - **ベンダーアドバイザリ**: Fortinet、Palo Alto Networks、Cisco、Sophos、SonicWall、Oracle CPU、Oracle Linux、Red Hat、Broadcom/VMware、Splunk、Apache HTTP Server、Apache Tomcat、nginx、Zabbix、Check Point、Ivanti、NetScaler、Microsoft（Windows Server、ベータ）
-- **ディストリビューション対応**: Linux ディストリビューションのパッケージは dpkg / RPM の規則でバージョンを比較する。ディストリビューション独自の重要度（`distroPriority`）と、「修正予定なし」などの修正状況（`fixStatus`）も返す
-- **マルウェア検知**: [ossf/malicious-packages](https://github.com/ossf/malicious-packages) に登録された悪意のあるパッケージ（`MAL-*`）も、脆弱性と同じ方法で検索できる
-- **シンプルな構成**: 必要なミドルウェアは PostgreSQL だけ（Redis は不要）。Docker Compose の設定、スケジューラ、取り込み状況のダッシュボードを同梱
+- **ディストリビューション対応**: Linux ディストリビューションのパッケージは、dpkg / RPM の規則でバージョンを比較します。結果には、ディストリビューション独自の重要度（`distroPriority`）と、「修正予定なし」などの修正状況（`fixStatus`）も含まれます。
 
 ## 動作要件
 
@@ -45,11 +45,11 @@ PoC 環境向けの最小構成です（出典: [heretix の要件ページ](htt
 
 | 項目 | 要件 |
 |---|---|
-| CPU | 2 vCPU 以上。取り込みや検索の実行中は heretix-api のコンテナが 1 コアの 70% 程度まで使うことがあり、取り込み中は PostgreSQL の負荷も加わる |
-| メモリ | 8 GB 以上（推奨 16 GB）。NVD 全件と複数の OSV エコシステムを取り込んだ状態で、heretix-api の PostgreSQL が約 7.7 GB を使用する |
-| ディスク | 20 GB 以上。heretix-api のデータベースは、数か月の運用で約 11 GB まで増える。OSV の全エコシステムを取り込む場合は、さらに多めに確保する |
+| CPU | 2 vCPU 以上。取り込みや検索の実行中は heretix-api のコンテナが 1 コアの 70% 程度まで使うことがあり、取り込み中は PostgreSQL の負荷も加わります |
+| メモリ | 8 GB 以上（推奨 16 GB）。NVD 全件と複数の OSV エコシステムを取り込んだ状態で、heretix-api の PostgreSQL が約 7.7 GB を使用します |
+| ディスク | 20 GB 以上。heretix-api のデータベースは、数か月の運用で約 11 GB まで増えます。OSV の全エコシステムを取り込む場合は、さらに多めに確保してください |
 | ソフトウェア | Docker、Docker Compose v2、git |
-| ネットワーク | 各公開ソース（nvd.nist.gov、osv.dev、GitHub、各ベンダーのサイト）へアクセスできること |
+| ネットワーク | データの取得元（nvd.nist.gov、osv.dev、GitHub、各ベンダーのサイト）へアクセスできること |
 
 Docker を使わずに動かす場合（Node.js 22、pnpm、PostgreSQL 15 以上）は、[docs/operations.md](docs/operations.md#native) を参照してください。
 
@@ -64,8 +64,9 @@ cp .env.example .env
 ```
 
 `.env` に次の値を設定します。
-- `API_KEY`: API の認証キー。任意の文字列を設定します。リクエスト時は `x-api-key` ヘッダーでこの値を送ります。
-- `POSTGRES_PASSWORD`: 同梱の PostgreSQL のパスワード。`.env.example` には無いので、行を追加します。未設定時の `changeme` はローカルでの試用向けなので、独自の値を設定してください。
+- `API_KEY`: API の認証キー。ランダムな文字列を設定します（`openssl rand -hex 32` で生成できます）。クライアントは、すべてのリクエストでこの値を `x-api-key` ヘッダーに付けて送ります。
+- `ADMIN_API_KEY`: 2 つ目の認証キー。ダッシュボードへのアクセスと、ジョブの実行・切り替えに使います。管理者だけが持つようにしてください。クライアントに必要なのは `API_KEY` だけです。
+- `POSTGRES_PASSWORD`: 同梱の PostgreSQL のパスワード。`.env.example` にはないので、行を追加します。未設定時の `changeme` はローカルでの試用向けなので、独自の値を設定してください。
 - `NVD_API_KEY`（任意、推奨）: [NVD の API キー](https://nvd.nist.gov/developers/request-an-api-key)（無料）。設定すると NVD の取り込みが速くなります。
 
 Docker で動かす場合、`.env` の `DATABASE_URL` は使いません。接続先のデータベースは Docker Compose が設定します。
@@ -82,12 +83,14 @@ curl http://localhost:5000/health    # → {"status":"ok",...}
 
 ### 3. データの取り込み
 
-**起動直後のデータベースは空です。** 定期ジョブは**差分だけ**を取得するため、利用を始める前に初回の取り込みが必要です。`http://localhost:5000/dashboard` の[ダッシュボード](#ダッシュボード)を開き、管理キー（`ADMIN_API_KEY`）を入力してください。取り込みはすべてここから行え、コマンドは不要です。
+**起動直後のデータベースは空です。** 定期ジョブは**差分だけ**を取得するため、利用を始める前に初回の取り込みが必要です。`http://localhost:5000/dashboard` の[ダッシュボード](#ダッシュボード)を開き、管理キー（`ADMIN_API_KEY`）を入力してください。取り込みはすべてここから行えるので、コマンドは不要です。
 
-- **NVD**（全 CVE、約 40 万件）: NVD の行の **Load** を押します。数時間かかり、状態が `running` から `completed` に変わります。途中で失敗しても、もう一度 **Load** を押せば、止まった所から再開します。
-- **CISA KEV と EPSS**: NVD の完了後に **Run** を押します。取り込み済みの CVE に情報を追加するものなので、NVD より後に実行します。2 回目以降は毎日自動で更新されます。
-- **OSV**: 「OSV Ecosystems」で、スキャンするエコシステム（`npm`、`PyPI`、`Ubuntu` など。[名前の選び方](docs/data-sources.md#which-name-to-import)）を選び、**Add and load** を押します。毎日のジョブが On になり、全件が取り込まれます。
+- **NVD**（全 CVE、約 40 万件）: NVD の行の **Load** を押します。数時間かかり、状態が `running` から `completed` に変わります。途中で失敗しても、もう一度 **Load** を押せば、止まったところから再開します。
+- **CISA KEV と EPSS**: NVD の完了後に **Run** を押します。どちらも取り込み済みの CVE に情報を付け加えるだけなので、NVD より後に実行します。以降は、毎日の自動実行で最新に保たれます。
+- **OSV**: 「OSV Ecosystems」で、スキャンするエコシステム（`npm`、`PyPI`、`Ubuntu` など。[名前の選び方](docs/data-sources.md#which-name-to-import)）を選び、**Add and load** を押します。毎日のジョブが On になり、全件を取り込みます。
 - **そのほかのソース**（ベンダーアドバイザリ、Debian security tracker `debian-tracker`）: ジョブを **On** にして、**Run** を一度押します。CVE レコード（`cna`、約 600 MB のダウンロード）と Microsoft（`advisory-microsoft`）は、NVD と同じく、初回はボタンが **Load** になります。
+
+複数のソースを続けて **Load** や **Run** しても構いません。同時に動くのは 2 つまで（メモリを多く使う取り込みは 1 つまで）で、残りは待ち状態（`queued`）になり、順に自動で始まります。同じソースを重ねて実行することはできません。
 
 コマンド（`docker compose exec app pnpm import:nvd full`、`pnpm import:osv ecosystem <名前>`）も使えます。スクリプトからの実行や、最初から取り込み直すときに使います。
 
@@ -101,7 +104,7 @@ curl -H "x-api-key: $API_KEY" \
   "http://localhost:5000/api/v1/vulnerabilities/search?package=lodash&version=4.17.20&ecosystem=npm"
 ```
 
-検索結果に反映されるのは、取り込みが完了したソースのデータです。
+取り込みが終わったソースの分から、検索結果に反映されます。
 
 ### 停止と更新
 
@@ -137,7 +140,7 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-
 | `POST /api/v1/vulnerabilities/search/batch` | 最大 1,000 パッケージの一括検索 |
 | `GET /api/v1/vulnerabilities/search/cpe` | CPE 2.3 による検索（NVD） |
 | `GET /api/v1/vulnerabilities/suggest` | パッケージ名の候補 |
-| `GET /api/v1/catalog` | 製品カタログ(選択画面用) |
+| `GET /api/v1/catalog` | 製品カタログ（選択画面用） |
 | `GET /api/v1/vulnerabilities/:id` | CVE、OSV、ベンダーアドバイザリの ID による詳細の取得 |
 | `GET /api/v1/vulnerabilities/stats` | 件数の統計 |
 | `POST /api/v1/jobs/:source/run`、`PATCH /api/v1/jobs/:source` | 取り込みジョブの手動実行、有効・無効の切り替え |
@@ -157,19 +160,23 @@ curl -H "x-api-key: $API_KEY" "http://localhost:5000/api/v1/vulnerabilities/CVE-
 | Red Hat Enterprise Linux | 8、9、10 |
 | Windows Server（ベータ） | 2016、2019、2022、2025（デスクトップ版と Server Core） |
 
-Windows Server はベータ版です。実機数台でしか確認しておらず、リリースではなく、フルの OS ビルドで検索します。Windows 10 / 11 は対象外です。
-
-それ以外のリリースのデータも**削除しません**。精度の検証は行いませんが、ベストエフォートで検索できます。Oracle Linux も同じ扱いです。npm や PyPI などの言語エコシステムは対象外（この方針の影響を受けません）。理由、ディストリビューションごとの注記、一覧の見直し方は [docs/data-sources.md](docs/data-sources.md#supported-os-releases)（英語）にあります。
+Windows Server はベータ版です。実機数台でしか確認しておらず、検索はリリースではなく OS のビルド番号全体で行います。Windows 10 / 11 は対象外です。
 
 ## ダッシュボード
 
-`http://localhost:5000/dashboard` では、ソースごとの取り込み状況と件数を確認できます。ソースの各行には、3つのボタンが列ごとに並びます。**Schedule**（On/Off）は毎日の定期実行の切り替え、**Run now** は手動での一回の実行（前回からの差分。未読み込みのときは初回の取り込みで、ボタンは **Load**）、**Full reload** は全件を読み直して保存済みのデータに上書きします（実行前に確認が出ます）。レコードの読み方が変わり、保存済みのデータもそれに合わせたいとき（たとえば CVE レコードをより多く読めるようになった更新のあと）に使います。事前に削除はしないので、実行中も検索は使えます。データを表示するには、画面右上で API キーを入力する必要があります。
+`http://localhost:5000/dashboard` では、ソースごとの取り込み状況と件数を確認できます。アクセスするとサインイン画面が表示されるので、管理キー（`ADMIN_API_KEY`）を入力してください。
+
+ソースの行には、3 つの列にボタンが並びます。
+
+- **Schedule** 列の **On** / **Off**: 毎日の定期実行の切り替え
+- **Run now** 列の **Run**: 1 回だけの手動実行。前回からの差分を取り込みます。未読み込みのときは初回の取り込みになり、ボタンは **Load** になります
+- **Full reload** 列の **Reload**: 全件を読み直して、保存済みのデータを上書きします
 
 ![Import Status Dashboard](docs/dashboard.png)
 
 ## データ収集
 
-初期状態で定期実行されるのは NVD、KEV、EPSS だけです。ほかのソースは、必要なものを On にしてください。
+初期状態で定期実行されるのは NVD、KEV、EPSS だけです。ほかのソースは、必要なものを手動で On にしてください。
 
 | ソース | 内容 | スケジュール（UTC） |
 |---|---|---|
@@ -197,6 +204,10 @@ Windows Server はベータ版です。実機数台でしか確認しておら�
 | [docs/architecture.md](docs/architecture.md) | データモデル、重複排除、バージョンの照合 |
 | [docs/known-issues.md](docs/known-issues.md) | 既知の制約 |
 | [ACCURACY.md](ACCURACY.md) | 公式アドバイザリを正解データとした適合率・再現率の測定結果 |
+| [docs/detection-comparison-rhel9.md](docs/detection-comparison-rhel9.md) | RHEL 9.8 のホスト 1 台を heretix-api と Trivy でスキャンし、すべての差異を Red Hat の VEX データで検証した記録 |
+| [docs/detection-comparison-debian13.md](docs/detection-comparison-debian13.md) | Debian 13 のホスト 1 台を heretix-api と Trivy でスキャンし、すべての差異を Debian security tracker と OSV で検証した記録 |
+| [docs/detection-comparison-ubuntu2404.md](docs/detection-comparison-ubuntu2404.md) | Ubuntu 24.04 のホスト 1 台を heretix-api と Trivy でスキャンし、すべての差異を Ubuntu CVE Tracker の状態、OSV、ホストの更新可能なパッケージで検証した記録 |
+| [docs/detection-comparison-alpine321.md](docs/detection-comparison-alpine321.md) | Alpine 3.21 のコンテナイメージ 1 つを heretix-api と Trivy でスキャンし、すべての差異を OSV、Alpine の security database、NVD で検証した記録 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 開発環境、テスト、ベンダーの追加方法 |
 
 ## ライセンス
