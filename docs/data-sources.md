@@ -288,7 +288,7 @@ The advisory list comes from the support portal's JSON API, and each detail page
 
 [oracle-cpu-fetcher.ts](../src/worker/oracle-cpu-fetcher.ts) · `pnpm import:oracle-cpu` (all) / `latest` · daily 12:30 UTC
 
-Quarterly CPUs back to January 2020, discovered from Oracle's RSS. CSAF 2.0 is read from April 2022 onward, and CVRF 1.1 for earlier quarters. Each CPU is split into one advisory per CVE (`cpuapr2026-CVE-...`). This covers Oracle software (MySQL, Java SE, WebLogic, ...), not Oracle Linux packages.
+Three kinds of Oracle advisory, each split into one advisory per CVE: the quarterly CPUs back to January 2020 (`cpuapr2026-CVE-...`), the monthly CSPUs (Critical Security Patch Update) between them (`cspunov2026-CVE-...`, 800 to 1,000 CVEs a month in 2026), and the out-of-cycle Security Alerts (`alert-cve-2026-114820-CVE-...`). They are listed from Oracle's RSS and from its map of CVEs to advisories (`public-vuln-to-advisory-mapping.html`), which names a new one before the RSS does; the CPU and CSPU of the last three months are also asked for by name. Either list may fail on its own (counted as a failed fetch); both failing fails the run. Each is read from its CSAF 2.0 (an alert's is named without `alert-`: `cve-2026-114820csaf.json`), and a CPU from 2020 to 2022 from its CVRF 1.1. One with neither (404: a month with no advisory, an alert from before Oracle published CSAF for alerts, such as Log4Shell's) is skipped without counting as a failure. The text is Oracle's first per-product description. Entries Oracle marks only `known_not_affected` are not imported. This covers Oracle software (MySQL, Java SE, WebLogic, ...), not Oracle Linux packages.
 
 ## Splunk
 
