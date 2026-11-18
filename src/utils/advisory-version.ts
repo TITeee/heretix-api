@@ -5,6 +5,7 @@ import { citrixVersionToInt } from './citrix-version.js';
 import { microsoftVersionToInt } from './microsoft-version.js';
 import { sonicWallVersionToInt } from './sonicwall-version.js';
 import { broadcomVersionToInt } from './broadcom-version.js';
+import { ORACLE_VENDOR, oracleVersionToInt } from './oracle-version.js';
 
 /** AdvisoryAffectedProduct.vendor for Palo Alto Networks rows (pan-fetcher.ts). */
 export const PAN_VENDOR = 'paloalto';
@@ -31,6 +32,7 @@ const VENDOR_VERSION_ENCODERS: Record<string, (version: string) => bigint | null
   [MICROSOFT_VENDOR]: microsoftVersionToInt,
   [SONICWALL_VENDOR]: sonicWallVersionToInt,
   [BROADCOM_VENDOR]: broadcomVersionToInt,
+  [ORACLE_VENDOR]: oracleVersionToInt,
 };
 
 export const VENDORS_WITH_OWN_VERSION_ORDER = Object.keys(VENDOR_VERSION_ENCODERS);
@@ -47,6 +49,7 @@ export const OWN_VERSION_ORDER_SOURCES: Record<string, string> = {
   [MICROSOFT_VENDOR]: 'advisory-microsoft',
   [SONICWALL_VENDOR]: 'advisory-sonicwall',
   [BROADCOM_VENDOR]: 'advisory-broadcom',
+  [ORACLE_VENDOR]: 'advisory-oracle-cpu',
 };
 
 /**
@@ -64,7 +67,8 @@ export const OWN_VERSION_ORDER_SOURCES: Record<string, string> = {
  * versions ("7.0.1-R1456"), whose letter-led build normalizeVersion() reads as a
  * pre-release -- see sonicwall-version.ts -- and VMware's updates, of which
  * normalizeVersion() reads only the "8.0 U3e" spelling ("6.7u2c" became 6.72 and
- * ESXi image names nothing) -- see broadcom-version.ts. Writer
+ * ESXi image names nothing) -- see broadcom-version.ts -- and Oracle's five-number
+ * versions and Java updates ("12.2.1.4.0", "8u511") -- see oracle-version.ts. Writer
  * (advisory-fetcher.ts) and reader (routes/vulnerabilities.ts) must both go
  * through here so the stored bound and the queried version are always encoded
  * the same way.

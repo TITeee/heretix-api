@@ -290,6 +290,19 @@ The advisory list comes from the support portal's JSON API, and each detail page
 
 Three kinds of Oracle advisory, each split into one advisory per CVE: the quarterly CPUs back to January 2020 (`cpuapr2026-CVE-...`), the monthly CSPUs (Critical Security Patch Update) between them (`cspunov2026-CVE-...`, 800 to 1,000 CVEs a month in 2026), and the out-of-cycle Security Alerts (`alert-cve-2026-114820-CVE-...`). They are listed from Oracle's RSS and from its map of CVEs to advisories (`public-vuln-to-advisory-mapping.html`), which names a new one before the RSS does; the CPU and CSPU of the last three months are also asked for by name. Either list may fail on its own (counted as a failed fetch); both failing fails the run. Each is read from its CSAF 2.0 (an alert's is named without `alert-`: `cve-2026-114820csaf.json`), and a CPU from 2020 to 2022 from its CVRF 1.1. One with neither (404: a month with no advisory, an alert from before Oracle published CSAF for alerts, such as Log4Shell's) is skipped without counting as a failure. The text is Oracle's first per-product description. Entries Oracle marks only `known_not_affected` are not imported. This covers Oracle software (MySQL, Java SE, WebLogic, ...), not Oracle Linux packages.
 
+Products are stored under their CSAF product name without "Oracle " (`Database Server`, `MySQL Server`, `Java SE`). The part in brackets after it (`Database Server(Java VM)`) goes to the advisory's component when all of a CVE's products name the same one. Versions are compared in Oracle's own order ([oracle-version.ts](../src/utils/oracle-version.ts)), which keeps five numbers (`12.2.1.4.0`, `21.0.13.0.3`) and reads Java 8 as `8u511`, `8u511b33` or `1.8.0_511` alike. What an affected version says:
+
+| Oracle writes | Stored as |
+|---|---|
+| `>=19.3\|<=19.32`, `19.3-19.32`, `12.2.3 - 12.2.10` | that range, both ends affected |
+| `8.0.28 and prior`, `Prior to 21.4.3` | up to that version, from the start of its line (`8.0`, `21.4`) |
+| A Java SE, GraalVM or JavaFX version (`21.0.13`) | its line up to it (`21` to `21.0.13`): Oracle names only the newest affected update |
+| An APEX version (`24.1.22`) | its line up to it (`24.1` to `24.1.22`) |
+| Any other version (`12.2.1.4.0`) | that release only; a search marks the match approximate, since patches leave the release's version as it was |
+| What cannot be ordered (`19c`, `prior to XCP3120`) | the text, matched exactly |
+
+Oracle publishes no fixed version, so there is none; the advisory's solution names the CPU, CSPU or Security Alert whose patches fix it.
+
 ## Splunk
 
 [splunk-fetcher.ts](../src/worker/splunk-fetcher.ts) · `pnpm import:splunk` · daily 13:45 UTC

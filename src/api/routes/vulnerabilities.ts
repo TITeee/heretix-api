@@ -8,6 +8,7 @@ import { compareRpmVersions } from '../../utils/rpm-version.js';
 import { compareDpkgVersions } from '../../utils/dpkg-version.js';
 import { parseGoVersion } from '../../utils/go-version.js';
 import { VENDORS_WITH_OWN_VERSION_ORDER, OWN_VERSION_ORDER_SOURCES, encodeAdvisoryVersion } from '../../utils/advisory-version.js';
+import { ORACLE_VENDOR } from '../../utils/oracle-version.js';
 import { type FixStatus, type FixStatusInfo, debianTrackerStatus, ubuntuTrackerStatus } from '../../utils/fix-status.js';
 import { parseCPE } from '../../utils/cpe.js';
 import { expandProductAliases, oracleProductPrefixes } from '../../config/product-aliases.js';
@@ -558,7 +559,8 @@ async function searchAdvisory(
     const adv = r.advisory;
     const fixedVersion = fixAboveInstalled(r.versionFixed ?? null, version, orderByEncoding(v => encodeAdvisoryVersion(r.vendor, v), !ownOrderInts.has(r.vendor)));
     const approximateMatch = version === undefined
-      || (ownOrderInts.has(r.vendor) ? ownOrderInts.get(r.vendor) === null : approximate);
+      || (ownOrderInts.has(r.vendor) ? ownOrderInts.get(r.vendor) === null : approximate)
+      || oracleReleaseOnly(r);
     const requiresFeatures = requiredWindowsFeatures(adv.component);
     // The vendor's component tag, and what it needs on a Windows Server when it names a role.
     const roleFields = { ...(adv.component && { component: adv.component }), ...(requiresFeatures && { requiresFeatures }) };
@@ -586,6 +588,16 @@ async function searchAdvisory(
       aliases: buildAliases({ cveId: adv.cveId }, adv.externalId),
     };
   });
+}
+
+/**
+ * An Oracle row that names one release (WebLogic Server 12.2.1.4.0, stored as a range
+ * of one: oracle-version.ts). Oracle names the release and fixes it with patches that
+ * leave its version as it was, so a match says the release is affected, not that the
+ * installed patch level is.
+ */
+function oracleReleaseOnly(r: { vendor: string; versionStartInt: bigint | null; lastAffectedInt: bigint | null }): boolean {
+  return r.vendor === ORACLE_VENDOR && r.versionStartInt !== null && r.versionStartInt === r.lastAffectedInt;
 }
 
 /**

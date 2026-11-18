@@ -363,6 +363,8 @@ export const ORACLE_PRODUCT_PREFIXES: Record<string, string[]> = {
   communications: ['Communications'],
   'financial services': ['Financial Services'],
   'e-business suite': ['E-Business'],
+  // Oracle's advisories say APEX from 2026 and Application Express before.
+  apex: ['APEX', 'Application Express'],
 };
 
 export function oracleProductPrefixes(product: string): string[] | undefined {

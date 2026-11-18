@@ -2,6 +2,7 @@ import axios from 'axios';
 import { XMLParser } from 'fast-xml-parser';
 import type { AdvisoryFetcher, NormalizedAdvisory } from './advisory-fetcher.js';
 import { logger } from '../utils/logger.js';
+import { ORACLE_VENDOR, parseOracleAffected } from '../utils/oracle-version.js';
 
 const RSS_URL  = 'https://www.oracle.com/ocom/groups/public/@otn/documents/webcontent/rss-otn-sec.xml';
 const CSAF_BASE = 'https://www.oracle.com/docs/tech/security-alerts';
@@ -28,7 +29,7 @@ interface CsafBranch {
 interface CsafVulnerability {
   cve?: string;
   notes?: Array<{ category: string; text: string }>;
-  product_status?: { known_affected?: string[] };
+  product_status?: { known_affected?: string[]; known_not_affected?: string[] };
   remediations?: Array<{ category: string; details: string }>;
   scores?: Array<{
     products: string[];
@@ -44,35 +45,114 @@ interface CsafDocument {
 
 // ─── Utilities ─────────────────────────────────────────────────
 
-/** Walk product_tree and build productId → product info map */
-function buildProductMap(branches: CsafBranch[]): Map<string, { name: string; version: string | null }> {
-  const map = new Map<string, { name: string; version: string | null }>();
+/** One product of a CSAF product tree, as an affected-products row needs it. */
+export interface OracleProduct {
+  /** The product, without "Oracle " ("Database Server", "MySQL Server", "Java SE"). */
+  product: string;
+  /** The part of it named in brackets after the product ("Java VM", "InnoDB"), if any. */
+  component: string | null;
+  /** The affected-version text ("19.3-19.32", "8.0.28 and prior", ">=19.3|<=19.32"), if any. */
+  versions: string | null;
+}
 
-  function walk(bs: CsafBranch[]) {
+/**
+ * The product names Oracle has used for one product, by the name heretix keeps.
+ * The CVRF of 2020 to 2022 called Java SE "Java SE JDK and JRE", and some of its
+ * entries just "Java".
+ */
+const PRODUCT_RENAMES: Record<string, string> = {
+  'Java SE JDK and JRE': 'Java SE',
+  Java: 'Java SE',
+};
+
+/** "Oracle Java SE" → "Java SE", under its current name. */
+export function oracleProductName(name: string): string {
+  const bare = name.replace(/^Oracle\s+/i, '').trim();
+  return PRODUCT_RENAMES[bare] ?? bare;
+}
+
+/**
+ * Walk product_tree and map each product id to its product, component and versions.
+ *
+ * A product's full name is its product_name branch, the component in brackets and
+ * the versions: "Oracle Database Server(Oracle Text) Version 19.3-19.32". The
+ * product comes from the branch, since a name in brackets can be part of the
+ * product ("Oracle HRMS (US)"). The versions come from a product_version_range
+ * branch when it is written as a range (">=19.3|<=19.32", since 2026), and from
+ * the full name otherwise ("MySQL Server Version 8.0.28 and prior" in 2023).
+ */
+export function buildProductMap(branches: CsafBranch[]): Map<string, OracleProduct> {
+  const map = new Map<string, OracleProduct>();
+
+  function walk(bs: CsafBranch[], productName: string | null) {
     for (const b of bs) {
+      const name = b.category === 'product_name' ? b.name.split(' Version ')[0].trim() : productName;
       if (b.product?.product_id) {
-        const fullName = b.product.name;
-        // Extract version: look for semver-like or Oracle-version patterns at end of name
-        const versionMatch = fullName.match(/[\s+](\d[\d.]+[a-z0-9]*)$/i)
-          ?? fullName.match(/\s+v?(\d+\.\d[\d.]*\S*)$/i);
-        const version = versionMatch ? versionMatch[1] : null;
-        map.set(b.product.product_id, { name: fullName, version });
+        const full = b.product.name;
+        const at = full.lastIndexOf(' Version ');
+        const head = (at >= 0 ? full.slice(0, at) : full).trim();
+        const base = name && head.startsWith(name) ? name : head.replace(/\(.*$/, '').trim();
+        const bracket = head.slice(base.length).trim().match(/^\((.+)\)$/);
+        const range = b.category === 'product_version_range' && /^[<>=]/.test(b.name) ? b.name : null;
+        map.set(b.product.product_id, {
+          product: oracleProductName(base),
+          component: bracket ? bracket[1].trim() : null,
+          versions: range ?? (at >= 0 ? full.slice(at + ' Version '.length).trim() : null),
+        });
       }
-      if (b.branches) walk(b.branches);
+      if (b.branches) walk(b.branches, name);
     }
   }
 
-  walk(branches);
+  walk(branches, null);
   return map;
 }
 
-/** Extract Oracle product family name by stripping "Oracle " prefix and version suffix */
-function extractProductFamily(fullName: string): string {
-  return fullName
-    .replace(/^Oracle\s+/i, '')
-    .replace(/\s+v?\d[\d.]*\S*$/i, '')
-    .replace(/\s+Version\s*\S*$/i, '')
-    .trim() || fullName;
+/**
+ * The affected-products rows for the given products of one CVE, once each, and the
+ * component when they all name the same one. Oracle gives no fixed version: its
+ * remedy is the advisory's patches (see advisorySolution).
+ */
+function affectedRows(products: OracleProduct[]): { rows: NormalizedAdvisory['affectedProducts']; component?: string } {
+  const rows: NormalizedAdvisory['affectedProducts'] = [];
+  const seen = new Set<string>();
+  for (const p of products) {
+    for (const a of parseOracleAffected(p.versions, p.product)) {
+      const key = JSON.stringify([a.product, a.versionStart, a.versionEnd, a.lastAffected, a.affectedVersions]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        vendor: ORACLE_VENDOR,
+        product: a.product,
+        ...(a.versionStart && { versionStart: a.versionStart }),
+        ...(a.versionEnd && { versionEnd: a.versionEnd }),
+        ...(a.lastAffected && { lastAffected: a.lastAffected }),
+        affectedVersions: a.affectedVersions,
+        patchAvailable: true,
+      });
+    }
+  }
+  const components = new Set(products.map(p => p.component));
+  const only = components.size === 1 ? [...components][0] : null;
+  return { rows, ...(only && { component: only }) };
+}
+
+/**
+ * What to do about a CVE of an advisory. Oracle's CSAF names no fixed version: its
+ * remedy reads "Oracle customers with valid support contracts" with a link to a
+ * support document. The fix is the advisory's patches.
+ */
+export function advisorySolution(cpuId: string): string {
+  const months: Record<string, string> = {
+    jan: 'January', feb: 'February', mar: 'March', apr: 'April', may: 'May', jun: 'June',
+    jul: 'July', aug: 'August', sep: 'September', oct: 'October', nov: 'November', dec: 'December',
+  };
+  const alert = cpuId.match(/^alert-(cve-\d{4}-\d+)$/);
+  if (alert) return `Apply the patches of the Oracle Security Alert for ${alert[1].toUpperCase()}.`;
+  const m = cpuId.match(/^(cpu|cspu)([a-z]{3})(\d{4})$/);
+  if (!m) return `Apply the patches of the Oracle advisory ${cpuId}.`;
+  const kind = m[1] === 'cpu' ? 'Critical Patch Update' : 'Critical Security Patch Update';
+  return `Apply the patches of the Oracle ${kind} of ${months[m[2]] ?? m[2]} ${m[3]}.`;
 }
 
 // ─── RSS Parsing ───────────────────────────────────────────────
@@ -192,26 +272,11 @@ export function parseCsaf(csaf: CsafDocument, cpuId: string): NormalizedAdvisory
     const summaryNote = vuln.notes?.find(n => n.category === 'summary')
       ?? vuln.notes?.find(n => n.category === 'description' && n.text?.trim());
 
-    // Build affectedProducts from known_affected product IDs
-    const affectedProductIds = vuln.product_status?.known_affected ?? [];
-    const seenProducts = new Set<string>();
-    const affectedProducts: NormalizedAdvisory['affectedProducts'] = [];
-
-    for (const pid of affectedProductIds) {
-      const info = productMap.get(pid);
-      if (!info) continue;
-      const product = extractProductFamily(info.name);
-      const key = `${product}:${info.version ?? ''}`;
-      if (seenProducts.has(key)) continue;
-      seenProducts.add(key);
-
-      affectedProducts.push({
-        vendor: 'oracle',
-        product,
-        affectedVersions: info.version ? [info.version] : [],
-        patchAvailable: true,
-      });
-    }
+    // The known_affected products only: a known_not_affected one is not a match.
+    const products = (vuln.product_status?.known_affected ?? [])
+      .map(pid => productMap.get(pid))
+      .filter((p): p is OracleProduct => p !== undefined);
+    const { rows: affectedProducts, component } = affectedRows(products);
 
     if (affectedProducts.length === 0) continue;
 
@@ -223,6 +288,8 @@ export function parseCsaf(csaf: CsafDocument, cpuId: string): NormalizedAdvisory
       cvssScore,
       cvssVector,
       url: `https://www.oracle.com/security-alerts/${cpuId}.html`,
+      solution: advisorySolution(cpuId),
+      ...(component && { component }),
       publishedAt: csaf.document.tracking.initial_release_date
         ? new Date(csaf.document.tracking.initial_release_date)
         : undefined,
@@ -333,8 +400,7 @@ export function parseCvrf(xml: string, cpuId: string): NormalizedAdvisory[] {
     let cvssVector: string | undefined;
     let detailsText: string | undefined;
 
-    const affectedProducts: NormalizedAdvisory['affectedProducts'] = [];
-    const seen = new Set<string>();
+    const products: OracleProduct[] = [];
 
     for (const vuln of group) {
       for (const s of asArray(vuln.CVSSScoreSets?.ScoreSet)) {
@@ -354,21 +420,12 @@ export function parseCvrf(xml: string, cpuId: string): NormalizedAdvisory[] {
         if (status['@_Type'] !== 'Known Affected') continue;
         for (const pid of asArray(status.ProductID)) {
           const info = productMap.get(pid);
-          if (!info) continue;
-          const key = `${info.product}:${info.version ?? ''}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-
-          affectedProducts.push({
-            vendor: 'oracle',
-            product: info.product,
-            affectedVersions: info.version ? [info.version] : [],
-            patchAvailable: true,
-          });
+          if (info) products.push({ product: oracleProductName(info.product), component: null, versions: info.version });
         }
       }
     }
 
+    const { rows: affectedProducts } = affectedRows(products);
     if (affectedProducts.length === 0) continue;
 
     results.push({
@@ -379,6 +436,7 @@ export function parseCvrf(xml: string, cpuId: string): NormalizedAdvisory[] {
       cvssScore,
       cvssVector,
       url: `https://www.oracle.com/security-alerts/${cpuId}.html`,
+      solution: advisorySolution(cpuId),
       publishedAt,
       affectedProducts,
       rawData: { cpuId, cve: cveId },
