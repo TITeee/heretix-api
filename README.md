@@ -1,6 +1,6 @@
 # Heretix API
 
-heretix-api is the vulnerability database of **[heretix](https://titeee.github.io/heretix-web/)**, a self-hosted suite that tracks CVEs across servers, containers and network appliances (firewalls, VPNs) in one inventory (Apache-2.0).
+heretix-api is the vulnerability lookup API service of **[heretix](https://titeee.github.io/heretix-web/)**, a self-hosted suite that tracks CVEs across servers, containers and network appliances (firewalls, VPNs) in one inventory (Apache-2.0).
 
 [日本語版 README](README.ja.md)
 
@@ -9,9 +9,9 @@ heretix-api is the vulnerability database of **[heretix](https://titeee.github.i
 Ask it "is this software vulnerable?", by package name and version, and it answers from a local copy of public vulnerability data:
 
 ```
-GET /api/v1/vulnerabilities/search?package=openssl&version=3.0.2-0ubuntu1.10&ecosystem=Ubuntu:22.04:LTS
-→ 46 results, e.g.
-  CVE-2024-6119  severity HIGH  distroPriority medium  fixedVersion 3.0.2-0ubuntu1.18  isKev false  epssScore 0.67
+GET /api/v1/vulnerabilities/search?package=FortiOS&version=7.4.3
+→ 82 results, e.g.
+  CVE-2026-24858  severity CRITICAL  fixedVersion 7.4.11  isKev true  epssScore 0.87
 ```
 
 It works for language packages (npm, PyPI, Go, Maven, ...), Linux distribution packages (Debian, Ubuntu, Alpine, RHEL, ...) and network appliances and commercial products (FortiOS, PAN-OS, Cisco IOS XE, vCenter, ...). Each result says how severe the vulnerability is, whether it is being exploited, and how to fix it.
@@ -28,16 +28,16 @@ It can also be used on its own, as a self-hosted vulnerability lookup API.
 
 ### How it works
 
+Steps 1 and 2 happen when the scheduled jobs import data. Step 3 happens on every API request, against the data already imported.
+
 1. **Import**: scheduled jobs download each source (OSV, NVD, CISA KEV, EPSS, CVE Records, and vendor advisories) into per-source tables.
 2. **Merge**: records about the same CVE are linked to one master row, which also carries the exploitation signals (KEV, EPSS, CISA's SSVC assessment).
-3. **Search**: a search compares the version you give against each source's affected ranges. It uses that ecosystem's own version rules (semver, dpkg, RPM, vendor-specific), and returns one result per vulnerability.
+3. **Search** (on each request): a search compares the version you give against each source's affected ranges. It uses that ecosystem's own version rules (semver, dpkg, RPM, vendor-specific), and returns one result per vulnerability.
 
 ## Features
 
 - **Vendor advisories**: Fortinet, Palo Alto Networks, Cisco, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, Check Point, Ivanti, NetScaler and Microsoft (Windows Server, beta)
 - **Distro-aware matching**: dpkg and RPM version comparison for Linux distributions, and each distro's own rating (`distroPriority`) and fix status (`fixStatus`, e.g. "will not fix") per result
-- **Malware detection**: the malicious-package records (`MAL-*`, from [ossf/malicious-packages](https://github.com/ossf/malicious-packages)) that OSV carries in its `npm`, `PyPI`, ... files, searchable like any vulnerability
-- **Simple to run**: PostgreSQL only (no Redis), Docker Compose included, a built-in scheduler and an import dashboard
 
 ## Requirements
 
@@ -89,6 +89,8 @@ On first start, the container creates the database schema and then starts the AP
 - **CISA KEV and EPSS**: after NVD completes, press **Run**. They only annotate CVEs that are already there, and their daily runs keep them current.
 - **OSV**: under *OSV Ecosystems*, choose each ecosystem you scan (`npm`, `PyPI`, `Ubuntu`, ... [which name?](docs/data-sources.md#which-name-to-import)) and press **Add and load**. That switches its daily job on and loads it in full.
 - **Other sources** (vendor advisories, the Debian security tracker `debian-tracker`): switch the job **On** and press **Run** once. CVE Records (`cna`, a ~600 MB download) and Microsoft (`advisory-microsoft`) say **Load** the first time, like NVD.
+
+You can press **Load** or **Run** on several sources in a row. Two jobs run at a time (one at a time for the memory-heavy imports); the rest wait as `queued` and start by themselves. A source that is already queued or running cannot be started again.
 
 The commands (`docker compose exec app pnpm import:nvd full`, `pnpm import:osv ecosystem <name>`) still work, for scripts and for loading again from scratch.
 
@@ -160,11 +162,15 @@ Searches for these releases are covered by accuracy checks and fixes:
 
 Windows Server is in beta: it has been checked against only a few real servers, and it is searched by its full OS build, not by release. Windows 10 and 11 are not covered.
 
-Other releases are **not deleted**: they stay searchable on a best-effort basis, without those checks. Oracle Linux is best-effort too. Language ecosystems (npm, PyPI, ...) are not affected. The reasons, the notes per distro and how the list is kept are in [docs/data-sources.md](docs/data-sources.md#supported-os-releases).
-
 ## Dashboard
 
-`http://localhost:5000/dashboard` shows each source's import status and record count. Each source row has three buttons, one column each: **Schedule** (On/Off) switches the daily scheduled run; **Run now** runs it once (the changes since the last run, or the first load, where the button says **Load**); **Full reload** reads everything again and writes over what is stored, after a confirmation. Use it when how records are read has changed and the stored ones should follow (for example after an upgrade that reads more of the CVE Records); nothing is deleted first, so searches keep working meanwhile. The page opens on a sign-in screen: enter your admin key (`ADMIN_API_KEY`) to see the data. The key is kept for the open tab only; **Sign out** forgets it.
+`http://localhost:5000/dashboard` shows each source's import status and record count. The page opens on a sign-in screen: enter your admin key (`ADMIN_API_KEY`) to see the data.
+
+Each source row has three buttons, one in each of three columns:
+
+- **On** / **Off** in the **Schedule** column: switches the daily scheduled run
+- **Run** in the **Run now** column: runs the source once, importing the changes since the last run. For a source never loaded, it is the first load, and the button says **Load**
+- **Reload** in the **Full reload** column: reads everything again and writes over what is stored
 
 ![Import Status Dashboard](docs/dashboard.png)
 
