@@ -6,6 +6,8 @@ import { CitrixFetcher } from '../worker/citrix-fetcher.js';
 import { MsrcFetcher } from '../worker/msrc-fetcher.js';
 import { SonicWallFetcher } from '../worker/sonicwall-fetcher.js';
 import { BroadcomFetcher } from '../worker/broadcom-fetcher.js';
+import { OracleCpuFetcher } from '../worker/oracle-cpu-fetcher.js';
+import { ORACLE_VENDOR } from './oracle-version.js';
 
 describe('OWN_VERSION_ORDER_SOURCES', () => {
   it("names each vendor's source as its fetcher imports it", () => {
@@ -16,6 +18,7 @@ describe('OWN_VERSION_ORDER_SOURCES', () => {
       [MICROSOFT_VENDOR]: new MsrcFetcher().source(),
       [SONICWALL_VENDOR]: new SonicWallFetcher().source(),
       [BROADCOM_VENDOR]: new BroadcomFetcher().source(),
+      [ORACLE_VENDOR]: new OracleCpuFetcher().source(),
     });
     expect(Object.keys(OWN_VERSION_ORDER_SOURCES).sort()).toEqual([...VENDORS_WITH_OWN_VERSION_ORDER].sort());
   });

@@ -5,6 +5,7 @@ import { resetDb } from '../../test-utils/db.js';
 import { createServer } from '../server.js';
 import { importAdvisoryData } from '../../worker/advisory-fetcher.js';
 import { importOSVData } from '../../worker/osv-fetcher.js';
+import { parseCsaf } from '../../worker/oracle-cpu-fetcher.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { resetOsvCoverageCache } from '../../utils/osv-coverage.js';
 
@@ -238,6 +239,56 @@ describe('GET /api/v1/vulnerabilities/search', () => {
 
     expect(await hits('package=example-product&version=2.0.0-beta')).toEqual(['CVE-2026-7002']);
     expect(await hits('package=example-product&version=2.0.0')).toEqual([]);
+  });
+
+  it('matches Oracle rows by their ranges and lines, in Oracle\'s version order', async () => {
+    // Rows as parseCsaf() writes them from a CSPU (oracle-version.ts).
+    const csaf = (cve: string, products: Array<[string, string, string]>) => ({
+      document: { title: 't', tracking: { id: 'cspunov2026csaf' } },
+      product_tree: { branches: [{ category: 'vendor', name: 'Oracle', branches: products.map(([id, product, version]) => ({
+        category: 'product_name', name: product,
+        branches: [version.startsWith('>=')
+          ? { category: 'product_version_range', name: version, product: { name: product, product_id: id } }
+          : { category: 'product_version', name: `${product} Version ${version}`, product: { name: `${product} Version ${version}`, product_id: id } }],
+      })) }] },
+      vulnerabilities: [{ cve, product_status: { known_affected: products.map(([id]) => id) } }],
+    });
+    for (const adv of [
+      ...parseCsaf(csaf('CVE-2026-7101', [['J21', 'Oracle Java SE', '21.0.13.0.3'], ['J8', 'Oracle Java SE', '8u511b33']]), 'cspunov2026'),
+      ...parseCsaf(csaf('CVE-2026-7102', [['DB', 'Oracle Database Server', '>=19.3|<=19.32']]), 'cspunov2026'),
+      ...parseCsaf(csaf('CVE-2026-7103', [['WLS', 'Oracle WebLogic Server', '12.2.1.4.0']]), 'cspunov2026'),
+    ]) {
+      await importAdvisoryData(adv, 'advisory-oracle-cpu');
+    }
+    const hits = async (query: string) => (await search(app, query)).body.results.map((r: { externalId: string }) => r.externalId);
+
+    // Java: every update of the 21 line up to the CSPU build, and Java 8 however it is written.
+    for (const affected of ['21', '21.0.10', '21.0.13', '21.0.13%2B11-LTS-250', '21.0.13.0.2', '8u401', '1.8.0_511']) {
+      expect(await hits(`package=Java%20SE&version=${affected}`), affected).toEqual(['CVE-2026-7101']);
+    }
+    for (const unaffected of ['21.0.14', '17.0.20', '25.0.1', '8u521', '1.8.0_521']) {
+      expect(await hits(`package=Java%20SE&version=${unaffected}`), unaffected).toEqual([]);
+    }
+
+    // Database: the range, both ends included, whichever way the release update is written.
+    for (const affected of ['19.3', '19.30', '19.32', '19.32.0.0.0']) {
+      expect(await hits(`package=Database&version=${affected}`), affected).toEqual(['CVE-2026-7102']);
+    }
+    for (const unaffected of ['19.33', '19.2', '21.3']) {
+      expect(await hits(`package=Database&version=${unaffected}`), unaffected).toEqual([]);
+    }
+
+    // WebLogic: the release only, and the match is approximate since its patch level is unknown.
+    for (const affected of ['12.2.1.4.0', '12.2.1.4']) {
+      expect(await hits(`package=WebLogic%20Server&version=${affected}`), affected).toEqual(['CVE-2026-7103']);
+    }
+    for (const unaffected of ['12.2.1.3.0', '14.1.1.0.0']) {
+      expect(await hits(`package=WebLogic%20Server&version=${unaffected}`), unaffected).toEqual([]);
+    }
+    const weblogic = await search(app, 'package=WebLogic%20Server&version=12.2.1.4.0');
+    expect(weblogic.body.results[0]).toMatchObject({ approximateMatch: true, fixedVersion: null });
+    const java = await search(app, 'package=Java%20SE&version=21.0.10');
+    expect(java.body.results[0]).toMatchObject({ approximateMatch: false, fixedVersion: null });
   });
 
   it('compares Windows Server builds by build and UBR, and returns Microsoft\'s rating', async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import axios from 'axios';
 import {
-  advisoryIdsIn, buildCvrfProductMap, csafUrlFor, cvrfUrlFor, OracleCpuFetcher, parseCsaf, parseCvrf, recentAdvisoryIds, severityFromScore,
+  advisoryIdsIn, advisorySolution, buildCvrfProductMap, buildProductMap, csafUrlFor, cvrfUrlFor, OracleCpuFetcher, parseCsaf, parseCvrf, recentAdvisoryIds, severityFromScore,
 } from './oracle-cpu-fetcher.js';
 
 describe('severityFromScore', () => {
@@ -97,8 +97,10 @@ describe('parseCvrf', () => {
     expect(adv.severity).toBe('CRITICAL');
     expect(adv.summary).toBe('Vulnerability in Oracle Communications Services Gatekeeper.');
     expect(adv.affectedProducts).toEqual([
-      { vendor: 'oracle', product: 'Communications Services Gatekeeper', affectedVersions: ['6.1'], patchAvailable: true },
+      // One release, named exactly: kept as written and as a range of one (see oracle-version.ts).
+      { vendor: 'oracle', product: 'Communications Services Gatekeeper', versionStart: '6.1', lastAffected: '6.1', affectedVersions: ['6.1'], patchAvailable: true },
     ]);
+    expect(adv.solution).toBe('Apply the patches of the Oracle Critical Patch Update of April 2020.');
     expect(adv.publishedAt).toEqual(new Date('2020-04-14T13:00:00-07:00'));
   });
 
@@ -142,8 +144,8 @@ describe('parseCvrf', () => {
     const results = parseCvrf(xml, 'cpuapr2020');
     expect(results).toHaveLength(1);
     expect(results[0].affectedProducts).toEqual([
-      { vendor: 'oracle', product: 'Product A', affectedVersions: ['1.0'], patchAvailable: true },
-      { vendor: 'oracle', product: 'Product B', affectedVersions: ['2.0'], patchAvailable: true },
+      { vendor: 'oracle', product: 'Product A', versionStart: '1.0', lastAffected: '1.0', affectedVersions: ['1.0'], patchAvailable: true },
+      { vendor: 'oracle', product: 'Product B', versionStart: '2.0', lastAffected: '2.0', affectedVersions: ['2.0'], patchAvailable: true },
     ]);
     // Highest CVSS score across the merged occurrences wins.
     expect(results[0].cvssScore).toBe(9.1);
@@ -274,7 +276,9 @@ describe('OracleCpuFetcher.fetch', () => {
     ]);
     const alert = advisories.find(a => a.cveId === 'CVE-2026-114820')!;
     expect(alert).toMatchObject({ url: page('alert-cve-2026-114820'), severity: 'HIGH', cvssScore: 8.1, rawData: { cpuId: 'alert-cve-2026-114820' } });
-    expect(alert.affectedProducts).toEqual([{ vendor: 'oracle', product: 'Java SE', affectedVersions: ['27.0.1.0.3'], patchAvailable: true }]);
+    // Java names the newest affected build of the release: every earlier one of Java 27 is affected.
+    expect(alert.affectedProducts).toEqual([{ vendor: 'oracle', product: 'Java SE', versionStart: '27', lastAffected: '27.0.1.0.3', affectedVersions: [], patchAvailable: true }]);
+    expect(alert.solution).toBe('Apply the patches of the Oracle Security Alert for CVE-2026-114820.');
     // The alert's CSAF is cve-...csaf.json, never alert-cve-...csaf.json.
     expect(urlsAsked(get)).toContain('https://www.oracle.com/docs/tech/security-alerts/cve-2026-114820csaf.json');
     expect(urlsAsked(get).some(u => u.includes('alert-cve-2026-114820csaf'))).toBe(false);
@@ -484,5 +488,142 @@ describe('parseCsaf summary', () => {
     expect(parseCsaf(doc([{ category: 'description', text: '  ' }, { category: 'description', text: 'Second.' }]), 'cspunov2026')[0].summary).toBe('Second.');
     expect(parseCsaf(doc(undefined), 'cspunov2026')[0].summary).toBe('CSPUNOV2026: CVE-2026-1');
     expect(parseCsaf(doc([{ category: 'general', text: 'Not a description.' }]), 'cspunov2026')[0].summary).toBe('CSPUNOV2026: CVE-2026-1');
+  });
+});
+
+describe('buildProductMap and parseCsaf products', () => {
+  // The tree as Oracle's CSAF of 2023 to 2026 builds it: vendor, product_family,
+  // product_name, then a product_version or product_version_range per product.
+  const version = (product_id: string, name: string) => ({ category: 'product_version', name, product: { name, product_id } });
+  const range = (product_id: string, name: string, full: string) => ({ category: 'product_version_range', name, product: { name: full, product_id } });
+  const productName = (name: string, branches: Array<ReturnType<typeof version>>) => ({ category: 'product_name', name, branches });
+  const tree = {
+    branches: [{
+      category: 'vendor', name: 'Oracle', branches: [
+        { category: 'product_family', name: 'Oracle Database Server', branches: [productName('Oracle Database Server', [
+          range('DB19', '>=19.3|<=19.32', 'Oracle Database Server(Oracle Text) Version 19.3-19.32'),
+          range('DB23', '>=23.4.0|<=23.26.3', 'Oracle Database Server(Oracle Text) Version 23.4.0-23.26.3'),
+          range('DBJVM', '>=19.3|<=19.32', 'Oracle Database Server(Java VM) Version 19.3-19.32'),
+        ])] },
+        { category: 'product_family', name: 'Oracle MySQL', branches: [productName('MySQL Server', [
+          // 2023 to 2025: the range branch is named as the product, the bound is text.
+          range('MY80', 'MySQL Server(Server: Optimizer) Version 8.0.36 and prior', 'MySQL Server(Server: Optimizer) Version 8.0.36 and prior'),
+        ])] },
+        { category: 'product_family', name: 'Oracle Java SE', branches: [productName('Oracle Java SE', [
+          version('JAVA21', 'Oracle Java SE Version 21.0.13.0.3'),
+          version('JAVA8', 'Oracle Java SE Version 8u511b33'),
+          version('JAVA8P', 'Oracle Java SE Version 8u511b33-perf'),
+          version('GRAAL', 'Oracle Java SE Version Oracle GraalVM Enterprise Edition:20.3.8'),
+        ])] },
+        { category: 'product_family', name: 'Oracle Fusion Middleware', branches: [productName('Oracle WebLogic Server', [
+          version('WLS', 'Oracle WebLogic Server Version 12.2.1.4.0'),
+        ])] },
+        { category: 'product_family', name: 'Oracle E-Business Suite', branches: [productName('Oracle HRMS (US)', [
+          range('HRMS', 'Oracle HRMS (US) Version 12.2.3-12.2.15', 'Oracle HRMS (US) Version 12.2.3-12.2.15'),
+        ])] },
+      ],
+    }],
+  };
+  const csafWith = (affected: string[], notAffected: string[] = []): Parameters<typeof parseCsaf>[0] => ({
+    document: { title: 't', tracking: { id: 'cspunov2026csaf' } },
+    product_tree: tree,
+    vulnerabilities: [{ cve: 'CVE-2026-1', product_status: { known_affected: affected, known_not_affected: notAffected } }],
+  });
+
+  it('takes the product from its branch, the component from the brackets and the versions from the range', () => {
+    const map = buildProductMap(tree.branches as never);
+    expect(map.get('DB19')).toEqual({ product: 'Database Server', component: 'Oracle Text', versions: '>=19.3|<=19.32' });
+    expect(map.get('MY80')).toEqual({ product: 'MySQL Server', component: 'Server: Optimizer', versions: '8.0.36 and prior' });
+    expect(map.get('JAVA21')).toEqual({ product: 'Java SE', component: null, versions: '21.0.13.0.3' });
+    // Brackets that are part of the product's own name are not a component.
+    expect(map.get('HRMS')).toEqual({ product: 'HRMS (US)', component: null, versions: '12.2.3-12.2.15' });
+  });
+
+  it('writes Database Server ranges as bounds, one row per line, with the component on the advisory', () => {
+    const [adv] = parseCsaf(csafWith(['DB19', 'DB23']), 'cspunov2026');
+    expect(adv.affectedProducts).toEqual([
+      { vendor: 'oracle', product: 'Database Server', versionStart: '19.3', lastAffected: '19.32', affectedVersions: [], patchAvailable: true },
+      { vendor: 'oracle', product: 'Database Server', versionStart: '23.4.0', lastAffected: '23.26.3', affectedVersions: [], patchAvailable: true },
+    ]);
+    expect(adv.component).toBe('Oracle Text');
+    expect(adv.solution).toBe('Apply the patches of the Oracle Critical Security Patch Update of November 2026.');
+  });
+
+  it('names no component when the products of a CVE name different ones, and drops a row met twice', () => {
+    const [adv] = parseCsaf(csafWith(['DB19', 'DBJVM']), 'cspunov2026');
+    expect(adv.component).toBeUndefined();
+    expect(adv.affectedProducts).toHaveLength(1);
+  });
+
+  it('reads an "and prior" bound from the full name, under the product without its component', () => {
+    const [adv] = parseCsaf(csafWith(['MY80']), 'cpujan2025');
+    expect(adv.affectedProducts).toEqual([
+      { vendor: 'oracle', product: 'MySQL Server', versionStart: '8.0', lastAffected: '8.0.36', affectedVersions: [], patchAvailable: true },
+    ]);
+  });
+
+  it('writes Java versions as the end of their line, Java 8 once for the build and the performance pack, GraalVM as its own product', () => {
+    const [adv] = parseCsaf(csafWith(['JAVA21', 'JAVA8', 'JAVA8P', 'GRAAL']), 'cspunov2026');
+    expect(adv.affectedProducts).toEqual([
+      { vendor: 'oracle', product: 'Java SE', versionStart: '21', lastAffected: '21.0.13.0.3', affectedVersions: [], patchAvailable: true },
+      { vendor: 'oracle', product: 'Java SE', versionStart: '8u0', lastAffected: '8u511', affectedVersions: [], patchAvailable: true },
+      { vendor: 'oracle', product: 'GraalVM Enterprise Edition', versionStart: '20', lastAffected: '20.3.8', affectedVersions: [], patchAvailable: true },
+    ]);
+  });
+
+  it('keeps a WebLogic release exact', () => {
+    const [adv] = parseCsaf(csafWith(['WLS']), 'cpuoct2026');
+    expect(adv.affectedProducts).toEqual([
+      { vendor: 'oracle', product: 'WebLogic Server', versionStart: '12.2.1.4.0', lastAffected: '12.2.1.4.0', affectedVersions: ['12.2.1.4.0'], patchAvailable: true },
+    ]);
+  });
+
+  it('leaves out the products Oracle lists as not affected', () => {
+    const [adv] = parseCsaf(csafWith(['WLS'], ['DB19']), 'cpuoct2026');
+    expect(adv.affectedProducts.map(p => p.product)).toEqual(['WebLogic Server']);
+    expect(parseCsaf(csafWith([], ['DB19']), 'cpuoct2026')).toEqual([]);
+  });
+});
+
+describe('parseCvrf versions', () => {
+  it('renames Java SE JDK and JRE and Java, and reads the version texts of 2020 to 2022', () => {
+    const xml = `<?xml version='1.0' encoding='UTF-8'?>
+<cvrf:cvrfdoc xmlns:cvrf="http://www.icasi.org/CVRF/schema/cvrf/1.1">
+  <ProductTree>
+    <Branch Name="Oracle" Type="Vendor">
+      <Branch Name="Java SE JDK and JRE" Type="Product Name">
+        <Branch Name="14; Java SE Embedded: 8u241" Type="Product Version">
+          <FullProductName ProductID="J1">Java SE JDK and JRE</FullProductName>
+        </Branch>
+      </Branch>
+      <Branch Name="Java" Type="Product Name">
+        <Branch Name="13.0.1" Type="Product Version">
+          <FullProductName ProductID="J2">Java</FullProductName>
+        </Branch>
+      </Branch>
+      <Branch Name="Advanced Collections" Type="Product Name">
+        <Branch Name="12.2.3 - 12.2.10" Type="Product Version">
+          <FullProductName ProductID="A1">Advanced Collections</FullProductName>
+        </Branch>
+      </Branch>
+    </Branch>
+  </ProductTree>
+  <Vulnerability><CVE>CVE-2020-1</CVE><ProductStatuses><Status Type="Known Affected"><ProductID>J1</ProductID><ProductID>J2</ProductID><ProductID>A1</ProductID></Status></ProductStatuses></Vulnerability>
+</cvrf:cvrfdoc>`;
+    const [adv] = parseCvrf(xml, 'cpuapr2020');
+    expect(adv.affectedProducts).toEqual([
+      { vendor: 'oracle', product: 'Java SE', versionStart: '14', lastAffected: '14', affectedVersions: [], patchAvailable: true },
+      { vendor: 'oracle', product: 'Java SE Embedded', versionStart: '8u0', lastAffected: '8u241', affectedVersions: [], patchAvailable: true },
+      { vendor: 'oracle', product: 'Java SE', versionStart: '13', lastAffected: '13.0.1', affectedVersions: [], patchAvailable: true },
+      { vendor: 'oracle', product: 'Advanced Collections', versionStart: '12.2.3', lastAffected: '12.2.10', affectedVersions: [], patchAvailable: true },
+    ]);
+  });
+});
+
+describe('advisorySolution', () => {
+  it('names the advisory whose patches fix the CVE', () => {
+    expect(advisorySolution('cpuoct2026')).toBe('Apply the patches of the Oracle Critical Patch Update of October 2026.');
+    expect(advisorySolution('cspunov2026')).toBe('Apply the patches of the Oracle Critical Security Patch Update of November 2026.');
+    expect(advisorySolution('alert-cve-2026-114820')).toBe('Apply the patches of the Oracle Security Alert for CVE-2026-114820.');
   });
 });
