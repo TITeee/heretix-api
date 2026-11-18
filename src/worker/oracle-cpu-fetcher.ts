@@ -6,6 +6,9 @@ import { logger } from '../utils/logger.js';
 const RSS_URL  = 'https://www.oracle.com/ocom/groups/public/@otn/documents/webcontent/rss-otn-sec.xml';
 const CSAF_BASE = 'https://www.oracle.com/docs/tech/security-alerts';
 const CVRF_BASE = 'https://www.oracle.com/docs/tech/security-alerts';
+// Oracle's map of every CVE to the advisory that fixed it: it lists a new CPU, CSPU or
+// Security Alert before the RSS feed does.
+const MAPPING_URL = 'https://www.oracle.com/security-alerts/public-vuln-to-advisory-mapping.html';
 
 // ─── CSAF Types (standard 2.0) ────────────────────────────────
 
@@ -92,32 +95,78 @@ async function fetchRssItems(): Promise<RssItem[]> {
   return Array.isArray(items) ? items : [items];
 }
 
-/** Convert advisory page URL to CSAF JSON URL */
-function toCsafUrl(advisoryLink: string): string | null {
-  // https://www.oracle.com/security-alerts/cpuapr2026.html
-  // → https://www.oracle.com/docs/tech/security-alerts/cpuapr2026csaf.json
-  const m = advisoryLink.match(/security-alerts\/(cpu\w+)\.html/);
-  if (!m) return null;
-  return `${CSAF_BASE}/${m[1]}csaf.json`;
+/**
+ * The advisories this fetcher reads, by the name of their page:
+ * - the quarterly Critical Patch Update (cpuapr2026),
+ * - the monthly Critical Security Patch Update between them (cspunov2026, 800 to
+ *   1,000 CVEs a month in 2026),
+ * - a Security Alert, out of cycle for one or two serious CVEs (alert-cve-2026-114820).
+ * All three publish the same CSAF layout. A name is matched whole, so pages such as
+ * cpuarchive or cpuapr2024verbose are not taken for advisories.
+ */
+const ADVISORY_ID = String.raw`(?:cpu|cspu)[a-z]{3}\d{4}|alert-cve-\d{4}-\d+`;
+
+/** The advisory ids a feed or page links to, in the order they first appear, once each. */
+export function advisoryIdsIn(text: string): string[] {
+  const ids = new Set<string>();
+  for (const m of text.matchAll(new RegExp(String.raw`security-alerts/(${ADVISORY_ID})\.html`, 'g'))) ids.add(m[1]);
+  return [...ids];
 }
 
 /**
- * Convert advisory page URL to CVRF XML URL.
- * Oracle only started publishing CSAF JSON from CPUApr2022 onward; CPUs from
- * CPUJan2020 through CPUApr2022 only have the older CVRF 1.1 XML format
- * (confirmed by probing both endpoints across quarters — neither format
- * exists for anything before CPUJan2020, which would require scraping the
- * legacy HTML advisory pages instead).
+ * Where an advisory's CSAF is. A CPU's or CSPU's is named after it
+ * (cpuoct2026csaf.json). A Security Alert's drops the "alert-": the page
+ * alert-cve-2026-114820.html links cve-2026-114820csaf.json. Oracle has published
+ * CSAF for CPUs since April 2022; recent alerts have one, older ones (Log4Shell's,
+ * 2021) do not, and answer 404.
  */
-function toCvrfUrl(advisoryLink: string): string | null {
-  const m = advisoryLink.match(/security-alerts\/(cpu\w+)\.html/);
-  if (!m) return null;
-  return `${CVRF_BASE}/${m[1]}cvrf.xml`;
+export function csafUrlFor(id: string): string {
+  return `${CSAF_BASE}/${id.replace(/^alert-/, '')}csaf.json`;
+}
+
+/**
+ * Where a CPU's CVRF 1.1 XML is, for the quarters before CSAF: January 2020 through
+ * April 2022 (confirmed by probing both formats across quarters; nothing structured
+ * exists before January 2020). Null for every other advisory.
+ */
+export function cvrfUrlFor(id: string): string | null {
+  const m = id.match(/^cpu[a-z]{3}(\d{4})$/);
+  if (!m || Number(m[1]) < 2020 || Number(m[1]) > 2022) return null;
+  return `${CVRF_BASE}/${id}cvrf.xml`;
+}
+
+async function fetchText(url: string): Promise<string> {
+  const { data } = await axios.get<string>(url, {
+    timeout: 60000,
+    headers: { 'User-Agent': 'heretix-api/1.0' },
+    responseType: 'text',
+  });
+  return data;
+}
+
+/** A document, or why there is none: missing (404) or an error that counts as a failure. */
+type Fetched<T> = { data: T } | { data?: undefined; missing: boolean; error?: unknown };
+
+async function fetchDocument<T>(url: string, kind: 'json' | 'text'): Promise<Fetched<T>> {
+  try {
+    const { data } = await axios.get<T>(url, {
+      timeout: 60000,
+      headers: kind === 'json'
+        ? { 'User-Agent': 'heretix-api/1.0', 'Accept': 'application/json' }
+        : { 'User-Agent': 'heretix-api/1.0' },
+      ...(kind === 'text' ? { responseType: 'text' as const } : {}),
+    });
+    return { data };
+  } catch (err) {
+    return axios.isAxiosError(err) && err.response?.status === 404
+      ? { missing: true }
+      : { missing: false, error: err };
+  }
 }
 
 // ─── CSAF Parsing ──────────────────────────────────────────────
 
-function parseCsaf(csaf: CsafDocument, cpuId: string): NormalizedAdvisory[] {
+export function parseCsaf(csaf: CsafDocument, cpuId: string): NormalizedAdvisory[] {
   const productMap = buildProductMap(csaf.product_tree?.branches ?? []);
   const results: NormalizedAdvisory[] = [];
 
@@ -137,7 +186,11 @@ function parseCsaf(csaf: CsafDocument, cpuId: string): NormalizedAdvisory[] {
       }
     }
 
-    const summaryNote = vuln.notes?.find(n => n.category === 'summary');
+    // Oracle writes the text as one "description" note per affected product ("Vulnerability
+    // in the Oracle APEX product ..."), never as "summary": reading "summary" alone left
+    // every CSAF advisory with the placeholder below. The first description stands for all.
+    const summaryNote = vuln.notes?.find(n => n.category === 'summary')
+      ?? vuln.notes?.find(n => n.category === 'description' && n.text?.trim());
 
     // Build affectedProducts from known_affected product IDs
     const affectedProductIds = vuln.product_status?.known_affected ?? [];
@@ -335,16 +388,37 @@ export function parseCvrf(xml: string, cpuId: string): NormalizedAdvisory[] {
   return results;
 }
 
+/**
+ * The ids a CPU or CSPU of the last few months could have, newest first:
+ * cspunov2026, cpunov2026... for each month, both kinds, since which months get which
+ * is Oracle's to decide (2026 had a CPU in January, April, July and October and a
+ * CSPU in May, June, August, September and November). The RSS feed lags: on
+ * 18 November it still ended at 30 October, a day after cspunov2026 was published.
+ * Asking for the ids directly closes that gap; a month with none answers 404.
+ */
+export function recentAdvisoryIds(now: Date, months = 3): string[] {
+  const names = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const ids: string[] = [];
+  for (let back = 0; back < months; back++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1));
+    const suffix = `${names[d.getUTCMonth()]}${d.getUTCFullYear()}`;
+    ids.push(`cspu${suffix}`, `cpu${suffix}`);
+  }
+  return ids;
+}
+
 // ─── AdvisoryFetcher Implementation ──────────────────────────
 
 export class OracleCpuFetcher implements AdvisoryFetcher {
   private readonly delayMs: number;
   private readonly latestOnly: boolean;
+  private readonly now: () => Date;
   private fetchFailed = 0;
 
-  constructor({ delayMs = 1000, latestOnly = false } = {}) {
+  constructor({ delayMs = 1000, latestOnly = false, now = () => new Date() } = {}) {
     this.delayMs = delayMs;
     this.latestOnly = latestOnly;
+    this.now = now;
   }
 
   source(): string { return 'advisory-oracle-cpu'; }
@@ -353,64 +427,76 @@ export class OracleCpuFetcher implements AdvisoryFetcher {
 
   async fetch(): Promise<NormalizedAdvisory[]> {
     this.fetchFailed = 0;
-    logger.info('Fetching Oracle CPU security advisories RSS');
-    const rssItems = await fetchRssItems();
-    // Filter to CPU advisories only (cpuXXXXYYYY pattern in link)
-    let cpuItems = rssItems.filter(i => /\/cpu\w+\.html/.test(i.link ?? ''));
-    if (this.latestOnly) cpuItems = cpuItems.slice(0, 1);
-    logger.info({ total: rssItems.length, cpu: cpuItems.length }, 'Oracle RSS fetched');
 
-    const results: NormalizedAdvisory[] = [];
-
-    for (const item of cpuItems) {
-      const csafUrl = toCsafUrl(item.link);
-      if (!csafUrl) continue;
-
-      const cpuId = item.link.match(/security-alerts\/(cpu\w+)\.html/)?.[1] ?? 'unknown';
-
-      try {
-        logger.debug({ cpuId, csafUrl }, 'Fetching Oracle CPU CSAF');
-        const { data: csaf } = await axios.get<CsafDocument>(csafUrl, {
-          timeout: 60000,
-          headers: { 'User-Agent': 'heretix-api/1.0', 'Accept': 'application/json' },
-        });
-
-        const advisories = parseCsaf(csaf, cpuId);
-        results.push(...advisories);
-        logger.info({ cpuId, count: advisories.length }, 'Oracle CPU CSAF parsed');
-        await new Promise(r => setTimeout(r, this.delayMs));
-        continue;
-      } catch {
-        // Fall through to CVRF below — CSAF isn't published for CPUs before
-        // CPUApr2022 (confirmed by probing), not just a transient failure.
-      }
-
-      // CSAF unavailable: try the older CVRF 1.1 XML format (CPUJan2020–CPUApr2022).
-      const cvrfUrl = toCvrfUrl(item.link);
-      if (cvrfUrl) {
-        try {
-          logger.debug({ cpuId, cvrfUrl }, 'CSAF unavailable, fetching Oracle CPU CVRF');
-          const { data: cvrfXml } = await axios.get<string>(cvrfUrl, {
-            timeout: 60000,
-            headers: { 'User-Agent': 'heretix-api/1.0' },
-            responseType: 'text',
-          });
-
-          const advisories = parseCvrf(cvrfXml, cpuId);
-          results.push(...advisories);
-          logger.info({ cpuId, count: advisories.length }, 'Oracle CPU CVRF parsed');
-        } catch (err) {
-          this.fetchFailed++;
-          logger.warn({ cpuId, cvrfUrl, err }, 'Failed to fetch Oracle CPU CSAF/CVRF, skipping (likely pre-2020, no structured data available)');
-        }
-      } else {
-        this.fetchFailed++;
-      }
-
-      await new Promise(r => setTimeout(r, this.delayMs));
+    // Which advisories exist, from two lists: the RSS feed lags (on 18 November it
+    // still ended on 30 October, a day after cspunov2026 came out), Oracle's map of
+    // CVEs to advisories had it already. Either may fail on its own; both failing
+    // fails the run.
+    let rssIds: string[] = [];
+    let rssError: unknown;
+    try {
+      const items = await fetchRssItems();
+      rssIds = advisoryIdsIn(items.map(i => i.link ?? '').join('\n'));
+    } catch (err) {
+      rssError = err;
     }
 
-    logger.info({ total: results.length, failed: this.fetchFailed }, 'Oracle CPU fetch complete');
+    // `latest`: the newest CPU or CSPU in the feed, nothing else.
+    if (this.latestOnly) {
+      if (rssError) throw rssError;
+      const latest = rssIds.find(id => !id.startsWith('alert-'));
+      return this.read(latest ? [latest] : []);
+    }
+
+    let mapIds: string[] = [];
+    try {
+      mapIds = advisoryIdsIn(await fetchText(MAPPING_URL));
+    } catch (err) {
+      if (rssError) throw rssError;
+      this.fetchFailed++;
+      logger.warn({ err }, "Failed to fetch Oracle's CVE to advisory map; listing advisories from the RSS feed alone");
+    }
+    if (rssError) {
+      this.fetchFailed++;
+      logger.warn({ err: rssError }, "Failed to fetch Oracle's security RSS feed; listing advisories from the CVE map alone");
+    }
+
+    // And the CPU and CSPU of the last months by name, in case neither list has them yet.
+    const ids = [...new Set([...rssIds, ...mapIds, ...recentAdvisoryIds(this.now())])];
+    logger.info({ rss: rssIds.length, map: mapIds.length, total: ids.length }, 'Oracle advisories listed');
+    return this.read(ids);
+  }
+
+  /**
+   * Each advisory's CSAF, or the CVRF of a CPU from 2020 to 2022. An id with neither
+   * (404: a month with no advisory, an alert or a CPU from before Oracle published
+   * structured data) is skipped; any other error counts as a failed fetch.
+   */
+  private async read(ids: string[]): Promise<NormalizedAdvisory[]> {
+    const results: NormalizedAdvisory[] = [];
+    for (const id of ids) {
+      const csaf = await fetchDocument<CsafDocument>(csafUrlFor(id), 'json');
+      if (csaf.data !== undefined) {
+        const advisories = parseCsaf(csaf.data, id);
+        results.push(...advisories);
+        logger.info({ id, count: advisories.length }, 'Oracle advisory CSAF parsed');
+      } else {
+        const cvrfUrl = cvrfUrlFor(id);
+        const cvrf: Fetched<string> = cvrfUrl ? await fetchDocument<string>(cvrfUrl, 'text') : { missing: true };
+        if (cvrf.data !== undefined) {
+          const advisories = parseCvrf(cvrf.data, id);
+          results.push(...advisories);
+          logger.info({ id, count: advisories.length }, 'Oracle advisory CVRF parsed');
+        } else if (csaf.missing && cvrf.missing) {
+          logger.debug({ id }, 'No structured Oracle advisory with this id');
+        } else {
+          this.fetchFailed++;
+          logger.warn({ id, err: csaf.error ?? cvrf.error }, 'Failed to fetch an Oracle advisory');
+        }
+      }
+      await new Promise(r => setTimeout(r, this.delayMs));
+    }
+    logger.info({ total: results.length, failed: this.fetchFailed }, 'Oracle advisories fetched');
     return results;
   }
 }

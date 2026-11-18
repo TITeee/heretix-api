@@ -97,7 +97,7 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-oracle-linux', label: 'Oracle Linux',     cron: '45 11 * * *', run: () => runAdvisory('advisory-oracle-linux', new OracleLinuxFetcher()) },
   { source: 'advisory-sophos',       label: 'Sophos',           cron: '0 12 * * *',  run: () => runAdvisory('advisory-sophos', new SophosFetcher()) },
   { source: 'advisory-sonicwall',    label: 'SonicWall',        cron: '15 12 * * *', run: () => runAdvisory('advisory-sonicwall', new SonicWallFetcher()) },
-  { source: 'advisory-oracle-cpu',   label: 'Oracle CPU',       cron: '30 12 * * *', run: () => runAdvisory('advisory-oracle-cpu', new OracleCpuFetcher()) },
+  { source: 'advisory-oracle-cpu',   label: 'Oracle CPU, CSPU and Alerts', cron: '30 12 * * *', run: () => runAdvisory('advisory-oracle-cpu', new OracleCpuFetcher()) },
   { source: 'advisory-broadcom',     label: 'Broadcom/VMware',  cron: '0 13 * * *',  run: () => runAdvisory('advisory-broadcom', new BroadcomFetcher()) },
   // The Red Hat jobs unpack and parse a whole OVAL file or VEX archive.
   { source: 'advisory-redhat-rhel9', label: 'Red Hat (RHEL 9)', cron: '15 13 * * *', heavy: true, run: () => runAdvisory('advisory-redhat-rhel9', new RedHatFetcher('rhel9')) },
