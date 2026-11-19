@@ -320,6 +320,24 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     expect(await fixes('17.5.1')).toEqual({ 'CVE-2026-7401': null });
   });
 
+  it("returns F5's Engineering Hotfixes with the CVE's affected ranges, and no fixed version for them", async () => {
+    await importCveRecords([{
+      cveMetadata: { cveId: 'CVE-2026-7403', datePublished: '2026-11-18T00:00:00Z' },
+      containers: { cna: { providerMetadata: { shortName: 'f5' }, affected: [{
+        vendor: 'F5', product: 'BIG-IP',
+        versions: [{ version: '17.1.0', lessThan: '*', status: 'affected', versionType: 'custom',
+          changes: [{ at: 'BIGIP-17.1.3.7.0.21.4-ENG', status: 'unaffected' }] }],
+      }] } },
+    }]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/v1/vulnerabilities/CVE-2026-7403', headers: { 'x-api-key': API_KEY } });
+    const ranges = res.json().cnaVulnerability.affectedProducts;
+    expect(ranges.map((r: { versionStart: string; hotfixes: string[] }) => [r.versionStart, r.hotfixes])).toEqual([['17.1.0', ['BIGIP-17.1.3.7.0.21.4-ENG']]]);
+
+    const found = await search(app, 'package=F5%20BIG-IP&version=17.1.3.7');
+    expect(found.body.results.find((r: { externalId: string }) => r.externalId === 'CVE-2026-7403')).toMatchObject({ fixedVersion: null });
+  });
+
   it('compares Windows Server builds by build and UBR, and returns Microsoft\'s rating', async () => {
     // Shape MsrcFetcher writes: affected below the October 2026 update's build.
     await importAdvisoryData({

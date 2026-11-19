@@ -338,6 +338,31 @@ describe('extractCnaRows', () => {
       ]);
     });
 
+    it("carries F5's Engineering Hotfixes onto the row of their branch, and nothing else from changes", () => {
+      // CVE-2026-123637's shape.
+      const { rows } = extractCnaRows([
+        { vendor: 'F5', product: 'BIG-IP', defaultStatus: 'unknown', versions: [
+          { version: '17.5.0', lessThan: '*', status: 'affected', versionType: 'custom',
+            changes: [{ at: 'BIGIP-17.5.1.11.0.61.12-ENG', status: 'unaffected' }, { at: 'BIGIP-17.5.1.10.0.80.35-ENG', status: 'unaffected' }] },
+          { version: '17.1.0', lessThan: '*', status: 'affected', versionType: 'custom',
+            changes: [{ at: 'BIGIP-17.1.3.7.0.21.4-ENG', status: 'unaffected' }, { at: '17.1.4', status: 'unaffected' }, { at: 'BIGIP-17.1.2.2.0.1-ENG', status: 'affected' }] },
+          { version: '16.1.0', lessThan: '*', status: 'affected', versionType: 'custom' },
+        ] },
+        // Erlang's changes are real fixed releases, not read yet: no hotfixes.
+        { vendor: 'Erlang', product: 'OTP', versions: [
+          { version: '27.1', lessThan: '*', status: 'affected', versionType: 'otp', changes: [{ at: '27.3.4.15', status: 'unaffected' }] },
+        ] },
+      ]);
+      expect(rows.map(r => [r.vendor, r.versionStart, r.hotfixes ?? []])).toEqual([
+        ['F5', '17.5.0', ['BIGIP-17.5.1.11.0.61.12-ENG', 'BIGIP-17.5.1.10.0.80.35-ENG']],
+        ['F5', '17.1.0', ['BIGIP-17.1.3.7.0.21.4-ENG']],
+        ['F5', '16.1.0', []],
+        ['Erlang', '27.1', []],
+      ]);
+      // The hotfix changes nothing about the range or the fix.
+      expect(rows[1]).toMatchObject({ versionStart: '17.1.0', versionEnd: '17.5.0', noFix: true });
+    });
+
     it('still drops a bare "*" bound, which is every version', () => {
       const { rows } = extractCnaRows([{
         vendor: 'Acme', product: 'Widget',

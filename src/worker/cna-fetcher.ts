@@ -36,6 +36,7 @@ export interface CveRecordVersion {
   status?: unknown;
   lessThan?: unknown;
   lessThanOrEqual?: unknown;
+  changes?: unknown;
   versionType?: unknown;
 }
 
@@ -77,6 +78,24 @@ export interface CnaAffectedRow {
    * 17.5.0", a branch that was affected too.
    */
   noFix?: boolean;
+  /**
+   * F5's Engineering Hotfixes for the range ("BIGIP-17.1.3.7.0.21.4-ENG"), from the
+   * record's `changes`. A hotfix is a build for one release, not a release: the release
+   * stays affected without it, so this is shown as information and never as the fix.
+   * Other vendors' `changes` name real fixed versions and are not read yet.
+   */
+  hotfixes?: string[];
+}
+
+/** The Engineering Hotfixes F5 lists in a version entry's `changes`, in its order. */
+export function engineeringHotfixes(vendor: string | undefined, v: CveRecordVersion): string[] {
+  if (!vendor || !/^F5\b/i.test(vendor) || !Array.isArray(v.changes)) return [];
+  return v.changes
+    .filter((c): c is { at: string; status: string } =>
+      !!c && typeof c === 'object' && typeof (c as { at?: unknown }).at === 'string'
+      && (c as { status?: unknown }).status === 'unaffected')
+    .map(c => c.at.trim())
+    .filter(at => /-ENG$/i.test(at));
 }
 
 export type DropReason =
@@ -323,6 +342,8 @@ export function extractCnaRows(affected: unknown): ExtractResult {
 
     for (const v of affectedVersions) {
       const versionType = asString(v.versionType);
+      const hotfixes = engineeringHotfixes(vendor, v);
+      const push = (row: CnaAffectedRow) => rows.push(hotfixes.length > 0 ? { ...row, hotfixes } : row);
 
       // versionType "git" carries commit hashes on both bounds (the Linux CNA
       // publishes these), which are not orderable as versions at all.
@@ -362,7 +383,7 @@ export function extractCnaRows(affected: unknown): ExtractResult {
         const ranges = startOk ? junosFixListRanges(isPlaceholderVersion(lower) ? undefined : lower, lessThan) : null;
         if (ranges && ranges.every(r => isEncodableBound(r.end) && (r.start === undefined || isEncodableBound(r.start)))) {
           for (const r of ranges) {
-            rows.push({ vendor, product, packageName, versionType, versionStart: r.start, versionEnd: r.end });
+            push({ vendor, product, packageName, versionType, versionStart: r.start, versionEnd: r.end });
           }
           continue;
         }
@@ -371,7 +392,7 @@ export function extractCnaRows(affected: unknown): ExtractResult {
       if (lessThanRaw === '*' && lower !== undefined && !isPlaceholderVersion(lower)
           && isUsableVersion(lower) && isEncodableBound(lower)) {
         const cap = nextBranchStart(lower, versionsByProduct.get(productKey(raw)) ?? versions);
-        rows.push({
+        push({
           vendor,
           product,
           packageName,
@@ -410,7 +431,7 @@ export function extractCnaRows(affected: unknown): ExtractResult {
           versionStart = lower;
         }
 
-        rows.push({
+        push({
           vendor,
           product,
           packageName,
@@ -426,7 +447,7 @@ export function extractCnaRows(affected: unknown): ExtractResult {
 
       const textRange = zyxelTextRange(vendor, lower);
       if (textRange && isEncodableBound(textRange.end) && (textRange.start === undefined || isEncodableBound(textRange.start))) {
-        rows.push({ vendor, product, packageName, versionType, versionStart: textRange.start, lastAffected: textRange.end });
+        push({ vendor, product, packageName, versionType, versionStart: textRange.start, lastAffected: textRange.end });
         continue;
       }
 
@@ -437,7 +458,7 @@ export function extractCnaRows(affected: unknown): ExtractResult {
         bump(dropped, 'exactVersionUnusable');
         continue;
       }
-      rows.push({ vendor, product, packageName, versionType, affectedVersions: [lower] });
+      push({ vendor, product, packageName, versionType, affectedVersions: [lower] });
     }
   }
 

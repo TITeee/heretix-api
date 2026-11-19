@@ -8,6 +8,7 @@ type RowLike = {
   vendor: string; product: string; packageName?: string | null; versionType?: string | null;
   versionStart?: string | null; versionEnd?: string | null; lastAffected?: string | null; affectedVersions?: string[] | null;
   noFix?: boolean | null;
+  hotfixes?: string[] | null;
 };
 
 // A row's identity for comparing what is stored with what the extractor makes now: a range can
@@ -17,6 +18,7 @@ const keyOf = (row: RowLike) =>
     row.vendor, row.product, row.packageName ?? null, row.versionType ?? null,
     row.versionStart ?? null, row.versionEnd ?? null, row.lastAffected ?? null, [...(row.affectedVersions ?? [])].sort(),
     row.noFix ?? false,
+    row.hotfixes ?? [],
   ]);
 
 /**
@@ -60,6 +62,7 @@ export async function rebuildCnaRows(records: CnaRecord[], dryRun: boolean): Pro
           lastAffectedInt: row.lastAffected ? (normalizeVersion(row.lastAffected) ?? null) : null,
           affectedVersions: row.affectedVersions ?? [],
           noFix: row.noFix ?? false,
+          hotfixes: row.hotfixes ?? [],
         })),
       });
     });
