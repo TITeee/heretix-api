@@ -198,6 +198,19 @@ describe('extractCnaRows', () => {
       ]);
     });
 
+    it('marks the end it sets as no fix, and leaves the ranges the CNA bounded itself unmarked', () => {
+      const { rows } = f5([
+        { version: '17.5.0', lessThan: '*' },
+        { version: '17.1.0', lessThan: '*' },
+        { version: '16.1.0', lessThan: '16.1.6' },
+      ]);
+      expect(rows.map(r => [r.versionStart, r.versionEnd, r.noFix ?? false])).toEqual([
+        ['17.5.0', undefined, true],
+        ['17.1.0', '17.5.0', true],
+        ['16.1.0', '16.1.6', false],
+      ]);
+    });
+
     it('is capped by a fixed branch as well, so it does not run on into a branch that has its fix', () => {
       const { rows } = f5([
         { version: '17.1.0', lessThan: '17.1.3.1' },
@@ -305,6 +318,23 @@ describe('extractCnaRows', () => {
         ['0.0.0', '11.3', undefined],
         ['8.1.0', '8.2', undefined],
         ['2.0.0', '2.4.2', undefined],
+      ]);
+    });
+
+    it('marks the end of a whole line as no fix: the next line is not said to be fixed (Node.js "4.*", Juniper "22.2*", Drupal "11.2.*")', () => {
+      const { rows } = extractCnaRows([
+        { vendor: 'NodeJS', product: 'Node', versions: [
+          { version: '4.0', lessThan: '4.*', status: 'affected', versionType: 'semver' },
+          { version: '20.0.0', lessThan: '20.19.4', status: 'affected', versionType: 'semver' },
+        ] },
+        { vendor: 'Juniper', product: 'Junos OS', versions: [{ version: '22.2', lessThan: '22.2*', status: 'affected', versionType: 'semver' }] },
+        { vendor: 'MongoDB', product: 'Server', versions: [{ version: '8.1.0', lessThanOrEqual: '8.1.*', status: 'affected', versionType: 'semver' }] },
+      ]);
+      expect(rows.map(r => [r.vendor, r.versionStart, r.versionEnd, r.noFix ?? false])).toEqual([
+        ['NodeJS', '4.0', '5', true],
+        ['NodeJS', '20.0.0', '20.19.4', false],
+        ['Juniper', '22.2', '22.3', true],
+        ['MongoDB', '8.1.0', '8.2', true],
       ]);
     });
 

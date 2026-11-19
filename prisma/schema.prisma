@@ -477,6 +477,10 @@ model CnaAffectedProduct {
   // the same call apache-fetcher.ts makes for its exact-version advisories.
   affectedVersions String[]
 
+  // versionEnd is where heretix ends a range the CNA left open ("lessThan: *", a whole
+  // line such as "22.2*"), not a version the CNA says fixes it: never shown as a fix.
+  noFix           Boolean  @default(false)
+
   createdAt       DateTime @default(now())
 
   @@index([vendor, product])

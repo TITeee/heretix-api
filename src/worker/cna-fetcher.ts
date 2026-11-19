@@ -69,6 +69,14 @@ export interface CnaAffectedRow {
   versionEnd?: string;
   lastAffected?: string;
   affectedVersions?: string[];
+  /**
+   * versionEnd is where heretix ends a range the CNA left open, not a version the CNA
+   * says fixes it: the start of the record's next branch after "lessThan: *", or the
+   * start of the next line after a whole line ("22.2*", "11.2.*"). A search must not
+   * offer it as the fixed version: F5's 17.1 branch ending at 17.5.0 said "upgrade to
+   * 17.5.0", a branch that was affected too.
+   */
+  noFix?: boolean;
 }
 
 export type DropReason =
@@ -370,6 +378,7 @@ export function extractCnaRows(affected: unknown): ExtractResult {
           versionType,
           versionStart: lower,
           versionEnd: cap !== undefined && isEncodableBound(cap) ? cap : undefined,
+          noFix: true,
         });
         continue;
       }
@@ -409,6 +418,8 @@ export function extractCnaRows(affected: unknown): ExtractResult {
           versionStart,
           versionEnd: lessThan !== undefined ? upperRaw : undefined,
           lastAffected: lessThan === undefined ? upperRaw : undefined,
+          // The end of a whole line ("22.2*" read as below 22.3) is not a fix either.
+          ...((wildLessThan ?? wildLessThanOrEqual) !== undefined && { noFix: true }),
         });
         continue;
       }
