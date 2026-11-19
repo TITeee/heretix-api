@@ -5,6 +5,7 @@ import { resetDb } from '../../test-utils/db.js';
 import { createServer } from '../server.js';
 import { importAdvisoryData } from '../../worker/advisory-fetcher.js';
 import { importOSVData } from '../../worker/osv-fetcher.js';
+import { importCveRecords } from '../../worker/cna-importer.js';
 import { parseCsaf } from '../../worker/oracle-cpu-fetcher.js';
 import { normalizeVersion } from '../../utils/version.js';
 import { resetOsvCoverageCache } from '../../utils/osv-coverage.js';
@@ -289,6 +290,52 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     expect(weblogic.body.results[0]).toMatchObject({ approximateMatch: true, fixedVersion: null });
     const java = await search(app, 'package=Java%20SE&version=21.0.10');
     expect(java.body.results[0]).toMatchObject({ approximateMatch: false, fixedVersion: null });
+  });
+
+  it('does not offer the end heretix set on an open CNA range as the fix, and still offers the CNA\'s own fix', async () => {
+    // CVE-2026-123637's shape: every BIG-IP branch "lessThan: *", none fixed.
+    await importCveRecords([{
+      cveMetadata: { cveId: 'CVE-2026-7401', datePublished: '2026-11-18T00:00:00Z' },
+      containers: { cna: { providerMetadata: { shortName: 'f5' }, affected: [{
+        vendor: 'F5', product: 'BIG-IP', defaultStatus: 'unknown',
+        versions: [
+          { version: '21.1.0', lessThan: '*', status: 'affected', versionType: 'custom' },
+          { version: '17.5.0', lessThan: '*', status: 'affected', versionType: 'custom' },
+          { version: '17.1.0', lessThan: '*', status: 'affected', versionType: 'custom' },
+        ],
+      }] } },
+    }, {
+      cveMetadata: { cveId: 'CVE-2026-7402', datePublished: '2026-11-17T00:00:00Z' },
+      containers: { cna: { providerMetadata: { shortName: 'f5' }, affected: [{
+        vendor: 'F5', product: 'BIG-IP',
+        versions: [{ version: '17.1.0', lessThan: '17.1.3', status: 'affected', versionType: 'custom' }],
+      }] } },
+    }]);
+
+    const fixes = async (version: string) => Object.fromEntries(
+      (await search(app, `package=F5%20BIG-IP&version=${version}`)).body.results
+        .map((r: { externalId: string; fixedVersion: string | null }) => [r.externalId, r.fixedVersion]),
+    );
+    expect(await fixes('17.1.1')).toEqual({ 'CVE-2026-7401': null, 'CVE-2026-7402': '17.1.3' });
+    expect(await fixes('17.5.1')).toEqual({ 'CVE-2026-7401': null });
+  });
+
+  it("returns F5's Engineering Hotfixes with the CVE's affected ranges, and no fixed version for them", async () => {
+    await importCveRecords([{
+      cveMetadata: { cveId: 'CVE-2026-7403', datePublished: '2026-11-18T00:00:00Z' },
+      containers: { cna: { providerMetadata: { shortName: 'f5' }, affected: [{
+        vendor: 'F5', product: 'BIG-IP',
+        versions: [{ version: '17.1.0', lessThan: '*', status: 'affected', versionType: 'custom',
+          changes: [{ at: 'BIGIP-17.1.3.7.0.21.4-ENG', status: 'unaffected' }] }],
+      }] } },
+    }]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/v1/vulnerabilities/CVE-2026-7403', headers: { 'x-api-key': API_KEY } });
+    const ranges = res.json().cnaVulnerability.affectedProducts;
+    expect(ranges.map((r: { versionStart: string; hotfixes: string[] }) => [r.versionStart, r.hotfixes])).toEqual([['17.1.0', ['BIGIP-17.1.3.7.0.21.4-ENG']]]);
+
+    const found = await search(app, 'package=F5%20BIG-IP&version=17.1.3.7');
+    expect(found.body.results.find((r: { externalId: string }) => r.externalId === 'CVE-2026-7403')).toMatchObject({ fixedVersion: null });
   });
 
   it('returns a search newest published first, the undated last, and pages from that order', async () => {

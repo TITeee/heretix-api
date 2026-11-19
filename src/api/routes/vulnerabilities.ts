@@ -701,8 +701,10 @@ async function searchCna(
     if (!master) return [];
     // versionEnd is the exclusive upper bound the CNA declared, i.e. the
     // version the fix landed in. lastAffected is inclusive and therefore is
-    // *not* a fixed version.
-    return [masterToResult(master, approximate, 'cna', fixAboveInstalled(r.versionEnd, version, PLAIN_VERSION_ORDER), r.vulnerability.cveId)];
+    // *not* a fixed version, and neither is an end heretix set on a range the
+    // CNA left open (noFix: see CnaAffectedRow.noFix).
+    const fixedVersion = r.noFix ? null : fixAboveInstalled(r.versionEnd, version, PLAIN_VERSION_ORDER);
+    return [masterToResult(master, approximate, 'cna', fixedVersion, r.vulnerability.cveId)];
   });
 }
 

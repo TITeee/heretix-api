@@ -198,6 +198,19 @@ describe('extractCnaRows', () => {
       ]);
     });
 
+    it('marks the end it sets as no fix, and leaves the ranges the CNA bounded itself unmarked', () => {
+      const { rows } = f5([
+        { version: '17.5.0', lessThan: '*' },
+        { version: '17.1.0', lessThan: '*' },
+        { version: '16.1.0', lessThan: '16.1.6' },
+      ]);
+      expect(rows.map(r => [r.versionStart, r.versionEnd, r.noFix ?? false])).toEqual([
+        ['17.5.0', undefined, true],
+        ['17.1.0', '17.5.0', true],
+        ['16.1.0', '16.1.6', false],
+      ]);
+    });
+
     it('is capped by a fixed branch as well, so it does not run on into a branch that has its fix', () => {
       const { rows } = f5([
         { version: '17.1.0', lessThan: '17.1.3.1' },
@@ -306,6 +319,48 @@ describe('extractCnaRows', () => {
         ['8.1.0', '8.2', undefined],
         ['2.0.0', '2.4.2', undefined],
       ]);
+    });
+
+    it('marks the end of a whole line as no fix: the next line is not said to be fixed (Node.js "4.*", Juniper "22.2*", Drupal "11.2.*")', () => {
+      const { rows } = extractCnaRows([
+        { vendor: 'NodeJS', product: 'Node', versions: [
+          { version: '4.0', lessThan: '4.*', status: 'affected', versionType: 'semver' },
+          { version: '20.0.0', lessThan: '20.19.4', status: 'affected', versionType: 'semver' },
+        ] },
+        { vendor: 'Juniper', product: 'Junos OS', versions: [{ version: '22.2', lessThan: '22.2*', status: 'affected', versionType: 'semver' }] },
+        { vendor: 'MongoDB', product: 'Server', versions: [{ version: '8.1.0', lessThanOrEqual: '8.1.*', status: 'affected', versionType: 'semver' }] },
+      ]);
+      expect(rows.map(r => [r.vendor, r.versionStart, r.versionEnd, r.noFix ?? false])).toEqual([
+        ['NodeJS', '4.0', '5', true],
+        ['NodeJS', '20.0.0', '20.19.4', false],
+        ['Juniper', '22.2', '22.3', true],
+        ['MongoDB', '8.1.0', '8.2', true],
+      ]);
+    });
+
+    it("carries F5's Engineering Hotfixes onto the row of their branch, and nothing else from changes", () => {
+      // CVE-2026-123637's shape.
+      const { rows } = extractCnaRows([
+        { vendor: 'F5', product: 'BIG-IP', defaultStatus: 'unknown', versions: [
+          { version: '17.5.0', lessThan: '*', status: 'affected', versionType: 'custom',
+            changes: [{ at: 'BIGIP-17.5.1.11.0.61.12-ENG', status: 'unaffected' }, { at: 'BIGIP-17.5.1.10.0.80.35-ENG', status: 'unaffected' }] },
+          { version: '17.1.0', lessThan: '*', status: 'affected', versionType: 'custom',
+            changes: [{ at: 'BIGIP-17.1.3.7.0.21.4-ENG', status: 'unaffected' }, { at: '17.1.4', status: 'unaffected' }, { at: 'BIGIP-17.1.2.2.0.1-ENG', status: 'affected' }] },
+          { version: '16.1.0', lessThan: '*', status: 'affected', versionType: 'custom' },
+        ] },
+        // Erlang's changes are real fixed releases, not read yet: no hotfixes.
+        { vendor: 'Erlang', product: 'OTP', versions: [
+          { version: '27.1', lessThan: '*', status: 'affected', versionType: 'otp', changes: [{ at: '27.3.4.15', status: 'unaffected' }] },
+        ] },
+      ]);
+      expect(rows.map(r => [r.vendor, r.versionStart, r.hotfixes ?? []])).toEqual([
+        ['F5', '17.5.0', ['BIGIP-17.5.1.11.0.61.12-ENG', 'BIGIP-17.5.1.10.0.80.35-ENG']],
+        ['F5', '17.1.0', ['BIGIP-17.1.3.7.0.21.4-ENG']],
+        ['F5', '16.1.0', []],
+        ['Erlang', '27.1', []],
+      ]);
+      // The hotfix changes nothing about the range or the fix.
+      expect(rows[1]).toMatchObject({ versionStart: '17.1.0', versionEnd: '17.5.0', noFix: true });
     });
 
     it('still drops a bare "*" bound, which is every version', () => {

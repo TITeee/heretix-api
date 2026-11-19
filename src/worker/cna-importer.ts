@@ -93,6 +93,8 @@ export async function importCnaRecord(parsed: ParsedCveRecord): Promise<'inserte
         versionEndInt: row.versionEnd ? (normalizeVersion(row.versionEnd) ?? null) : null,
         lastAffectedInt: row.lastAffected ? (normalizeVersion(row.lastAffected) ?? null) : null,
         affectedVersions: row.affectedVersions ?? [],
+        noFix: row.noFix ?? false,
+        hotfixes: row.hotfixes ?? [],
       })),
       chunk => tx.cnaAffectedProduct.createMany({ data: chunk }),
     );

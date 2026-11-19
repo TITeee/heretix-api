@@ -43,6 +43,8 @@
     "migrate:all": "node dist/scripts/migrate-all.js",
     "migrate:cna-open-ended-ranges": "node dist/scripts/migrate-cna-open-ended-ranges.js",
     "migrate:cna-dotted-wildcard-ranges": "node dist/scripts/migrate-cna-dotted-wildcard-ranges.js",
+    "migrate:cna-no-fix-ends": "node dist/scripts/migrate-cna-no-fix-ends.js",
+    "migrate:cna-engineering-hotfixes": "node dist/scripts/migrate-cna-engineering-hotfixes.js",
     "migrate:underscore-labelled-versions": "node dist/scripts/migrate-underscore-labelled-versions.js",
     "migrate:hyphen-update-versions": "node dist/scripts/migrate-hyphen-update-versions.js",
     "migrate:hyphen-patch-versions": "node dist/scripts/migrate-hyphen-patch-versions.js",
