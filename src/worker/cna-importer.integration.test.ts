@@ -78,6 +78,26 @@ describe('importCveRecords / SSVC', () => {
     expect(await prisma.cnaVulnerability.count({ where: { cveId: 'CVE-2024-9999' } })).toBe(1);
   });
 
+  it('gives the record\'s published date to the master its SSVC made first, and keeps a date already there', async () => {
+    const record = (cveId: string): CveRecord => ({
+      cveMetadata: { cveId, datePublished: '2026-11-18T15:23:29.008Z' },
+      containers: {
+        cna: {
+          providerMetadata: { shortName: 'acme' },
+          affected: [{ vendor: 'Acme', product: 'Widget', versions: [{ version: '0', lessThan: '1.2.3', status: 'affected' }] }],
+        },
+        adp: [ssvcAdp()],
+      },
+    });
+
+    await importCveRecords([record('CVE-2026-7201')]);
+    expect((await vulnerabilityByCveId('CVE-2026-7201'))?.publishedAt?.toISOString()).toBe('2026-11-18T15:23:29.008Z');
+
+    await prisma.vulnerability.create({ data: { cveId: 'CVE-2026-7202', publishedAt: new Date('2026-11-17T00:00:00Z') } });
+    await importCveRecords([record('CVE-2026-7202')]);
+    expect((await vulnerabilityByCveId('CVE-2026-7202'))?.publishedAt?.toISOString()).toBe('2026-11-17T00:00:00.000Z');
+  });
+
   it('updates SSVC fields on a re-import with revised values', async () => {
     const base: CveRecord = {
       cveMetadata: { cveId: 'CVE-2024-1111' },

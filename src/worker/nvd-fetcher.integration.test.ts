@@ -136,6 +136,17 @@ describe('importNVDData — severity/CVSS priority merge', () => {
     expect(master).toMatchObject({ severity: 'MEDIUM', cvssScore: 5.4 });
   });
 
+  it('fills the published date of a master made without one, and keeps a date already there', async () => {
+    await importNVDData(item());
+    expect((await prisma.vulnerability.findUnique({ where: { cveId: CVE } }))?.publishedAt?.toISOString())
+      .toBe(new Date('2026-01-01T00:00:00.000').toISOString());
+
+    await prisma.vulnerability.update({ where: { cveId: CVE }, data: { publishedAt: new Date('2025-06-01T00:00:00Z') } });
+    await importNVDData(item());
+    expect((await prisma.vulnerability.findUnique({ where: { cveId: CVE } }))?.publishedAt?.toISOString())
+      .toBe('2025-06-01T00:00:00.000Z');
+  });
+
   it('replaces it with NVD\'s rating once NVD has one', async () => {
     const vector = 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H';
     await importNVDData(item({

@@ -291,6 +291,29 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     expect(java.body.results[0]).toMatchObject({ approximateMatch: false, fixedVersion: null });
   });
 
+  it('returns a search newest published first, the undated last, and pages from that order', async () => {
+    const dates: Array<[string, string | undefined]> = [
+      ['CVE-2026-7301', '2020-01-01T00:00:00Z'],
+      ['CVE-2026-7302', undefined],
+      ['CVE-2026-7303', '2026-11-18T00:00:00Z'],
+      ['CVE-2026-7304', '2024-05-05T00:00:00Z'],
+    ];
+    for (const [cve, date] of dates) {
+      await importAdvisoryData({
+        externalId: cve,
+        cveId: cve,
+        rawData: {},
+        ...(date && { publishedAt: new Date(date) }),
+        affectedProducts: [{ vendor: 'examplevendor', product: 'dated-widget', versionEnd: '2.0.0', patchAvailable: true }],
+      }, 'advisory-example');
+    }
+    const ids = async (query: string) => (await search(app, query)).body.results.map((r: { externalId: string }) => r.externalId);
+
+    expect(await ids('package=dated-widget')).toEqual(['CVE-2026-7303', 'CVE-2026-7304', 'CVE-2026-7301', 'CVE-2026-7302']);
+    expect(await ids('package=dated-widget&limit=2')).toEqual(['CVE-2026-7303', 'CVE-2026-7304']);
+    expect(await ids('package=dated-widget&limit=2&offset=2')).toEqual(['CVE-2026-7301', 'CVE-2026-7302']);
+  });
+
   it('compares Windows Server builds by build and UBR, and returns Microsoft\'s rating', async () => {
     // Shape MsrcFetcher writes: affected below the October 2026 update's build.
     await importAdvisoryData({

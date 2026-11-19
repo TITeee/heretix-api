@@ -70,6 +70,7 @@
     "migrate:recompute-osv-pseudo-versions": "node dist/scripts/migrate-recompute-osv-pseudo-versions.js",
     "migrate:backfill-distro-priority": "node dist/scripts/migrate-backfill-distro-priority.js",
     "migrate:normalize-osv-severity": "node dist/scripts/migrate-normalize-osv-severity.js",
+    "migrate:fill-master-published-at": "node dist/scripts/migrate-fill-master-published-at.js",
     "migrate:reparse-pan-advisories": "node dist/scripts/migrate-reparse-pan-advisories.js",
     "validate:nginx": "node dist/scripts/validate-nginx.js",
     "validate:tomcat": "node dist/scripts/validate-tomcat.js",
