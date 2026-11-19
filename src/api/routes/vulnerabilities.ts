@@ -44,6 +44,7 @@ import {
   truncateSummaries,
   batchResultCap,
   keepMostSevere,
+  newestFirst,
   BATCH_RESULTS_PER_PACKAGE,
   DISTRO_ECOSYSTEM_PREFIXES,
   RPM_ADVISORY_VENDOR_PREFIXES,
@@ -957,7 +958,7 @@ async function searchVulnerabilities(
   source: SourcePackageRef = {},
 ): Promise<VulnerabilityResult[]> {
   const filtered = await searchAllVulnerabilities(packageName, version, ecosystem, severity, source);
-  return filtered.slice(offset, offset + limit);
+  return newestFirst(filtered).slice(offset, offset + limit);
 }
 
 /** searchVulnerabilities() before pagination: every match, severity-filtered. */

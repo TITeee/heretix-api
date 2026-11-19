@@ -354,6 +354,25 @@ export function keepMostSevere(results: VulnerabilityResult[], cap: number): Vul
     .slice(0, cap);
 }
 
+/**
+ * The results of a search, newest published first and those with no date last: the
+ * order heretix-management shows a search in. A search is paged from this order, so a
+ * cut keeps the newest. Before, the results came in the order of their sources (OSV,
+ * NVD, the vendor advisories, then the CVE Records), and a cut dropped the CVEs only the
+ * CVE Records knew yet, which are the newest ones. Equal dates keep their order.
+ */
+export function newestFirst(results: VulnerabilityResult[]): VulnerabilityResult[] {
+  const time = (r: VulnerabilityResult) => (r.publishedAt ? new Date(r.publishedAt).getTime() : null);
+  return [...results].sort((a, b) => {
+    const x = time(a);
+    const y = time(b);
+    if (x === y) return 0;
+    if (x === null) return 1;
+    if (y === null) return -1;
+    return y - x;
+  });
+}
+
 // ─── Version Range Filter Conditions ─────────────────────────
 
 export function versionRangeWhere(versionInt: bigint) {

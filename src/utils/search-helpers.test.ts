@@ -24,6 +24,7 @@ import {
   truncateSummaries,
   batchResultCap,
   keepMostSevere,
+  newestFirst,
   BATCH_RESULTS_PER_PACKAGE,
   BATCH_RESULTS_TOTAL,
   suggestPrefixVariants,
@@ -928,5 +929,27 @@ describe('dedup choosing among fixed versions', () => {
       makeResult({ source: 'advisory-x', sources: ['advisory-x'], fixedVersion: null }),
       makeResult({ source: 'nvd', sources: ['nvd'], fixedVersion: '2.0.0' }),
     ], '1.0.0')).toBe('2.0.0');
+  });
+});
+
+describe('newestFirst', () => {
+  const at = (id: string, date: string | null) => makeResult({ id, publishedAt: date ? new Date(date) : null });
+
+  it('puts the newest published first and the undated last, keeping equal dates in order', () => {
+    const items = [
+      at('old', '2020-01-01'),
+      at('undated-a', null),
+      at('new', '2026-11-18'),
+      at('same-1', '2024-05-05'),
+      at('undated-b', null),
+      at('same-2', '2024-05-05'),
+    ];
+    expect(newestFirst(items).map(r => r.id)).toEqual(['new', 'same-1', 'same-2', 'old', 'undated-a', 'undated-b']);
+  });
+
+  it('leaves its input as it was', () => {
+    const items = [at('old', '2020-01-01'), at('new', '2026-11-18')];
+    newestFirst(items);
+    expect(items.map(r => r.id)).toEqual(['old', 'new']);
   });
 });
