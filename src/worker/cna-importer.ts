@@ -45,6 +45,14 @@ export async function importCnaRecord(parsed: ParsedCveRecord): Promise<'inserte
           data: { cveId: parsed.cveId, publishedAt: parsed.datePublished },
           select: { id: true },
         })).id;
+    // The record's SSVC and texts are stored first, and make a master with no date when
+    // there was none: give it the record's. A date already there is kept.
+    if (existingMaster && parsed.datePublished) {
+      await tx.vulnerability.updateMany({
+        where: { id: masterVulnId, publishedAt: null },
+        data: { publishedAt: parsed.datePublished },
+      });
+    }
 
     const existing = await tx.cnaVulnerability.findUnique({
       where: { cveId: parsed.cveId },

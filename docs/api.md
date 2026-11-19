@@ -28,6 +28,8 @@ GET /health
 
 Returns vulnerabilities affecting a package and version. OSV, NVD and vendor advisories are queried in parallel, and results are deduplicated through the master table.
 
+Results come newest published first, those with no published date last, and `limit` and `offset` page through that order: a search with more matches than `limit` keeps the newest. The batch search below keeps the most severe instead.
+
 ```
 GET /api/v1/vulnerabilities/search
 ```

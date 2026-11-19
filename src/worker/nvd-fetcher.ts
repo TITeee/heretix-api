@@ -555,6 +555,15 @@ async function upsertMasterFromNVD(
     },
   });
 
+  // A master another importer made first (the CVE Records' SSVC or texts, a vendor
+  // advisory) can have no published date; NVD's fills it. One already set is kept.
+  if (cveItem.published) {
+    await tx.vulnerability.updateMany({
+      where: { id: master.id, publishedAt: null },
+      data: { publishedAt: new Date(cveItem.published) },
+    });
+  }
+
   await tx.nVDVulnerability.update({
     where: { id: nvdRecordId },
     data: { masterVulnId: master.id },
