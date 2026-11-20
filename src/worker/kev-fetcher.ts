@@ -52,45 +52,50 @@ export async function fetchKEVCatalog(): Promise<KEVEntry[]> {
  * - CVE IDs not present in the DB are skipped (logged only)
  */
 export async function importKEVData(entries: KEVEntry[]): Promise<{ updated: number; notFound: number }> {
-  // 1. Reset existing KEV flags
-  await prisma.vulnerability.updateMany({
-    where: { isKev: true },
-    data: {
-      isKev: false,
-      kevDateAdded: null,
-      kevDueDate: null,
-      kevProduct: null,
-      kevVendor: null,
-      kevShortDesc: null,
-      kevRequiredAction: null,
-    },
-  });
-
   let updated = 0;
   let notFound = 0;
 
-  // 2. Set KEV flags from the current catalog
-  for (const entry of entries) {
-    const result = await prisma.vulnerability.updateMany({
-      where: { cveId: entry.cveID },
+  // The reset and the re-apply are one transaction. Apart, there is a moment (about two seconds
+  // for the whole catalog) in which every vulnerability reads as not in KEV, and a search or an
+  // alert refresh that lands in it would drop the flag, and report it added again afterwards.
+  await prisma.$transaction(async (tx) => {
+    // 1. Reset existing KEV flags
+    await tx.vulnerability.updateMany({
+      where: { isKev: true },
       data: {
-        isKev: true,
-        kevDateAdded: new Date(entry.dateAdded),
-        kevDueDate: entry.dueDate ? new Date(entry.dueDate) : null,
-        kevProduct: entry.product,
-        kevVendor: entry.vendorProject,
-        kevShortDesc: entry.shortDescription,
-        kevRequiredAction: entry.requiredAction,
+        isKev: false,
+        kevDateAdded: null,
+        kevDueDate: null,
+        kevProduct: null,
+        kevVendor: null,
+        kevShortDesc: null,
+        kevRequiredAction: null,
       },
     });
 
-    if (result.count > 0) {
-      updated++;
-    } else {
-      notFound++;
-      logger.debug({ cveId: entry.cveID }, 'KEV entry not found in master table (not yet imported)');
+    // 2. Set KEV flags from the current catalog
+    for (const entry of entries) {
+      const result = await tx.vulnerability.updateMany({
+        where: { cveId: entry.cveID },
+        data: {
+          isKev: true,
+          kevDateAdded: new Date(entry.dateAdded),
+          kevDueDate: entry.dueDate ? new Date(entry.dueDate) : null,
+          kevProduct: entry.product,
+          kevVendor: entry.vendorProject,
+          kevShortDesc: entry.shortDescription,
+          kevRequiredAction: entry.requiredAction,
+        },
+      });
+
+      if (result.count > 0) {
+        updated++;
+      } else {
+        notFound++;
+        logger.debug({ cveId: entry.cveID }, 'KEV entry not found in master table (not yet imported)');
+      }
     }
-  }
+  }, { timeout: 120_000, maxWait: 10_000 });
 
   logger.info({ updated, notFound, total: entries.length }, 'KEV import completed');
   return { updated, notFound };

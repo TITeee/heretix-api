@@ -86,7 +86,7 @@ On first start, the container creates the database schema and then starts the AP
 **The database starts empty**, and the scheduled jobs only fetch *changes*. Open the [dashboard](#dashboard) at `http://localhost:5000/dashboard` and enter your admin key (`ADMIN_API_KEY`). Everything is loaded from there; no command is needed:
 
 - **NVD** (every CVE, ~400k): press **Load** on the NVD row. It takes several hours; the row shows `running`, then `completed`. If it fails part way, **Load** again carries on from where it stopped.
-- **CISA KEV and EPSS**: after NVD completes, press **Run**. They only annotate CVEs that are already there, and their daily runs keep them current.
+- **CISA KEV and EPSS**: after NVD completes, press **Run**. They only annotate CVEs that are already there, and their scheduled runs keep them current.
 - **OSV**: under *OSV Ecosystems*, choose each ecosystem you scan (`npm`, `PyPI`, `Ubuntu`, ... [which name?](docs/data-sources.md#which-name-to-import)) and press **Add and load**. That switches its daily job on and loads it in full.
 - **Other sources** (vendor advisories, the Debian security tracker `debian-tracker`): switch the job **On** and press **Run** once. CVE Records (`cna`, a ~600 MB download) and Microsoft (`advisory-microsoft`) say **Load** the first time, like NVD.
 
@@ -181,10 +181,10 @@ Only NVD, KEV and EPSS run by default; switch on the others you need.
 | Source | What it provides | Schedule (UTC) |
 |---|---|---|
 | NVD | Every CVE, CPE ranges, CVSS | Every 2 hours |
-| CISA KEV | Known-exploited flag | Daily 09:00 |
+| CISA KEV | Known-exploited flag | Every 4 hours (:00 UTC) |
 | EPSS | Exploitation probability | Daily 10:00 |
 | OSV | Language ecosystems, Linux distributions, malware | Daily 08:00, one job per ecosystem |
-| CVE Records (CNA) | CNA-declared affected products, CISA SSVC | Daily 15:30 |
+| CVE Records (CNA) | CNA-declared affected products, CISA SSVC | Every 4 hours (:30 UTC) |
 | Red Hat | OVAL (RHEL 8/9) and CSAF VEX (unfixed CVEs; all of RHEL 10) | Daily 13:15 – 15:00 |
 | Debian security tracker | Fix status (`no-dsa`, `ignored`, ...) | Daily 07:15 |
 | Vendor advisories | Fortinet, PAN, Cisco, Oracle, Broadcom, ... | Daily 11:00 – 16:00 |

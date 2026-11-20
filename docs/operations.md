@@ -70,7 +70,7 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 | Job (`source`) | Schedule | Enabled by default | First load |
 |---|---|---|---|
 | `nvd` (changes since last run) | Every 2 hours | ✅ | **Load** on the dashboard (several hours; carries on after a failure) |
-| `kev` | Daily 09:00 | ✅ | Run is enough |
+| `kev` | Every 4 hours (:00 UTC) | ✅ | Run is enough |
 | `epss` | Daily 10:00 | ✅ | Run is enough |
 | `osv-<ecosystem>` (one per added ecosystem) | Daily 08:00 | | *Add and load* on the dashboard (it also switches the job on) |
 | `debian-source-packages` | Weekly, Sunday 07:00 | | Run is enough |
@@ -81,7 +81,7 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 | `advisory-broadcom` / `-redhat-rhel9` / `-redhat-rhel8` / `-splunk` | Daily 13:00 / 13:15 / 13:30 / 13:45 | | Run is enough |
 | `advisory-apache` / `-zabbix` / `-tomcat` / `-nginx` | Daily 14:00 / 14:15 / 14:30 / 14:45 | | Run is enough |
 | `advisory-redhat-vex` | Daily 15:00 | | Run is enough |
-| `cna` (CVE Records and CISA SSVC) | Daily 15:30 | | **Load** on the dashboard: the first run downloads a bundle of about 650MB (about 9 minutes, 1.4GB of temporary disk); after that a Run reads only the last 25 hours |
+| `cna` (CVE Records and CISA SSVC) | Every 4 hours (:30 UTC) | | **Load** on the dashboard: the first run downloads a bundle of about 650MB (about 9 minutes, 1.4GB of temporary disk); after that a Run reads only the last 25 hours |
 | `advisory-checkpoint` / `-ivanti` / `-citrix` | Daily 16:00 / 16:30 / 16:45 | | Run is enough. `advisory-ivanti` renders about 90 pages in a headless browser and takes 10 to 15 minutes; `advisory-citrix` reads about 20 pages over plain HTTP in under a minute |
 | `advisory-microsoft` | Daily 18:30 | | **Load** on the dashboard: it reads all the MSRC documents since March 2021 (about 68) in about 3 minutes; after that a Run reads only the documents revised in the last 7 days and the latest month |
 
