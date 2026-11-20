@@ -41,7 +41,7 @@ describe('catalogCnaWhere', () => {
     expect(catalogCnaWhere(entry('MongoDB Server'))).toEqual({
       OR: [{
         vendor: { in: ['MongoDB', 'MongoDB Inc', 'MongoDB, Inc.', 'MongoDB Inc.'] },
-        product: { in: ['MongoDB Server'] },
+        product: { in: ['MongoDB Server'], mode: 'insensitive' },
       }],
     });
   });

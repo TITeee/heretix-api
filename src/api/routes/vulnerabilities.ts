@@ -680,7 +680,10 @@ async function searchCna(
 
   const rows = await prisma.cnaAffectedProduct.findMany({
     where: {
-      ...(catalogEntry ? catalogCnaWhere(catalogEntry) : { product: { in: expandProductAliases(product) } }),
+      // A CVE record writes the product as its vendor likes ("PHP" for the PHP Group), and a package
+      // arrives as NVD's CPE spells it ("php"): compared as is, a CVE only the CVE Records know yet
+      // was not found. LOWER(product) has an index (20261010150000_add_lowercase_prefix_indexes).
+      ...(catalogEntry ? catalogCnaWhere(catalogEntry) : { product: { in: expandProductAliases(product), mode: 'insensitive' as const } }),
       AND: [cnaVersionWhere(versionInt, version)],
     },
     include: {

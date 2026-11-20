@@ -361,6 +361,49 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     expect(await ids('package=dated-widget&limit=2&offset=2')).toEqual(['CVE-2026-7301', 'CVE-2026-7302']);
   });
 
+  it('finds a CNA product whatever case the record wrote and the package is typed in', async () => {
+    // CVE-2026-115560's shape: the PHP Group writes "PHP", and a package is typed as NVD's CPE has it ("php").
+    await importCveRecords([{
+      cveMetadata: { cveId: 'CVE-2026-7601', datePublished: '2026-11-19T00:00:00Z' },
+      containers: { cna: { providerMetadata: { shortName: 'php' }, affected: [{
+        vendor: 'PHP Group', product: 'PHP', defaultStatus: 'unaffected',
+        versions: [
+          { version: '0', lessThan: '8.2.36', status: 'affected', versionType: 'semver' },
+          { version: '8.3.0', lessThan: '8.3.37', status: 'affected', versionType: 'semver' },
+        ],
+      }] } },
+    }, {
+      // A product another vendor names alike but is not the same word: not found by "php".
+      cveMetadata: { cveId: 'CVE-2026-7602', datePublished: '2026-11-19T00:00:00Z' },
+      containers: { cna: { providerMetadata: { shortName: 'acme' }, affected: [{
+        vendor: 'Acme', product: 'PHPMonitor', defaultStatus: 'unaffected',
+        versions: [{ version: '0', lessThan: '9.9', status: 'affected', versionType: 'semver' }],
+      }] } },
+    }]);
+
+    const found = async (query: string) => (await search(app, query)).body.results.map((r: { externalId: string }) => r.externalId);
+
+    for (const pkg of ['php', 'PHP', 'Php']) {
+      expect(await found(`package=${pkg}&version=8.2.1`), pkg).toEqual(['CVE-2026-7601']);
+    }
+    expect(await found('package=php&version=8.3.40')).toEqual([]);
+    expect(await found('package=php&version=8.3.36')).toEqual(['CVE-2026-7601']);
+    const hit = (await search(app, 'package=php&version=8.2.1')).body.results[0];
+    expect(hit).toMatchObject({ sources: ['cna'], fixedVersion: '8.2.36', approximateMatch: false });
+
+    // The scan asks through the batch search, which shares the lookup.
+    const batch = await app.inject({
+      method: 'POST',
+      url: '/api/v1/vulnerabilities/search/batch',
+      headers: { 'x-api-key': API_KEY },
+      payload: { packages: [{ package: 'php', version: '8.2.1' }, { package: 'PHP', version: '8.2.1' }] },
+    });
+    expect(batch.statusCode).toBe(200);
+    for (const r of batch.json().results) {
+      expect(r.vulnerabilities.map((v: { externalId: string }) => v.externalId), r.package).toEqual(['CVE-2026-7601']);
+    }
+  });
+
   it('compares Windows Server builds by build and UBR, and returns Microsoft\'s rating', async () => {
     // Shape MsrcFetcher writes: affected below the October 2026 update's build.
     await importAdvisoryData({
