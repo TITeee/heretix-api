@@ -35,7 +35,8 @@ export function catalogNvdWhere(entry: CatalogEntry): Prisma.NVDAffectedPackageW
  * product any listed product. An entry with no CNA pairs matches no row.
  */
 export function catalogCnaWhere(entry: CatalogEntry): Prisma.CnaAffectedProductWhereInput {
-  return { OR: entry.cna.map((pair) => ({ vendor: { in: pair.vendors }, product: { in: pair.products } })) };
+  // The product is compared without case: the records write "BIG-IP", "Big-IP" or "bigip" as the vendor likes.
+  return { OR: entry.cna.map((pair) => ({ vendor: { in: pair.vendors }, product: { in: pair.products, mode: 'insensitive' as const } })) };
 }
 
 /** Lowercase, with spaces, "_", "-", "." and "/" read as one separator: "big-ip", "BIG IP" and "big_ip" alike. */
