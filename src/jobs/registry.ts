@@ -75,7 +75,7 @@ export const STATIC_JOBS: JobDefinition[] = [
   {
     source: 'kev',
     label: 'CISA KEV',
-    cron: '0 9 * * *',
+    cron: '0 */4 * * *',
     run: async () => {
       const result = await fullImportKEV();
       return { updated: result.updated };
@@ -127,7 +127,7 @@ export const STATIC_JOBS: JobDefinition[] = [
     // as `pnpm import:cna --bootstrap`), which a Run on the dashboard does while nothing is loaded.
     source: 'cna',
     label: 'CVE Record (CNA)',
-    cron: '30 15 * * *',
+    cron: '30 */4 * * *',
     // Marked from what was known before jobs ran on their own; revisit with
     // the peak memory each run now records.
     heavy: true,

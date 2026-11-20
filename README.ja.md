@@ -181,10 +181,10 @@ Windows Server はベータ版です。実機数台でしか確認しておら�
 | ソース | 内容 | スケジュール（UTC） |
 |---|---|---|
 | NVD | 全 CVE、CPE による影響範囲、CVSS | 2 時間ごと |
-| CISA KEV | 悪用が確認されている脆弱性 | 毎日 09:00 |
+| CISA KEV | 悪用が確認されている脆弱性 | 4 時間ごと（毎時 0 分、UTC） |
 | EPSS | 悪用される確率の予測値 | 毎日 10:00 |
 | OSV | 言語エコシステム、Linux ディストリビューション、マルウェア | 毎日 08:00（エコシステムごとに 1 ジョブ） |
-| CVE レコード（CNA） | CNA が登録した影響製品、CISA の SSVC 評価 | 毎日 15:30 |
+| CVE レコード（CNA） | CNA が登録した影響製品、CISA の SSVC 評価 | 4 時間ごと（毎時 30 分、UTC） |
 | Red Hat | OVAL（RHEL 8/9）、CSAF VEX（未修正の CVE と RHEL 10 全体） | 毎日 13:15 – 15:00 |
 | Debian security tracker | 修正状況（`no-dsa`、`ignored` など） | 毎日 07:15 |
 | ベンダーアドバイザリ | Fortinet、PAN、Cisco、Oracle、Broadcom など | 毎日 11:00 – 16:00 |
