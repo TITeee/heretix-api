@@ -826,6 +826,15 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     nvd: [{ vendor: 'atlassian', products: ['confluence_server', 'confluence_data_center', 'confluence'] }],
     cna: [{ vendors: ['Atlassian'], products: ['Confluence Data Center'] }],
   },
+  // ── Added: batch 6, on CISA KEV in November 2026 with no vendor-advisory fetcher ──
+  {
+    id: 'puppet-enterprise', name: 'Puppet Enterprise', vendor: 'Perforce', product: 'Puppet Enterprise', category: 'devops',
+    aliases: [], versionHint: '2025.12.1',
+    // NVD files it under two vendors from before and after Perforce bought Puppet. Puppet Core
+    // and the open source puppet, puppet_agent and puppet_server are other products and are not listed.
+    nvd: [{ vendor: 'puppet', products: ['puppet_enterprise'] }, { vendor: 'puppetlabs', products: ['puppet_enterprise'] }],
+    cna: [{ vendors: ['Perforce', 'Perforce Software'], products: ['Puppet Enterprise'] }],
+  },
 ];
 
 const BY_NAME = new Map(CATALOG_ENTRIES.map(e => [e.name, e]));
