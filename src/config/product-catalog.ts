@@ -835,6 +835,22 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     nvd: [{ vendor: 'puppet', products: ['puppet_enterprise'] }, { vendor: 'puppetlabs', products: ['puppet_enterprise'] }],
     cna: [{ vendors: ['Perforce', 'Perforce Software'], products: ['Puppet Enterprise'] }],
   },
+  // ── Added: batch 7, on CISA KEV on 2026-11-20 ────────────────────────────
+  {
+    id: 'cisco-expressway', name: 'Cisco Expressway', vendor: 'Cisco', product: 'Expressway / TelePresence VCS', category: 'network',
+    aliases: ['expressway', 'vcs', 'video communication server', 'telepresence vcs'], versionHint: 'X15.3.1',
+    // Expressway is the renamed TelePresence Video Communication Server; NVD files both under
+    // many names. NVD writes a version as x15.5.20, with the lowercase x. The CNA lists exact
+    // versions with that x ("X8.11.2"), which the CVE record reader does not take, so no CNA pair.
+    nvd: [{ vendor: 'cisco', productPrefixes: ['expressway', 'telepresence_video_communication_server'] }],
+    cna: [],
+  },
+  {
+    id: 'apache-roller', name: 'Apache Roller', vendor: 'Apache', product: 'Roller', category: 'application',
+    aliases: ['roller'], versionHint: '6.1.4',
+    nvd: [{ vendor: 'apache', products: ['roller'] }],
+    cna: [{ vendors: ['Apache Software Foundation'], products: ['Apache Roller'] }],
+  },
 ];
 
 const BY_NAME = new Map(CATALOG_ENTRIES.map(e => [e.name, e]));
