@@ -9,6 +9,10 @@ import {
   rpmAdvisoryVendor,
   isRpmAdvisoryVendor,
   isBorrowedRedHatModuleBuild,
+  moduleStreamTag,
+  normalizeBorrowedModuleBuild,
+  compareBorrowedModuleBuild,
+  matchesBorrowedModuleBuild,
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
   matchesGoVersion,
@@ -407,6 +411,65 @@ describe('isBorrowedRedHatModuleBuild', () => {
   });
 });
 
+describe('moduleStreamTag', () => {
+  it('extracts the stream tag regardless of separator or EUS marker', () => {
+    expect(moduleStreamTag('8.1.14-1.module_el9.2.0+24+ca6bd7c2')).toBe('el9.2.0'); // AlmaLinux's own separator
+    expect(moduleStreamTag('0:8.1.14-1.module+el9.2.0+17911+b059dfc2')).toBe('el9.2.0'); // Red Hat's own
+    expect(moduleStreamTag('0:5.1.21-1.module+el9.1.0.z+15477+cb86791d')).toBe('el9.1.0'); // EUS zstream respin
+  });
+
+  it('is null for a non-module build', () => {
+    expect(moduleStreamTag('1.1.1k-1.el9')).toBeNull();
+  });
+});
+
+describe('normalizeBorrowedModuleBuild / compareBorrowedModuleBuild', () => {
+  it('drops the vendor-specific build+hash trailer so the two vendors compare equal', () => {
+    const alma = '8.1.14-1.module_el9.2.0+24+ca6bd7c2';
+    const redHat = '0:8.1.14-1.module+el9.2.0+17911+b059dfc2';
+    expect(normalizeBorrowedModuleBuild(alma)).toBe('8.1.14-1.module+el9.2.0');
+    expect(compareBorrowedModuleBuild(alma, redHat)).toBe(0);
+  });
+
+  it('drops an EUS ".z" marker too, the same fix republished', () => {
+    const alma = '5.1.21-1.module_el9.1.0+15+94ba28e4';
+    const redHat = '0:5.1.21-1.module+el9.1.0.z+15477+cb86791d';
+    expect(compareBorrowedModuleBuild(alma, redHat)).toBe(0);
+  });
+
+  it('leaves a non-module string untouched', () => {
+    expect(normalizeBorrowedModuleBuild('1.1.1k-1.el9')).toBe('1.1.1k-1.el9');
+  });
+});
+
+describe('matchesBorrowedModuleBuild', () => {
+  const row = (versionEnd: string | null, versionStart: string | null = null, patchAvailable: boolean | null = null) =>
+    ({ versionEnd, versionStart, patchAvailable });
+
+  it('matches within the same module stream once the build trailer is normalized out', () => {
+    // real NVRs from the 2026-11-26 measurement (AlmaLinux 9, CVE-2022-2625).
+    const r = row('0:5.1.21-1.module+el9.1.0.z+15477+cb86791d');
+    expect(matchesBorrowedModuleBuild(r, '5.1.20-1.module_el9.1.0+14+aaaaaaaa')).toBe(true); // below the fix
+    expect(matchesBorrowedModuleBuild(r, '5.1.21-1.module_el9.1.0+15+94ba28e4')).toBe(false); // AlmaLinux's own fixed build
+  });
+
+  it('never matches a row from a different module stream tag, even if numerically newer', () => {
+    // nodejs:18's fix must not apply to a nodejs:16 query (see
+    // matchesRpmVersionRange's epoch-floor test for why versionStart's floor
+    // alone cannot be trusted here).
+    const nodejs18 = row('1:18.14.2-2.module+el8.7.0+18445+9493b6ea', '18.0');
+    expect(matchesBorrowedModuleBuild(nodejs18, '1:16.19.1-1.module_el8.7.0+3496+a59a3324')).toBe(false);
+  });
+
+  it('matches an unconditional "confirmed unfixed" row regardless of stream', () => {
+    expect(matchesBorrowedModuleBuild(row(null, null, false), '8.1.14-1.module_el9.2.0+24+ca6bd7c2')).toBe(true);
+  });
+
+  it('does not match a row with no upper bound just because patchAvailable is unset', () => {
+    expect(matchesBorrowedModuleBuild(row(null, null, null), '8.1.14-1.module_el9.2.0+24+ca6bd7c2')).toBe(false);
+  });
+});
+
 describe('matchesDpkgStyleVersion', () => {
   // OSVAffectedPackage column shape; only the fields this predicate reads.
   const row = (o: Partial<Parameters<typeof matchesDpkgStyleVersion>[0]> = {}) => ({
@@ -628,6 +691,22 @@ describe('matchesRpmVersionRange', () => {
 
   it('treats versionStart as inclusive', () => {
     expect(matchesRpmVersionRange(row('18.4', '18.0'), '18.0')).toBe(true);
+  });
+
+  it('strips the query epoch before comparing it to a bare versionStart floor', () => {
+    // versionStart never carries an epoch of its own (it is a module-stream
+    // label straight from OVAL's "Module <name>:N is enabled" criterion,
+    // "16.0"/"18.0"/..., never "1:16.0"). Without stripping the query's own
+    // epoch first, compareRpmVersions() decides the floor check on epoch
+    // alone (1 > 0) before ever reading the stream digits, so an epoch-
+    // bearing package (nodejs, npm, ...) in the 16 stream numerically
+    // "passes" the unrelated 18 stream's floor too (confirmed live
+    // 2026-11-26 against real nodejs:16/18/14 OVAL rows for the same CVE).
+    const nodejs16 = row('1:16.19.1-1.module+el8.7.0+18373+704f5cef', '16.0');
+    const nodejs18 = row('1:18.14.2-2.module+el8.7.0+18445+9493b6ea', '18.0');
+    const query = '1:16.19.1-0.module+el8.7.0+18200+00000000'; // one build before the 16 stream's own fix
+    expect(matchesRpmVersionRange(nodejs16, query)).toBe(true); // affected, within its own stream
+    expect(matchesRpmVersionRange(nodejs18, query)).toBe(false); // an unrelated stream's floor must not apply
   });
 
   it('uses rpmvercmp ordering for sub-releases, not string comparison', () => {

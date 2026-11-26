@@ -3,7 +3,7 @@
  * for unit testability. No DB dependency.
  */
 import { compareDpkgVersions } from './dpkg-version.js';
-import { compareRpmVersions, rpmReleaseStream } from './rpm-version.js';
+import { compareRpmVersions, rpmReleaseStream, stripRpmEpoch } from './rpm-version.js';
 import { compareGoVersions } from './go-version.js';
 import { normalizeVersion } from './version.js';
 import type { FixStatus } from './fix-status.js';
@@ -569,16 +569,16 @@ export function normalizeEcosystem(eco: string | undefined): string | undefined 
 // not a vendor-published status for AlmaLinux/Rocky itself -- disclose that
 // in the UI wherever a result's source is 'red-hat'/'advisory-redhat-vex' on
 // one of these two ecosystems. Measured agreement against each distro's own
-// OSV-published fixed versions (ordinary, non-modular packages): AlmaLinux 8
-// 97%, 9 89%, 10 90%; Rocky 8 88%, 9 90%, 10 92% (pnpm validate:almalinux-redhat
-// / validate:rocky-redhat). Modular packages (php, nodejs, ... — RHEL 8/9
-// AppStream only, dropped in RHEL 10) compare far worse: AlmaLinux/Rocky
-// assign their own independent module build+hash counter after the stream
-// tag ("module_el9.2.0+24+hash" vs Red Hat's "module+el9.2.0+17911+hash"),
-// which is not numerically comparable across vendors and also needs picking
-// the right one of several parallel module streams -- out of scope here;
-// isBorrowedRedHatModuleBuild() below keeps those queries off this path
-// entirely rather than return an unreliable verdict.
+// OSV-published fixed versions (pnpm validate:almalinux-redhat, 2026-11-26):
+// ordinary (non-modular) packages, AlmaLinux 8 97%, 9 90%, 10 90%, Rocky 8
+// 88%, 9 91%, 10 92%. Modular packages (php, nodejs, ... — RHEL 8/9 AppStream
+// only, dropped in RHEL 10) need the dedicated matching below (see
+// matchesBorrowedModuleBuild()'s comment): agreement 78-87%, coverage lower
+// (46-87%) since AlmaLinux/Rocky sometimes ship a fix in an earlier point
+// release than any Red Hat row shares a module stream tag with (same
+// phenomenon as the non-modular point-release gap below, just per module
+// stream instead of per package) -- that case returns no row at all rather
+// than a wrong one, so it costs coverage, not a false "still unfixed".
 const RPM_ECOSYSTEM_VENDOR: Record<string, string> = {
   'Red Hat': 'red-hat',
   'Oracle Linux': 'oracle-linux',
@@ -588,20 +588,73 @@ const RPM_ECOSYSTEM_VENDOR: Record<string, string> = {
 
 // Ecosystems whose rpmAdvisoryVendor() routing borrows another vendor's rows
 // rather than searching that vendor's own data (see RPM_ECOSYSTEM_VENDOR's
-// comment above) -- used only to gate the module-build exclusion below, never
+// comment above) -- used only to gate the module-build matching below, never
 // to change native Red Hat/Oracle Linux matching.
 const BORROWED_RPM_ECOSYSTEM_PREFIXES = ['AlmaLinux:', 'Rocky Linux:'];
 
 // AlmaLinux/Rocky's own module-build version strings ("...-1.module_el9.2.0
-// +24+9207bbc0"), confirmed live not to compare correctly against Red Hat's
-// equivalent rows (see RPM_ECOSYSTEM_VENDOR's comment) -- checked against the
-// ecosystem rather than the vendor row, since the decision is "should this
-// query even ask Red Hat's data", before any row is fetched.
+// +24+9207bbc0") -- checked against the ecosystem rather than the vendor row,
+// since the decision is "does this query need the module-aware matcher
+// below", before any row is fetched.
 const MODULE_BUILD_PATTERN = /\.module[_+]el\d/i;
 
 export function isBorrowedRedHatModuleBuild(ecosystem: string | undefined, version: string | undefined): boolean {
   if (!ecosystem || !version) return false;
   return BORROWED_RPM_ECOSYSTEM_PREFIXES.some(p => ecosystem.startsWith(p)) && MODULE_BUILD_PATTERN.test(version);
+}
+
+// The module stream tag ("el9.2.0") a module-build EVR carries, regardless
+// of which separator (AlmaLinux's "module_el9.2.0" vs Red Hat's own
+// "module+el9.2.0") or trailing EUS marker (".z") it uses. null for a
+// non-module build.
+const MODULE_STREAM_TAG = /\.module[_+](el\d+(?:\.\d+)*)/i;
+
+export function moduleStreamTag(evr: string | null | undefined): string | null {
+  if (!evr) return null;
+  return evr.match(MODULE_STREAM_TAG)?.[1]?.toLowerCase() ?? null;
+}
+
+// The vendor-specific build+hash trailer after a module stream tag
+// ("+24+9207bbc0") -- AlmaLinux and Red Hat (and Rocky) each assign their
+// own independent counter here, numerically meaningless across vendors, so
+// it is dropped (along with an EUS ".z" marker, functionally the same fix
+// republished) before any borrowed-module comparison. Never applied to a
+// native Red Hat/Oracle Linux query: those compare Red Hat's own numbers
+// against Red Hat's own rows, where the trailer IS meaningful.
+const MODULE_BUILD_TRAILER = /\.module[_+](el\d+(?:\.\d+)*)(?:\.[a-z])?\+\d+\+[0-9a-f]+$/i;
+
+export function normalizeBorrowedModuleBuild(evr: string): string {
+  const m = evr.match(MODULE_BUILD_TRAILER);
+  return m ? evr.slice(0, m.index) + `.module+${m[1]}` : evr;
+}
+
+/** Like compareRpmVersions(), normalizing both sides' module-build trailer first (see above). */
+export function compareBorrowedModuleBuild(a: string, b: string): number {
+  return compareRpmVersions(normalizeBorrowedModuleBuild(a), normalizeBorrowedModuleBuild(b));
+}
+
+/**
+ * Like matchesRpmVersionRange(), for a borrowed AlmaLinux/Rocky module-build
+ * query: Red Hat republishes several parallel module streams under the same
+ * package name in one point release (nodejs:14/16/18, ...), and only a row
+ * whose OWN versionEnd carries the query's exact module stream tag is even a
+ * candidate -- versionStart's floor alone cannot be trusted to rule the
+ * others out here, since this query additionally needs the vendor-build
+ * trailer normalized out before any digit is compared (see
+ * normalizeBorrowedModuleBuild()'s comment). An unconditional "confirmed
+ * unfixed" row (no versionEnd) makes no per-stream claim at all, so it
+ * applies regardless of stream, same as matchesRpmVersionRange().
+ */
+export function matchesBorrowedModuleBuild(
+  row: { versionStart: string | null; versionEnd: string | null; patchAvailable?: boolean | null },
+  version: string,
+): boolean {
+  if (!row.versionEnd) return row.patchAvailable === false;
+  if (moduleStreamTag(row.versionEnd) !== moduleStreamTag(version)) return false;
+  return matchesRpmVersionRange(
+    { ...row, versionEnd: normalizeBorrowedModuleBuild(row.versionEnd) },
+    normalizeBorrowedModuleBuild(version),
+  );
 }
 
 export function rpmAdvisoryVendor(ecosystem: string): string | null {
@@ -783,7 +836,14 @@ export function matchesRpmVersionRange(
     }
   }
   if (compareRpmVersions(version, row.versionEnd) >= 0) return false;
-  if (row.versionStart && compareRpmVersions(version, row.versionStart) < 0) return false;
+  // versionStart is a bare, epoch-less module-stream floor (see
+  // stripRpmEpoch()'s comment) -- strip the query's own epoch before this
+  // comparison alone, or an epoch-bearing package (nodejs, npm, ...) in one
+  // module stream numerically "passes" a sibling stream's floor on epoch
+  // alone, before its actual version digits are ever compared (confirmed
+  // live 2026-11-26: an installed nodejs:16 build read as unfixed by
+  // nodejs:18's row, whose newer fix the 16 stream never needs).
+  if (row.versionStart && compareRpmVersions(stripRpmEpoch(version), row.versionStart) < 0) return false;
   return true;
 }
 
