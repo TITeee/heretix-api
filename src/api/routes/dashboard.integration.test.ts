@@ -325,6 +325,21 @@ describe('dashboard', () => {
       expect(canReload).toMatchObject({ nvd: true, cna: false, kev: false });
     });
 
+    it('counts CVE Record (CNA) and Debian Source Packages, two sources recordCountForSource() had no branch for', async () => {
+      // Both fell through to null (shown as a blank RECORDS cell) regardless
+      // of totalUpdated on the job itself -- confirmed live 2026-11-26.
+      await resetDb();
+      await prisma.cnaVulnerability.create({ data: { cveId: 'CVE-2026-0001', cnaShortName: 'test', rawAffected: [] } });
+      await prisma.debianSourcePackage.create({ data: { ecosystem: 'Debian:12', binaryName: 'bsdutils', sourceName: 'util-linux' } });
+      await prisma.collectionJob.create({ data: { source: 'cna', status: 'completed', startedAt: new Date(), completedAt: new Date(), totalUpdated: 1 } });
+      await prisma.collectionJob.create({ data: { source: 'debian-source-packages', status: 'completed', startedAt: new Date(), completedAt: new Date(), totalUpdated: 1 } });
+
+      const { coreSources } = await status();
+      const bySource = Object.fromEntries(coreSources.map((s: { source: string; recordCount: number | null }) => [s.source, s.recordCount]));
+      expect(bySource.cna).toBe(1);
+      expect(bySource['debian-source-packages']).toBe(1);
+    });
+
     it('shows an OSV ecosystem that is being loaded for the first time, before any record is here', async () => {
       await resetDb();
       await prisma.collectionJob.create({ data: { source: 'osv-npm', status: 'running', startedAt: new Date(), metadata: { mode: 'full' } } });
