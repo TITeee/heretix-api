@@ -30,6 +30,7 @@ import {
   cnaVersionWhere,
   normalizeEcosystem,
   rpmAdvisoryVendor,
+  isBorrowedRedHatModuleBuild,
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
   matchesGoVersion,
@@ -994,6 +995,11 @@ async function searchAllVulnerabilities(
     const isAdvisoryOnly = normalizedEcosystem ? isAdvisoryOnlyEcosystem(normalizedEcosystem) : false;
 
     const rpmVendor = normalizedEcosystem ? rpmAdvisoryVendor(normalizedEcosystem) : null;
+    // AlmaLinux/Rocky route here too (rpmAdvisoryVendor() borrows Red Hat's own
+    // rows for them, see its comment), but only for a query whose installed
+    // version is not a module build -- that build-number scheme is not
+    // comparable across vendors, see isBorrowedRedHatModuleBuild()'s comment.
+    const skipBorrowedModuleBuild = isBorrowedRedHatModuleBuild(normalizedEcosystem, version);
     // A catalog entry names the NVD and CNA rows it stands for (see product-catalog.ts), so
     // OSV and the vendor advisories, which match by name alone, are not asked about it.
     const isCatalog = findCatalogEntry(packageName) !== undefined;
@@ -1001,7 +1007,7 @@ async function searchAllVulnerabilities(
     const [osvResults, nvdResults, advisoryResults, cnaResults] = await Promise.all([
       isCatalog ? Promise.resolve([]) : searchOSV(packageName, version, versionInt, normalizedEcosystem, source),
       isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, normalizedEcosystem),
-      isCatalog ? Promise.resolve([]) : rpmVendor
+      isCatalog ? Promise.resolve([]) : rpmVendor && !skipBorrowedModuleBuild
         ? searchAdvisoryRpm(packageName, version, rpmVendor)
         : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),
       isDistro || isLanguage || isAdvisoryOnly ? Promise.resolve([]) : searchCna(packageName, version),

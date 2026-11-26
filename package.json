@@ -81,6 +81,7 @@
     "validate:postgresql": "node dist/scripts/validate-postgresql.js",
     "validate:redhat": "node dist/scripts/validate-redhat.js",
     "validate:oracle-linux": "node dist/scripts/validate-oracle-linux.js",
+    "validate:almalinux-redhat": "node dist/scripts/validate-almalinux-redhat.js",
     "validate:debian": "node dist/scripts/validate-debian.js",
     "validate:ubuntu": "node dist/scripts/validate-ubuntu.js",
     "validate:alpine": "node dist/scripts/validate-alpine.js",

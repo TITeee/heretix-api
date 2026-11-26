@@ -213,6 +213,30 @@ Two sibling checks need no API: `pnpm validate:catalog-kev` (does each entry rea
 
 **Still open.** 279 CNA rows still have a start above their end and so match nothing. About 220 are errors in the CNA's own data (Microsoft 172, with starts such as `19.0.0` for Office 2019 beside a build-number end; IBM 19; Liferay 14; Spotfire, OpenAI, Hiawatha, Payara, Citrix), which no reading of the version string repairs. Brocade's 20 (`10.0.0a1`) use a trailing letter for a patch, which depends on the vendor. About 25 are a branch's first release against a pre-release of it (Go `1.27.0-0` to `1.27.0-rc.3`, Checkmk `2.4.0` to `2.4.0b2`, Unity, VyOS). Cisco is not covered (its advisory source needs credentials).
 
+## AlmaLinux / Rocky Linux agreement with borrowed Red Hat data
+
+Neither AlmaLinux nor Rocky Linux publishes an unfixed/deferred/will-not-fix status of its own (confirmed 2026-11-26 against `errata.almalinux.org` and `errata.rockylinux.org`: both list only published, fixed errata). Both are binary rebuilds of the matching RHEL major, so an ordinary (non-modular) package also searches Red Hat's own OVAL/VEX rows for that major as a best-effort proxy — a judgement Red Hat made, not one either distro published itself.
+
+There is no independent ground truth for the unfixed population either distro doesn't publish — that is the entire gap this fills. `validate:almalinux-redhat` instead measures agreement on the population where AlmaLinux/Rocky *do* publish a verdict (their own OSV "fixed" rows): for the exact version each distro's own data says is fixed, does Red Hat's borrowed data also judge that version not vulnerable? Disagreement here means the borrowed data would wrongly keep an already-fixed package flagged — the safer direction of error, but still measured.
+
+```bash
+pnpm validate:almalinux-redhat             # both distros, every major
+pnpm validate:almalinux-redhat almalinux   # one distro only
+```
+
+| Distro | Major | Coverage | Non-module agreement | Module agreement (out of scope, reported only) |
+|---|---|---:|---:|---:|
+| AlmaLinux | 8 | 98% | 97% | 18% |
+| AlmaLinux | 9 | 93% | 89% | 8% |
+| AlmaLinux | 10 | 97% | 90% | n/a (RHEL 10 has no modules) |
+| Rocky Linux | 8 | 78% | 88% | 23% |
+| Rocky Linux | 9 | 71% | 90% | 67% |
+| Rocky Linux | 10 | 67% | 92% | n/a |
+
+*Measured 2026-11-26.* Modular packages (php, nodejs, ... — RHEL 8/9 AppStream only, dropped in RHEL 10) are excluded from the pass/fail gate and from production matching entirely (`isBorrowedRedHatModuleBuild()` in `search-helpers.ts`): AlmaLinux and Rocky each assign their own independent module build+hash counter after the stream tag (`module_el9.2.0+24+9207bbc0` vs Red Hat's own `module+el9.2.0+17911+b059dfc2`), which is not numerically comparable across vendors and also needs picking the right one of several parallel module streams live in the same release — a known, out-of-scope gap for a later pass, not a silent one.
+
+Rocky Linux's lower coverage reflects its own OSV feed recording fewer fixed CVEs than AlmaLinux's, not a problem in the borrowed Red Hat data.
+
 ## Known limitations
 
 ### Cross-source version-namespace collisions (package=openssl etc.)
