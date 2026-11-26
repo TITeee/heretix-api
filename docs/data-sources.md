@@ -157,7 +157,8 @@ pnpm import:osv id GHSA-67hx-6x53-jw92   # One record (OSV or CVE ID)
   Debian takes about 45 minutes for 60,000 records; Ubuntu about 3 records a second, so months take hours. Run it in the background.
 - Only the distro releases in [Supported OS releases](#supported-os-releases) are maintained. Others are searchable on a best-effort basis.
 - Severity: GHSA's `MODERATE` is stored as `MEDIUM`. A CVSS score is computed from OSV's vector when the record has none. Ubuntu priority and Debian urgency are kept per package as `distroPriority`.
-- AlmaLinux, Rocky Linux and Alpine data only lists fixed vulnerabilities, so unfixed vulnerabilities on those distributions are not reported.
+- Alpine data only lists fixed vulnerabilities, so unfixed vulnerabilities on Alpine are not reported.
+- **AlmaLinux and Rocky Linux's own data also only lists fixed vulnerabilities** (neither publishes an unfixed/deferred/will-not-fix status itself), but both are binary rebuilds of the matching RHEL major, so an ordinary (non-modular) package also searches Red Hat's own OVAL/VEX rows for that major as a best-effort proxy (`rpmAdvisoryVendor()` in [search-helpers.ts](../src/utils/search-helpers.ts); run `pnpm validate:almalinux-redhat` for the measured agreement). A result found only this way carries `source: "red-hat"` or `"advisory-redhat-vex"`, never an AlmaLinux/Rocky source, so a consumer can tell a borrowed judgement from the distro's own. Modular packages (php, nodejs, ... — RHEL 8/9 AppStream only, dropped in RHEL 10) are excluded from this: AlmaLinux/Rocky assign their own module build number, not comparable to Red Hat's, so those stay fixed-only like before.
 
 ## CISA KEV
 

@@ -560,10 +560,49 @@ export function normalizeEcosystem(eco: string | undefined): string | undefined 
 // this base, and RedHatFetcher/OracleLinuxFetcher write that same
 // "<base>-<major>" form into every row's vendor column, so the lookup only
 // ever sees rows from the matching release.
+// AlmaLinux and Rocky Linux publish only fixed CVEs themselves (confirmed
+// 2026-11-26: neither errata.almalinux.org nor errata.rockylinux.org carries
+// an unfixed/deferred/will-not-fix status at all) -- an unfixed CVE on either
+// is invisible unless borrowed from somewhere else. Both are binary rebuilds
+// of the matching RHEL major, so Red Hat's own OVAL/VEX rows ('red-hat-X',
+// the same ones RHEL itself searches) are routed here as a best-effort proxy,
+// not a vendor-published status for AlmaLinux/Rocky itself -- disclose that
+// in the UI wherever a result's source is 'red-hat'/'advisory-redhat-vex' on
+// one of these two ecosystems. Measured agreement against each distro's own
+// OSV-published fixed versions (ordinary, non-modular packages): AlmaLinux 8
+// 97%, 9 89%, 10 90%; Rocky 8 88%, 9 90%, 10 92% (pnpm validate:almalinux-redhat
+// / validate:rocky-redhat). Modular packages (php, nodejs, ... — RHEL 8/9
+// AppStream only, dropped in RHEL 10) compare far worse: AlmaLinux/Rocky
+// assign their own independent module build+hash counter after the stream
+// tag ("module_el9.2.0+24+hash" vs Red Hat's "module+el9.2.0+17911+hash"),
+// which is not numerically comparable across vendors and also needs picking
+// the right one of several parallel module streams -- out of scope here;
+// isBorrowedRedHatModuleBuild() below keeps those queries off this path
+// entirely rather than return an unreliable verdict.
 const RPM_ECOSYSTEM_VENDOR: Record<string, string> = {
   'Red Hat': 'red-hat',
   'Oracle Linux': 'oracle-linux',
+  'AlmaLinux': 'red-hat',
+  'Rocky Linux': 'red-hat',
 };
+
+// Ecosystems whose rpmAdvisoryVendor() routing borrows another vendor's rows
+// rather than searching that vendor's own data (see RPM_ECOSYSTEM_VENDOR's
+// comment above) -- used only to gate the module-build exclusion below, never
+// to change native Red Hat/Oracle Linux matching.
+const BORROWED_RPM_ECOSYSTEM_PREFIXES = ['AlmaLinux:', 'Rocky Linux:'];
+
+// AlmaLinux/Rocky's own module-build version strings ("...-1.module_el9.2.0
+// +24+9207bbc0"), confirmed live not to compare correctly against Red Hat's
+// equivalent rows (see RPM_ECOSYSTEM_VENDOR's comment) -- checked against the
+// ecosystem rather than the vendor row, since the decision is "should this
+// query even ask Red Hat's data", before any row is fetched.
+const MODULE_BUILD_PATTERN = /\.module[_+]el\d/i;
+
+export function isBorrowedRedHatModuleBuild(ecosystem: string | undefined, version: string | undefined): boolean {
+  if (!ecosystem || !version) return false;
+  return BORROWED_RPM_ECOSYSTEM_PREFIXES.some(p => ecosystem.startsWith(p)) && MODULE_BUILD_PATTERN.test(version);
+}
 
 export function rpmAdvisoryVendor(ecosystem: string): string | null {
   for (const [prefix, vendorBase] of Object.entries(RPM_ECOSYSTEM_VENDOR)) {
@@ -593,7 +632,7 @@ export function rpmAdvisoryVendor(ecosystem: string): string | null {
 // searchAdvisory() fallback risks a false "vulnerable, unfixed" hit for any
 // package sharing that name anywhere (confirmed live: package=php&ecosystem=bitnami
 // surfaced RHEL9's unfixed CVE-2023-0568 for a completely unrelated container image).
-export const RPM_ADVISORY_VENDOR_PREFIXES = Object.values(RPM_ECOSYSTEM_VENDOR);
+export const RPM_ADVISORY_VENDOR_PREFIXES = [...new Set(Object.values(RPM_ECOSYSTEM_VENDOR))];
 
 export function isRpmAdvisoryVendor(vendor: string): boolean {
   return RPM_ADVISORY_VENDOR_PREFIXES.some(p => vendor === p || vendor.startsWith(`${p}-`));

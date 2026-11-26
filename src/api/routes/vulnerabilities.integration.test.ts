@@ -204,6 +204,39 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     expect(rhelEcosystem.body.results[0].externalId).toBe('CVE-2023-0568');
   });
 
+  it('finds an unfixed CVE on AlmaLinux/Rocky by borrowing Red Hat\'s own rows, but not for a module-stream build', async () => {
+    // AlmaLinux and Rocky publish no unfixed/deferred status of their own
+    // (confirmed 2026-11-26 against errata.almalinux.org / errata.rockylinux.org);
+    // rpmAdvisoryVendor() routes their queries to the same red-hat-9 rows RHEL
+    // itself searches, as a best-effort proxy -- see its comment on
+    // RPM_ECOSYSTEM_VENDOR in search-helpers.ts.
+    const advisory = await prisma.advisoryVulnerability.create({
+      data: { source: 'red-hat-vex', externalId: 'CVE-2026-90001', cveId: 'CVE-2026-90001', rawData: {} },
+    });
+    await prisma.advisoryAffectedProduct.create({
+      data: { advisoryId: advisory.id, vendor: 'red-hat-9', product: 'tftp', patchAvailable: false },
+    });
+
+    const almaOrdinary = await search(app, 'package=tftp&version=5.2-50.el9&ecosystem=AlmaLinux:9');
+    expect(almaOrdinary.body.results).toHaveLength(1);
+    expect(almaOrdinary.body.results[0].externalId).toBe('CVE-2026-90001');
+    expect(almaOrdinary.body.results[0].source).toBe('red-hat-vex');
+
+    const rockyOrdinary = await search(app, 'package=tftp&version=5.2-50.el9&ecosystem=Rocky%20Linux:9');
+    expect(rockyOrdinary.body.results).toHaveLength(1);
+
+    // A module-stream build's own version string is not comparable against
+    // Red Hat's independently-numbered module builds (see
+    // isBorrowedRedHatModuleBuild()'s comment) -- the query must not reach
+    // this row at all, rather than return an unreliable verdict.
+    const almaModule = await search(app, 'package=tftp&version=5.2-50.module_el9.2.0%2B24%2Bca6bd7c2&ecosystem=AlmaLinux:9');
+    expect(almaModule.body.results).toHaveLength(0);
+
+    // The native RHEL ecosystem is unaffected by the AlmaLinux/Rocky routing.
+    const rhel = await search(app, 'package=tftp&version=5.2-50.el9&ecosystem=Red%20Hat:9');
+    expect(rhel.body.results).toHaveLength(1);
+  });
+
   it('compares PAN rows in hotfix order, and every other vendor as before', async () => {
     // One PAN-OS maintenance-release range as parseCsaf() now writes it
     // (CVE-2025-0126's 10.2 line: 10.2.5 up to, not including, 10.2.9-h13).

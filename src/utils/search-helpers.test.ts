@@ -8,6 +8,7 @@ import {
   normalizeEcosystem,
   rpmAdvisoryVendor,
   isRpmAdvisoryVendor,
+  isBorrowedRedHatModuleBuild,
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
   matchesGoVersion,
@@ -338,6 +339,12 @@ describe('rpmAdvisoryVendor', () => {
     expect(rpmAdvisoryVendor('Oracle Linux:9')).toBe('oracle-linux-9');
   });
 
+  it('maps AlmaLinux/Rocky Linux to the Red Hat vendor rows for the same major (borrowed, see the comment on RPM_ECOSYSTEM_VENDOR)', () => {
+    expect(rpmAdvisoryVendor('AlmaLinux:9')).toBe('red-hat-9');
+    expect(rpmAdvisoryVendor('Rocky Linux:9')).toBe('red-hat-9');
+    expect(rpmAdvisoryVendor('AlmaLinux:8')).toBe('red-hat-8');
+  });
+
   it('maps the legacy version-less oracle-linux ecosystem to the version-less vendor', () => {
     // What heretix-cli sent from 2026 until 2026-09-01, before this file's
     // vendor values carried a version at all. A client still emitting this
@@ -373,6 +380,30 @@ describe('isRpmAdvisoryVendor', () => {
     // Not a real vendor value in this codebase, but guards against a naive
     // .includes()-style check matching on "red-hat" appearing mid-string.
     expect(isRpmAdvisoryVendor('not-red-hat-9')).toBe(false);
+  });
+});
+
+describe('isBorrowedRedHatModuleBuild', () => {
+  it('is true for an AlmaLinux/Rocky module-stream build, real NVRs from the 2026-11-26 measurement', () => {
+    expect(isBorrowedRedHatModuleBuild('AlmaLinux:9', '8.1.14-1.module_el9.2.0+24+ca6bd7c2')).toBe(true);
+    expect(isBorrowedRedHatModuleBuild('Rocky Linux:8', '16.19.1-1.module_el8.7.0+3496+a59a3324')).toBe(true);
+  });
+
+  it('is false for an ordinary (non-module) AlmaLinux/Rocky build', () => {
+    expect(isBorrowedRedHatModuleBuild('AlmaLinux:9', '1.1.1k-1.el9')).toBe(false);
+  });
+
+  it('is false for native Red Hat/Oracle Linux ecosystems, even with a module build', () => {
+    // Red Hat's own module versions ARE comparable against Red Hat's own rows
+    // (same vendor's own numbering); only the borrowed AlmaLinux/Rocky path
+    // needs the exclusion.
+    expect(isBorrowedRedHatModuleBuild('Red Hat:9', '8.1.14-1.module+el9.2.0+17911+b059dfc2')).toBe(false);
+    expect(isBorrowedRedHatModuleBuild('Oracle Linux:9', '8.1.14-1.module+el9.2.0+17911+b059dfc2')).toBe(false);
+  });
+
+  it('is false without a version, or without an ecosystem', () => {
+    expect(isBorrowedRedHatModuleBuild('AlmaLinux:9', undefined)).toBe(false);
+    expect(isBorrowedRedHatModuleBuild(undefined, '8.1.14-1.module_el9.2.0+24+ca6bd7c2')).toBe(false);
   });
 });
 
