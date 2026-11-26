@@ -31,6 +31,8 @@ import {
   normalizeEcosystem,
   rpmAdvisoryVendor,
   isBorrowedRedHatModuleBuild,
+  matchesBorrowedModuleBuild,
+  compareBorrowedModuleBuild,
   matchesDpkgStyleVersion,
   matchesRpmStyleOsvVersion,
   matchesGoVersion,
@@ -740,11 +742,21 @@ function rowFixStatus(r: { fixStatus: string | null; fixStatusDetail: string | n
   return { fixStatus: r.fixStatus as FixStatus | null, fixStatusDetail: r.fixStatusDetail };
 }
 
-function rpmRowToResult(r: RpmAdvisoryRow, approximate: boolean, version: string | undefined): VulnerabilityResult {
+function rpmRowToResult(
+  r: RpmAdvisoryRow,
+  approximate: boolean,
+  version: string | undefined,
+  // compareBorrowedModuleBuild for a borrowed AlmaLinux/Rocky module-build
+  // query (see matchesBorrowedModuleBuild()'s comment): the displayed
+  // fixedVersion stays Red Hat's own verbatim string either way, only
+  // whether it is shown at all (already applied vs not) needs the
+  // vendor-build trailer normalized out of the comparison.
+  order: VersionOrder = compareRpmVersions,
+): VulnerabilityResult {
   const adv = r.advisory;
   // An unfixed Red Hat VEX row is bounded by the newest fix any release stream received, which
   // can be an older stream's (kernel 5.14.0-284.200.1.el9_2, E4S only, on a 687.58.1.el9_8 host).
-  const fixedVersion = fixAboveInstalled(r.versionEnd ?? r.versionFixed ?? null, version, compareRpmVersions);
+  const fixedVersion = fixAboveInstalled(r.versionEnd ?? r.versionFixed ?? null, version, order);
   if (adv.masterVuln) {
     return { ...masterToResult(adv.masterVuln, approximate, adv.source, fixedVersion, adv.externalId), distroPriority: adv.distroPriority, ...rowFixStatus(r) };
   }
@@ -838,17 +850,26 @@ function getRpmProductIndex(product: string, vendor: string): Promise<RpmProduct
   return rpmProductIndexCache.get(`${product}\0${vendor}`, () => buildRpmProductIndex(product, vendor));
 }
 
-/** Search Advisory table for RPM-based distros using rpmvercmp (see getRpmProductIndex() above). */
+/**
+ * Search Advisory table for RPM-based distros using rpmvercmp (see
+ * getRpmProductIndex() above). moduleAware switches to
+ * matchesBorrowedModuleBuild()/compareBorrowedModuleBuild() for a borrowed
+ * AlmaLinux/Rocky module-build query (see its comment); native Red Hat/Oracle
+ * Linux queries never set it, since their own numbering compares directly.
+ */
 async function searchAdvisoryRpm(
   product: string,
   version: string | undefined,
   vendor: string,
+  moduleAware = false,
 ): Promise<VulnerabilityResult[]> {
   const approximate = version === undefined;
   const { unconditional, ranged } = await getRpmProductIndex(product, vendor);
 
-  const matchedRanged = version ? ranged.filter(r => matchesRpmVersionRange(r, version)) : ranged;
-  return [...unconditional, ...matchedRanged].map(r => rpmRowToResult(r, approximate, version));
+  const matchFn = moduleAware ? matchesBorrowedModuleBuild : matchesRpmVersionRange;
+  const order = moduleAware ? compareBorrowedModuleBuild : compareRpmVersions;
+  const matchedRanged = version ? ranged.filter(r => matchFn(r, version)) : ranged;
+  return [...unconditional, ...matchedRanged].map(r => rpmRowToResult(r, approximate, version, order));
 }
 
 /** Search NVD table by CPE */
@@ -996,10 +1017,10 @@ async function searchAllVulnerabilities(
 
     const rpmVendor = normalizedEcosystem ? rpmAdvisoryVendor(normalizedEcosystem) : null;
     // AlmaLinux/Rocky route here too (rpmAdvisoryVendor() borrows Red Hat's own
-    // rows for them, see its comment), but only for a query whose installed
-    // version is not a module build -- that build-number scheme is not
-    // comparable across vendors, see isBorrowedRedHatModuleBuild()'s comment.
-    const skipBorrowedModuleBuild = isBorrowedRedHatModuleBuild(normalizedEcosystem, version);
+    // rows for them, see its comment). A module-build query among them needs
+    // the dedicated matching in searchAdvisoryRpm()'s moduleAware argument,
+    // see isBorrowedRedHatModuleBuild()'s comment.
+    const isModuleBuild = isBorrowedRedHatModuleBuild(normalizedEcosystem, version);
     // A catalog entry names the NVD and CNA rows it stands for (see product-catalog.ts), so
     // OSV and the vendor advisories, which match by name alone, are not asked about it.
     const isCatalog = findCatalogEntry(packageName) !== undefined;
@@ -1007,8 +1028,8 @@ async function searchAllVulnerabilities(
     const [osvResults, nvdResults, advisoryResults, cnaResults] = await Promise.all([
       isCatalog ? Promise.resolve([]) : searchOSV(packageName, version, versionInt, normalizedEcosystem, source),
       isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, normalizedEcosystem),
-      isCatalog ? Promise.resolve([]) : rpmVendor && !skipBorrowedModuleBuild
-        ? searchAdvisoryRpm(packageName, version, rpmVendor)
+      isCatalog ? Promise.resolve([]) : rpmVendor
+        ? searchAdvisoryRpm(packageName, version, rpmVendor, isModuleBuild)
         : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),
       isDistro || isLanguage || isAdvisoryOnly ? Promise.resolve([]) : searchCna(packageName, version),
     ]);

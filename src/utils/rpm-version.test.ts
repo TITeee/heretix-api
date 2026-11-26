@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rpmvercmp, compareRpmVersions, rpmReleaseStream } from './rpm-version.js';
+import { rpmvercmp, compareRpmVersions, rpmReleaseStream, stripRpmEpoch } from './rpm-version.js';
 
 describe('rpmvercmp', () => {
   it('returns 0 for identical strings', () => {
@@ -71,5 +71,16 @@ describe('rpmReleaseStream', () => {
 
   it('does not take a tag from the version part', () => {
     expect(rpmReleaseStream('1.el9_2-3.el9')).toBeNull();
+  });
+});
+
+describe('stripRpmEpoch', () => {
+  it('removes a leading epoch', () => {
+    expect(stripRpmEpoch('1:16.19.1-1.module+el8.7.0')).toBe('16.19.1-1.module+el8.7.0');
+    expect(stripRpmEpoch('0:8.1.14-1.el9')).toBe('8.1.14-1.el9');
+  });
+
+  it('leaves a string with no epoch untouched', () => {
+    expect(stripRpmEpoch('8.1.14-1.el9')).toBe('8.1.14-1.el9');
   });
 });

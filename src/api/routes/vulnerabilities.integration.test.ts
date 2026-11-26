@@ -204,7 +204,7 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     expect(rhelEcosystem.body.results[0].externalId).toBe('CVE-2023-0568');
   });
 
-  it('finds an unfixed CVE on AlmaLinux/Rocky by borrowing Red Hat\'s own rows, but not for a module-stream build', async () => {
+  it('finds an unfixed CVE on AlmaLinux/Rocky by borrowing Red Hat\'s own rows (ordinary package, and an unconditional VEX row on a module build)', async () => {
     // AlmaLinux and Rocky publish no unfixed/deferred status of their own
     // (confirmed 2026-11-26 against errata.almalinux.org / errata.rockylinux.org);
     // rpmAdvisoryVendor() routes their queries to the same red-hat-9 rows RHEL
@@ -225,16 +225,45 @@ describe('GET /api/v1/vulnerabilities/search', () => {
     const rockyOrdinary = await search(app, 'package=tftp&version=5.2-50.el9&ecosystem=Rocky%20Linux:9');
     expect(rockyOrdinary.body.results).toHaveLength(1);
 
-    // A module-stream build's own version string is not comparable against
-    // Red Hat's independently-numbered module builds (see
-    // isBorrowedRedHatModuleBuild()'s comment) -- the query must not reach
-    // this row at all, rather than return an unreliable verdict.
+    // An unconditional "confirmed unfixed" row makes no per-stream claim at
+    // all (matchesBorrowedModuleBuild()'s comment), so it applies to a
+    // module-build query too, same as an ordinary one.
     const almaModule = await search(app, 'package=tftp&version=5.2-50.module_el9.2.0%2B24%2Bca6bd7c2&ecosystem=AlmaLinux:9');
-    expect(almaModule.body.results).toHaveLength(0);
+    expect(almaModule.body.results).toHaveLength(1);
 
     // The native RHEL ecosystem is unaffected by the AlmaLinux/Rocky routing.
     const rhel = await search(app, 'package=tftp&version=5.2-50.el9&ecosystem=Red%20Hat:9');
     expect(rhel.body.results).toHaveLength(1);
+  });
+
+  it('finds an unfixed CVE on an AlmaLinux module-build query, normalizing the vendor build+hash trailer and respecting the module stream', async () => {
+    // Real NVRs from the 2026-11-26 measurement (php:8.1 on RHEL 9): the same
+    // fix, AlmaLinux's own build counter vs Red Hat's.
+    const advisory = await prisma.advisoryVulnerability.create({
+      data: { source: 'red-hat', externalId: 'CVE-2022-31628', cveId: 'CVE-2022-31628', rawData: {} },
+    });
+    await prisma.advisoryAffectedProduct.create({
+      data: { advisoryId: advisory.id, vendor: 'red-hat-9', product: 'php-module-test', versionStart: '8.0', versionEnd: '0:8.0.27-1.el9_1' },
+    });
+    await prisma.advisoryAffectedProduct.create({
+      data: { advisoryId: advisory.id, vendor: 'red-hat-9', product: 'php-module-test', versionStart: '8.1', versionEnd: '0:8.1.14-1.module+el9.2.0+17911+b059dfc2' },
+    });
+
+    // One build before AlmaLinux's own 8.1 fix: affected.
+    const before = await search(app, 'package=php-module-test&version=8.1.13-1.module_el9.2.0%2B20%2Baaaaaaaa&ecosystem=AlmaLinux:9');
+    expect(before.body.results).toHaveLength(1);
+    expect(before.body.results[0].externalId).toBe('CVE-2022-31628');
+
+    // AlmaLinux's own fixed build (its own build counter, not Red Hat's) --
+    // not found, despite never numerically matching Red Hat's build+hash.
+    const fixed = await search(app, 'package=php-module-test&version=8.1.14-1.module_el9.2.0%2B24%2Bca6bd7c2&ecosystem=AlmaLinux:9');
+    expect(fixed.body.results).toHaveLength(0);
+
+    // The unrelated php:8.0 stream's row must not apply to an 8.1 query, even
+    // though 8.1 > 8.0 would otherwise look "already past" that row's own fix.
+    const stream81 = await search(app, 'package=php-module-test&version=8.1.0-1.module_el9.2.0%2B10%2Baaaaaaaa&ecosystem=AlmaLinux:9');
+    expect(stream81.body.results).toHaveLength(1);
+    expect(stream81.body.results[0].externalId).toBe('CVE-2022-31628');
   });
 
   it('compares PAN rows in hotfix order, and every other vendor as before', async () => {

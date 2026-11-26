@@ -91,6 +91,24 @@ export function rpmReleaseStream(evr: string): string | null {
   return parseEvr(evr).release.match(/(?:^|\.)(el\d+_\d+)(?![0-9])/)?.[1] ?? null;
 }
 
+/**
+ * An EVR with its epoch ("N:") removed, or the string as-is when it has
+ * none. For comparing an installed build against a bare, epoch-less module
+ * stream floor ("16.0", "8.1", ... -- AdvisoryAffectedProduct.versionStart
+ * for a modular package, extracted from OVAL's "Module <name>:<stream> is
+ * enabled" sibling criterion, which never carries an epoch of its own):
+ * compareRpmVersions() treats a missing epoch as 0, so comparing an
+ * epoch-bearing full EVR directly against that bare floor lets the epoch
+ * alone decide the comparison regardless of the actual stream numbers
+ * (confirmed live: an installed nodejs:16 build, epoch 1, numerically
+ * "passes" the nodejs:18 stream's floor "18.0", epoch 0, only because
+ * epoch 1 > epoch 0 -- the stream digits are never reached).
+ */
+export function stripRpmEpoch(evr: string): string {
+  const i = evr.indexOf(':');
+  return i === -1 ? evr : evr.slice(i + 1);
+}
+
 function parseEvr(s: string): { epoch: number; version: string; release: string } {
   let epoch = 0;
   let rest = s;

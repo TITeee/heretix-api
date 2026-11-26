@@ -224,18 +224,20 @@ pnpm validate:almalinux-redhat             # both distros, every major
 pnpm validate:almalinux-redhat almalinux   # one distro only
 ```
 
-| Distro | Major | Coverage | Non-module agreement | Module agreement (out of scope, reported only) |
-|---|---|---:|---:|---:|
-| AlmaLinux | 8 | 98% | 97% | 18% |
-| AlmaLinux | 9 | 93% | 89% | 8% |
-| AlmaLinux | 10 | 97% | 90% | n/a (RHEL 10 has no modules) |
-| Rocky Linux | 8 | 78% | 88% | 23% |
-| Rocky Linux | 9 | 71% | 90% | 67% |
-| Rocky Linux | 10 | 67% | 92% | n/a |
+| Distro | Major | Non-module coverage | Non-module agreement | Module coverage | Module agreement |
+|---|---|---:|---:|---:|---:|
+| AlmaLinux | 8 | 97% | 97% | 56% | 87% |
+| AlmaLinux | 9 | 92% | 90% | 87% | 78% |
+| AlmaLinux | 10 | 97% | 90% | n/a (RHEL 10 has no modules) | n/a |
+| Rocky Linux | 8 | 74% | 88% | 54% | 87% |
+| Rocky Linux | 9 | 69% | 91% | 46% | 83% |
+| Rocky Linux | 10 | 67% | 92% | n/a | n/a |
 
-*Measured 2026-11-26.* Modular packages (php, nodejs, ... — RHEL 8/9 AppStream only, dropped in RHEL 10) are excluded from the pass/fail gate and from production matching entirely (`isBorrowedRedHatModuleBuild()` in `search-helpers.ts`): AlmaLinux and Rocky each assign their own independent module build+hash counter after the stream tag (`module_el9.2.0+24+9207bbc0` vs Red Hat's own `module+el9.2.0+17911+b059dfc2`), which is not numerically comparable across vendors and also needs picking the right one of several parallel module streams live in the same release — a known, out-of-scope gap for a later pass, not a silent one.
+*Measured 2026-11-26.* Modular packages (php, nodejs, ... — RHEL 8/9 AppStream only, dropped in RHEL 10) need dedicated matching (`matchesBorrowedModuleBuild()` in `search-helpers.ts`): AlmaLinux and Rocky each assign their own independent module build+hash counter after the stream tag (`module_el9.2.0+24+9207bbc0` vs Red Hat's own `module+el9.2.0+17911+b059dfc2`), not numerically comparable across vendors, and Red Hat republishes several parallel module streams (nodejs:14/16/18, ...) under the same package name in one point release — only a row sharing the query's own stream tag is even a candidate. Module coverage runs lower than non-module: AlmaLinux/Rocky sometimes ship a fix in an earlier point release than any Red Hat row shares a stream tag with yet (same phenomenon as the point-release gap below, per module stream instead of per package) — that case returns no row at all rather than a wrong one, costing coverage, not a false "still unfixed".
 
-Rocky Linux's lower coverage reflects its own OSV feed recording fewer fixed CVEs than AlmaLinux's, not a problem in the borrowed Red Hat data.
+Finding this also surfaced a latent bug in `matchesRpmVersionRange()` itself, affecting native Red Hat/Oracle Linux matching too, not just this borrowed path: its `versionStart` floor (a bare, epoch-less module-stream label such as `"16.0"`) was compared directly against an epoch-bearing installed version, letting the epoch alone decide the comparison before the stream digits were ever read — an installed `nodejs:16` build (epoch 1) numerically "passed" the unrelated `nodejs:18` stream's floor (epoch 0) on the epoch difference alone. Fixed by stripping the query's own epoch before this one comparison (`stripRpmEpoch()` in `rpm-version.ts`).
+
+Rocky Linux's lower coverage reflects its own OSV feed recording fewer fixed CVEs than AlmaLinux's, not a problem in the borrowed Red Hat data. A point-release gap remains open for non-modular packages too (RHEL 10's AlmaLinux/Rocky disagreements above are entirely this: AlmaLinux ships a fix in its own continuous stream, Red Hat's row is from the next point release's own rebuild).
 
 ## Known limitations
 
