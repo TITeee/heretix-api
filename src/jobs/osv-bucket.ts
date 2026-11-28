@@ -98,6 +98,10 @@ export function staleBucketProblem(ecosystem: string, newestModified: Date | nul
 
 export const OSV_ECOSYSTEMS_URL = 'https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt';
 
+const CHAINGUARD_LICENSE =
+  'its records are licensed CC-BY-NC-ND 4.0 (non-commercial, no derivatives) or under the Chainguard License for ' +
+  'Commercial Scanners, which heretix-api cannot meet';
+
 /**
  * OSV ecosystems that are not imported, and why. Each is on OSV's list, so it can be chosen
  * and would run; it would only do harm or nothing.
@@ -107,6 +111,8 @@ export const OSV_NOT_FOR_IMPORT: Readonly<Record<string, string>> = {
     "RHEL is imported from Red Hat's own OVAL and VEX (the advisory-redhat jobs). Its OSV records would duplicate them " +
     'and disagree with them, and the file holds tens of thousands of records for every stream and product',
   GIT: 'its records name no package, only git commit ranges, so no version can match them and nothing would be stored',
+  Chainguard: CHAINGUARD_LICENSE,
+  Wolfi: CHAINGUARD_LICENSE,
 };
 
 /** Why an ecosystem is not imported, or null when it can be. Takes a release too ("Red Hat:enterprise_linux:9"). */

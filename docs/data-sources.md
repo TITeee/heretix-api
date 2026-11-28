@@ -5,6 +5,7 @@ Each source has an import job that the [scheduler](operations.md#scheduler) runs
 `pnpm import:*` runs the compiled `dist/` output, so run `pnpm build` first. Without a build, use `pnpm exec tsx src/scripts/<script>.ts ...` instead.
 
 - [Choosing what to import](#choosing-what-to-import)
+- [Data licenses](#data-licenses)
 - [NVD](#nvd)
 - [OSV](#osv)
 - [CISA KEV](#cisa-kev) · [EPSS](#epss) · [CVE Records (CNA) and CISA Vulnrichment](#cve-records-cna-and-cisa-vulnrichment)
@@ -26,6 +27,27 @@ Import only what you scan. Each source adds import time, disk space and requests
 | Products with no dedicated source | CVE Records (`cna`), which carry the affected products declared by each CVE's issuer |
 
 Measured import times: the full NVD mirror takes several hours, and Red Hat VEX about 15 minutes (the archive and the changes since it). Other sources depend on their size and upstream response times; the dashboard shows each run's duration.
+
+## Data licenses
+
+heretix-api is Apache 2.0 licensed ([LICENSE](../LICENSE)), but that covers the code only. The data your instance imports stays under the terms of whoever publishes it, and it does not ship with heretix-api: your instance fetches it from the sources below. If you pass records on (an API open to others, a published report, a mirror), follow each source's terms, which can include credit, a link to the license, a note of changes, and in some cases share-alike or non-commercial limits.
+
+The OSV site lists the license of each OSV source on its [data page](https://google.github.io/osv.dev/data/), as of 2026-11-28 and as listed there:
+
+| License | OSV sources |
+|---|---|
+| CC0 1.0 | Rust Advisory Database, Global Security Database, Haskell Security Advisories, opam (OCaml) |
+| CC-BY 4.0 (credit, license link and a note of changes) | GitHub Advisory Database, PyPI Advisory Database, Go Vulnerability Database, OSS-Fuzz, Python Software Foundation Database, Erlang Ecosystem Foundation CNA, Android, Julia Security Advisories, Red Hat Security Data, Red Hat Lightwell |
+| CC-BY-SA 4.0 (as CC-BY, and an adaptation is shared under the same license) | Ubuntu, Alpine SecDB (converted by OSV) |
+| Apache 2.0 | RConsortium Advisory Database, OpenSSF Malicious Packages, Bitnami Vulnerability Database, CleanStart, Docker Hardened Images, V8 / Chromium |
+| MIT | Drupal Advisory Database, AlmaLinux, Azure Linux, BellSoft, Curl |
+| BSD | Rocky Linux |
+| **CC-BY-NC-ND 4.0, or the "Chainguard License for Commercial Scanners"** | Chainguard / Wolfi. Non-commercial and no derivatives, so heretix-api does not import them (the `Chainguard` and `Wolfi` ecosystems are refused) |
+| Not stated on the page | Debian Security Advisories and NVD CVEs for open source software (both converted by OSV) |
+
+OSV does not state a license for its own records, and its [data licensing page](https://google.github.io/osv.dev/data/new) requires only that a source's license lets OSV ingest, modify and redistribute its records. Check the license files of the sources you import: the page lists the license names, not their terms, and it can change.
+
+Credit for what heretix-api serves: OSV records come from [OSV](https://osv.dev) and the sources above, with fields added by heretix-api (matching results, severity scores computed from a vector, fix status from the Debian and Ubuntu trackers). The other sources (NVD, CISA KEV, EPSS, CVE Records, Red Hat, Oracle, Microsoft and the vendor advisories) follow the terms of their publishers, which this page does not summarize.
 
 ## NVD
 
@@ -112,7 +134,7 @@ Pick by what you scan. Names are case-sensitive (`PyPI`, not `pypi`); a wrong na
 
 A release suffix is accepted and ignored: `Ubuntu:22.04:LTS` imports `Ubuntu`. The dashboard lists the rows above first, under *Recommended*; the rest work on a best-effort basis.
 
-**Two OSV ecosystems are refused**, in the dashboard, the API and the command: `Red Hat` (RHEL is imported from Red Hat's own OVAL and VEX, see [Red Hat](#red-hat); the OSV records would duplicate and contradict them) and `GIT` (its records name no package, only commit ranges, so nothing could match). They are `OSV_NOT_FOR_IMPORT` in [osv-bucket.ts](../src/jobs/osv-bucket.ts). Malicious packages (`MAL-*`) arrive with `npm`, `PyPI`, `RubyGems`, `NuGet`, `crates.io`, `Go`, `Maven` and `Packagist`.
+**Four OSV ecosystems are refused**, in the dashboard, the API and the command: `Red Hat` (RHEL is imported from Red Hat's own OVAL and VEX, see [Red Hat](#red-hat); the OSV records would duplicate and contradict them), `GIT` (its records name no package, only commit ranges, so nothing could match), and `Chainguard` and `Wolfi` (licensed non-commercial and no derivatives, see [Data licenses](#data-licenses)). They are `OSV_NOT_FOR_IMPORT` in [osv-bucket.ts](../src/jobs/osv-bucket.ts). Malicious packages (`MAL-*`) arrive with `npm`, `PyPI`, `RubyGems`, `NuGet`, `crates.io`, `Go`, `Maven` and `Packagist`.
 
 All OSV ecosystems, as of 2026-11-06 ([live list](https://storage.googleapis.com/osv-vulnerabilities/ecosystems.txt)):
 `AlmaLinux`, `Alpaquita`, `Alpine`, `Android`, `Azure Linux`, `BellSoft Hardened Containers`, `Bitnami`, `CRAN`, `Chainguard`, `CleanStart`, `Debian`, `Echo`, `GHC`, `GIT`, `GSD`, `GitHub Actions`, `Go`, `Hackage`, `Hex`, `Julia`, `Linux`, `Mageia`, `Maven`, `MinimOS`, `NuGet`, `OSS-Fuzz`, `Packagist`, `Pub`, `PyPI`, `Red Hat`, `Red Hat Lightwell`, `Rocky Linux`, `Root`, `RubyGems`, `SUSE`, `SwiftURL`, `TuxCare`, `UVI`, `Ubuntu`, `VSCode`, `Wolfi`, `crates.io`, `npm`, `opam`, `openEuler`, `openSUSE`.

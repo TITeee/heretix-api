@@ -211,3 +211,5 @@ Per-source details, import commands and limitations: [docs/data-sources.md](docs
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) for details.
+
+This covers the code only. The vulnerability data your instance imports (OSV and its sources, NVD, vendor advisories, ...) stays under its publishers' licenses; see [Data licenses](docs/data-sources.md#data-licenses).
