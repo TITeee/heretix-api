@@ -139,8 +139,10 @@ describe('resolveOsvEcosystem', () => {
 describe('ecosystems that are not imported', () => {
   const official = ['GIT', 'Maven', 'Red Hat', 'Ubuntu'];
 
-  it('names a reason for Red Hat (any stream) and GIT, and none for the rest', () => {
+  it('names a reason for Red Hat (any stream), GIT, Chainguard and Wolfi, and none for the rest', () => {
     expect(osvImportBlock('Red Hat')).toContain('OVAL');
+    expect(osvImportBlock('Chainguard')).toContain('CC-BY-NC-ND');
+    expect(osvImportBlock('Wolfi')).toContain('CC-BY-NC-ND');
     expect(osvImportBlock('Red Hat:enterprise_linux:9::appstream')).toContain('OVAL');
     expect(osvImportBlock('GIT')).toContain('no package');
     expect(osvImportBlock('Maven')).toBeNull();
@@ -158,7 +160,7 @@ describe('ecosystems that are not imported', () => {
   it('puts the language ecosystems and the maintained distros first, the rest after', () => {
     expect(osvEcosystemGroup('npm')).toBe('recommended');
     expect(osvEcosystemGroup('Ubuntu:22.04:LTS')).toBe('recommended');
-    expect(osvEcosystemGroup('Chainguard')).toBe('other');
+    expect(osvEcosystemGroup('Mageia')).toBe('other');
     expect(osvEcosystemGroup('SUSE')).toBe('other');
   });
 });

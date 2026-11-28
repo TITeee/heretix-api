@@ -213,3 +213,5 @@ Windows Server はベータ版です。実機数台でしか確認しておら�
 ## ライセンス
 
 Apache License 2.0。詳細は [LICENSE](LICENSE) を参照してください。
+
+これはコードのライセンスです。インスタンスが取り込む脆弱性データ(OSVとその提供元、NVD、ベンダーのアドバイザリなど)は、各提供元のライセンスに従います。詳しくは [Data licenses](docs/data-sources.md#data-licenses)(英語)を参照してください。
