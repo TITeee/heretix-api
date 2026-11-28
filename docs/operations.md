@@ -47,12 +47,13 @@ RATE_LIMIT_BATCH_MAX=30     # Optional. Batch searches per client address per mi
 BATCH_SEARCH_MAX_CONCURRENT=2  # Optional. Batch searches running at once; more get 429 (0 = no cap)
 BATCH_SEARCH_TIMEOUT_MS=300000  # Optional. A batch search still running after this is answered 503 and its slot freed (0 = no limit)
 JOB_MAX_CONCURRENT=2        # Optional. Collection jobs running at once; the rest wait as "queued"
-JOB_MAX_HEAVY=1             # Optional. Of those, memory-heavy jobs (EPSS, CNA, Red Hat OVAL and VEX, the full load of an OSV ecosystem) running at once
+JOB_MAX_HEAVY=1             # Optional. Of those, memory-heavy jobs (EPSS, CNA, Red Hat OVAL and VEX, the full load of an OSV ecosystem, Wordfence) running at once
 JOB_MAX_OLD_SPACE_MB=3072   # Optional. Heap limit of each job process
 JOB_DATABASE_POOL_MAX=5     # Optional. Postgres connection pool of each job process
 NVD_API_KEY=                # Optional. NVD rate limit 10 → 50 requests/min
 CISCO_CLIENT_ID=            # Required for the Cisco import (openVuln API)
 CISCO_CLIENT_SECRET=
+WORDFENCE_API_KEY=          # Required for the Wordfence import (WordPress). Free; your own, not to be shared
 ```
 
 Generate each key with `openssl rand -hex 32`; a key shorter than 32 characters is logged as a warning at startup, and so is an `ADMIN_API_KEY` equal to `API_KEY`. `API_KEY` sits on every client (heretix-management, heretix-cli), so it only searches: running and switching jobs and the dashboard's data take `ADMIN_API_KEY`.
@@ -83,6 +84,7 @@ Jobs are defined in [src/jobs/registry.ts](../src/jobs/registry.ts) and register
 | `advisory-redhat-vex` | Daily 15:00 | | Run is enough |
 | `cna` (CVE Records and CISA SSVC) | Every 4 hours (:30 UTC) | | **Load** on the dashboard: the first run downloads a bundle of about 650MB (about 9 minutes, 1.4GB of temporary disk); after that a Run reads only the last 25 hours |
 | `advisory-checkpoint` / `-ivanti` / `-citrix` | Daily 16:00 / 16:30 / 16:45 | | Run is enough. `advisory-ivanti` renders about 90 pages in a headless browser and takes 10 to 15 minutes; `advisory-citrix` reads about 20 pages over plain HTTP in under a minute |
+| `advisory-wordfence` | Daily 17:00 | | Run is enough. Needs `WORDFENCE_API_KEY` (free, your own: see [data-sources.md](data-sources.md#wordfence-wordpress)); reads the whole feed, about 180 MB, each run |
 | `advisory-microsoft` | Daily 18:30 | | **Load** on the dashboard: it reads all the MSRC documents since March 2021 (about 68) in about 3 minutes; after that a Run reads only the documents revised in the last 7 days and the latest month |
 
 **First load.** A Run on a source that reads only changes (NVD, OSV, CVE Records, Microsoft) that was never loaded does the full import itself; the button then says **Load**. The schedule skips such a source until it is loaded, because a load can take hours (NVD) or download a large file (CVE Records, about 600 MB) and is a person's call. After that a Run is the schedule's delta. A full load of an OSV ecosystem or of CVE Records counts as a heavy job (see `JOB_MAX_HEAVY`). Switching a job on is separate from running it: a new job is Off until switched on, and Run works either way. **Full reload.** A source that is loaded already has a **Full reload** button (NVD, OSV, CVE Records, Microsoft). It runs the full import again over what is stored, behind a confirmation, and deletes nothing first, so searches keep working while it runs (NVD takes hours, CVE Records about 9 minutes). Use it after an upgrade that changes how a source's records are read: the schedule only reads what changed, so records read before are not read again by itself. For example, after an upgrade that reads more of the CVE Records, press it on `cna`. The same is `POST /api/v1/jobs/:source/run?full=true`. To start a source over after emptying its tables, use the command (`docker compose exec app pnpm import:...`, after `pnpm build` when running from source).

@@ -95,6 +95,7 @@ const ADVISORY_SOURCE_MAP: Record<string, string> = {
   'advisory-ivanti':     'advisory-ivanti',
   'advisory-citrix':     'advisory-citrix',
   'advisory-microsoft':  'advisory-microsoft',
+  'advisory-wordfence':  'advisory-wordfence',
 };
 
 export default async function dashboardRoute(fastify: FastifyInstance) {

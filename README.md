@@ -36,7 +36,7 @@ Steps 1 and 2 happen when the scheduled jobs import data. Step 3 happens on ever
 
 ## Features
 
-- **Vendor advisories**: Fortinet, Palo Alto Networks, Cisco, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, Check Point, Ivanti, NetScaler and Microsoft (Windows Server, beta)
+- **Vendor advisories**: Fortinet, Palo Alto Networks, Cisco, Sophos, SonicWall, Oracle CPU, Oracle Linux, Red Hat, Broadcom/VMware, Splunk, Apache HTTP Server, Apache Tomcat, nginx, Zabbix, Check Point, Ivanti, NetScaler and Microsoft (Windows Server, beta), and Wordfence for WordPress core, plugins and themes (with an API key of your own)
 - **Distro-aware matching**: dpkg and RPM version comparison for Linux distributions, and each distro's own rating (`distroPriority`) and fix status (`fixStatus`, e.g. "will not fix") per result
 
 ## Requirements

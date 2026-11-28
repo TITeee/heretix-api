@@ -2,16 +2,20 @@ import { osvBucketName } from '../jobs/osv-bucket.js';
 import {
   isDpkgStyleDistro, isLanguageEcosystem, isRpmStyleOsvDistro, normalizeEcosystem,
 } from './search-helpers.js';
+import { isWordPressEcosystem } from './wordpress.js';
 
 /**
  * Whether a search for this ecosystem is answered by OSV, so that an ecosystem not loaded
- * means a search can only come back empty. Distros and sources with their own
+ * means a search can only come back empty. WordPress, answered by the Wordfence feed alone,
+ * is judged the same way. Distros and sources with their own
  * feeds (Red Hat, Oracle Linux, Windows, the vendor advisories) are not judged here:
  * their data is not in the OSV table to begin with.
  */
 export function expectsOsvData(ecosystem: string): boolean {
   const eco = normalizeEcosystem(ecosystem) ?? ecosystem;
   if (eco.startsWith('Red Hat:')) return false;
+  // Not OSV's, but answered by one source alone in the same way: the Wordfence feed.
+  if (isWordPressEcosystem(eco)) return true;
   return isLanguageEcosystem(eco) || isDpkgStyleDistro(eco) || isRpmStyleOsvDistro(eco);
 }
 
@@ -37,6 +41,7 @@ export function resetOsvCoverageCache(): void {
 // only has the few a malicious-package (osv-mal) or an earlier test run left behind.
 // The releases of a distro share one job, so "Alpine:v3.24" is asked as "Alpine".
 async function osvHasData(ecosystem: string, now: number): Promise<boolean> {
+  if (isWordPressEcosystem(normalizeEcosystem(ecosystem))) return wordfenceHasData(now);
   const bucket = osvBucketName(normalizeEcosystem(ecosystem) ?? ecosystem);
   const hit = known.get(bucket);
   if (hit && hit.expiresAt > now) return hit.hasData;
@@ -46,6 +51,18 @@ async function osvHasData(ecosystem: string, now: number): Promise<boolean> {
   known.set(bucket, { hasData, expiresAt: now + (hasData ? HAS_DATA_TTL_MS : NO_DATA_TTL_MS) });
   return hasData;
 }
+
+// WordPress is loaded once the Wordfence job has stored a record.
+async function wordfenceHasData(now: number): Promise<boolean> {
+  const hit = known.get(WORDFENCE_KEY);
+  if (hit && hit.expiresAt > now) return hit.hasData;
+  const { prisma } = await import('../db/client.js');
+  const { WORDFENCE_SOURCE } = await import('../worker/wordfence-fetcher.js');
+  const hasData = (await prisma.advisoryVulnerability.findFirst({ where: { source: WORDFENCE_SOURCE }, select: { id: true } })) !== null;
+  known.set(WORDFENCE_KEY, { hasData, expiresAt: now + (hasData ? HAS_DATA_TTL_MS : NO_DATA_TTL_MS) });
+  return hasData;
+}
+const WORDFENCE_KEY = 'advisory-wordfence';
 
 /**
  * The ecosystems of a search that OSV is expected to answer but has no record of at all:

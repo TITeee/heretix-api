@@ -33,6 +33,7 @@ import { CheckpointFetcher } from '../worker/checkpoint-fetcher.js';
 import { IvantiFetcher } from '../worker/ivanti-fetcher.js';
 import { CitrixFetcher } from '../worker/citrix-fetcher.js';
 import { MsrcFetcher } from '../worker/msrc-fetcher.js';
+import { WordfenceFetcher, WORDFENCE_SOURCE } from '../worker/wordfence-fetcher.js';
 import type { AdvisoryFetcher } from '../worker/advisory-fetcher.js';
 import { importCnaDelta } from '../worker/cna-importer.js';
 import { importOSVEcosystemDelta } from '../worker/osv-fetcher.js';
@@ -111,6 +112,9 @@ export const STATIC_JOBS: JobDefinition[] = [
   { source: 'advisory-checkpoint',   label: 'Check Point',        cron: '0 16 * * *',  run: () => runAdvisory('advisory-checkpoint', new CheckpointFetcher()) },
   { source: 'advisory-ivanti',       label: 'Ivanti',             cron: '30 16 * * *', run: () => runAdvisory('advisory-ivanti', new IvantiFetcher()) },
   { source: 'advisory-citrix',       label: 'Citrix NetScaler',   cron: '45 16 * * *', run: () => runAdvisory('advisory-citrix', new CitrixFetcher()) },
+  // WordPress core, plugins and themes. Needs WORDFENCE_API_KEY (an operator's own free key);
+  // the whole feed (about 180 MB of JSON) is read and parsed at once.
+  { source: WORDFENCE_SOURCE,        label: 'Wordfence (WordPress)', cron: '0 17 * * *', heavy: true, run: () => runAdvisory(WORDFENCE_SOURCE, new WordfenceFetcher()) },
   // Recently revised MSRC documents only; the history from March 2021 is
   // imported by hand (`pnpm import:msrc`). Patch Tuesday updates are released
   // around 17:00 UTC.

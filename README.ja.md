@@ -36,7 +36,7 @@ heretix の他のツールを使わず、脆弱性検索 API として単体で�
 
 ## 特長
 
-- **ベンダーアドバイザリ**: Fortinet、Palo Alto Networks、Cisco、Sophos、SonicWall、Oracle CPU、Oracle Linux、Red Hat、Broadcom/VMware、Splunk、Apache HTTP Server、Apache Tomcat、nginx、Zabbix、Check Point、Ivanti、NetScaler、Microsoft（Windows Server、ベータ）
+- **ベンダーアドバイザリ**: Fortinet、Palo Alto Networks、Cisco、Sophos、SonicWall、Oracle CPU、Oracle Linux、Red Hat、Broadcom/VMware、Splunk、Apache HTTP Server、Apache Tomcat、nginx、Zabbix、Check Point、Ivanti、NetScaler、Microsoft（Windows Server、ベータ）、WordPress の本体・プラグイン・テーマ向けの Wordfence（各自の API キーが必要）
 - **ディストリビューション対応**: Linux ディストリビューションのパッケージは、dpkg / RPM の規則でバージョンを比較します。結果には、ディストリビューション独自の重要度（`distroPriority`）と、「修正予定なし」などの修正状況（`fixStatus`）も含まれます。
 
 ## 動作要件
