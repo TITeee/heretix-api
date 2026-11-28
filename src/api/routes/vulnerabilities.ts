@@ -17,6 +17,7 @@ import { createIndexCache } from '../index-cache.js';
 import { clientText } from '../input.js';
 import { findCatalogEntry } from '../../config/product-catalog.js';
 import { requiredWindowsFeatures } from '../../config/windows-role-features.js';
+import { WORDPRESS_VENDOR, isWordPressEcosystem } from '../../utils/wordpress.js';
 import { catalogCnaWhere, catalogNvdWhere } from '../../utils/catalog-search.js';
 import {
   type VulnerabilityResult,
@@ -498,6 +499,8 @@ const UNFIXED_NO_RANGE_WHERE = {
 async function searchAdvisory(
   product: string,
   version: string | undefined,
+  // Only this vendor's rows: a WordPress search reads the Wordfence rows and nothing else.
+  onlyVendor?: string,
 ): Promise<VulnerabilityResult[]> {
   // PAN and Ivanti rows are encoded with their own version orders
   // (pan-version.ts, ivanti-version.ts), so the queried version has to be
@@ -533,6 +536,7 @@ async function searchAdvisory(
       // Linux ecosystem -- see RPM_ADVISORY_VENDOR_PREFIXES's doc comment for why
       // leaking them through this vendor-blind product-name search is unsafe.
       NOT: { OR: RPM_ADVISORY_VENDOR_PREFIXES.map(p => ({ vendor: { startsWith: p } })) },
+      ...(onlyVendor && { vendor: onlyVendor }),
       AND: [
         productWhere,
         versionWhere,
@@ -1024,15 +1028,21 @@ async function searchAllVulnerabilities(
     // A catalog entry names the NVD and CNA rows it stands for (see product-catalog.ts), so
     // OSV and the vendor advisories, which match by name alone, are not asked about it.
     const isCatalog = findCatalogEntry(packageName) !== undefined;
+    // WordPress core, plugins and themes (core:wordpress, plugin:<slug>) are known only to the
+    // Wordfence feed, stored as vendor-advisory rows (utils/wordpress.ts). The other sources
+    // name them in other ways, if at all.
+    const isWordPress = isWordPressEcosystem(normalizedEcosystem);
 
-    const [osvResults, nvdResults, advisoryResults, cnaResults] = await Promise.all([
-      isCatalog ? Promise.resolve([]) : searchOSV(packageName, version, versionInt, normalizedEcosystem, source),
-      isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, normalizedEcosystem),
-      isCatalog ? Promise.resolve([]) : rpmVendor
-        ? searchAdvisoryRpm(packageName, version, rpmVendor, isModuleBuild)
-        : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),
-      isDistro || isLanguage || isAdvisoryOnly ? Promise.resolve([]) : searchCna(packageName, version),
-    ]);
+    const [osvResults, nvdResults, advisoryResults, cnaResults] = isWordPress
+      ? [[], [], await searchAdvisory(packageName, version, WORDPRESS_VENDOR), []]
+      : await Promise.all([
+        isCatalog ? Promise.resolve([]) : searchOSV(packageName, version, versionInt, normalizedEcosystem, source),
+        isDistro || isLanguage ? Promise.resolve([]) : searchNVD(packageName, version, versionInt, normalizedEcosystem),
+        isCatalog ? Promise.resolve([]) : rpmVendor
+          ? searchAdvisoryRpm(packageName, version, rpmVendor, isModuleBuild)
+          : (isDistro || isLanguage ? Promise.resolve([]) : searchAdvisory(packageName, version)),
+        isDistro || isLanguage || isAdvisoryOnly ? Promise.resolve([]) : searchCna(packageName, version),
+      ]);
 
     const fixOrder: VersionOrder = normalizedEcosystem && isDpkgStyleDistro(normalizedEcosystem)
       ? compareDpkgVersions

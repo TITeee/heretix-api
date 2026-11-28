@@ -11,6 +11,7 @@ Each source has an import job that the [scheduler](operations.md#scheduler) runs
 - [CISA KEV](#cisa-kev) · [EPSS](#epss) · [CVE Records (CNA) and CISA Vulnrichment](#cve-records-cna-and-cisa-vulnrichment)
 - Linux distributions: [Red Hat](#red-hat) · [Oracle Linux](#oracle-linux) · [Debian security tracker](#debian-security-tracker)
 - Vendor advisories ([common behavior](architecture.md#vendor-advisories)): [Fortinet](#fortinet) · [Palo Alto Networks](#palo-alto-networks) · [Cisco](#cisco) · [Sophos](#sophos) · [SonicWall](#sonicwall) · [Broadcom / VMware](#broadcom--vmware) · [Oracle Critical Patch Update](#oracle-critical-patch-update) · [Splunk](#splunk) · [Apache HTTP Server](#apache-http-server) · [Apache Tomcat](#apache-tomcat) · [nginx](#nginx) · [Zabbix](#zabbix) · [Check Point](#check-point) · [Ivanti](#ivanti) · [NetScaler](#netscaler) · [Microsoft (Windows Server)](#microsoft-windows-server)
+- WordPress core, plugins and themes: [Wordfence](#wordfence-wordpress)
 
 ## Choosing what to import
 
@@ -24,6 +25,7 @@ Import only what you scan. Each source adds import time, disk space and requests
 | RHEL hosts and images | Red Hat OVAL for each major you run (`advisory-redhat-rhel9`, `-rhel8`) and Red Hat VEX (`advisory-redhat-vex`; the only source for RHEL 10) |
 | Oracle Linux | `advisory-oracle-linux` |
 | Network appliances and commercial products | The vendor advisory jobs of the products you run (Fortinet, Palo Alto Networks, Cisco, ...) |
+| WordPress sites (core, plugins and themes) | `advisory-wordfence`, with a Wordfence API key of your own ([Wordfence](#wordfence-wordpress)) |
 | Products with no dedicated source | CVE Records (`cna`), which carry the affected products declared by each CVE's issuer |
 
 Measured import times: the full NVD mirror takes several hours, and Red Hat VEX about 15 minutes (the archive and the changes since it). Other sources depend on their size and upstream response times; the dashboard shows each run's duration.
@@ -46,6 +48,8 @@ The OSV site lists the license of each OSV source on its [data page](https://goo
 | Not stated on the page | Debian Security Advisories and NVD CVEs for open source software (both converted by OSV) |
 
 OSV does not state a license for its own records, and its [data licensing page](https://google.github.io/osv.dev/data/new) requires only that a source's license lets OSV ingest, modify and redistribute its records. Check the license files of the sources you import: the page lists the license names, not their terms, and it can change.
+
+**Wordfence** (WordPress): [Wordfence Intelligence](https://www.wordfence.com/threat-intel/) is free, also for commercial use, under its [Terms and Conditions](https://www.wordfence.com/wordfence-intelligence-terms-and-conditions/), which you accept with the API key of your own that the feed needs. They allow reproducing, adapting, displaying and distributing the records, provided that a copy keeps Defiant's copyright notice and license, a link to the record, and the license of any licensor the record names (MITRE's CVE terms for a record with a CVE). Each record carries those notices in its `copyrights` field. heretix-api keeps the whole record (`rawData`) and the record's link (`url`), and returns both with the CVE's detail, so a consumer that shows a Wordfence finding can show them. The key itself must not be shared, so do not put yours in an image, a demo or a repository.
 
 Credit for what heretix-api serves: OSV records come from [OSV](https://osv.dev) and the sources above, with fields added by heretix-api (matching results, severity scores computed from a vector, fix status from the Debian and Ubuntu trackers). The other sources (NVD, CISA KEV, EPSS, CVE Records, Red Hat, Oracle, Microsoft and the vendor advisories) follow the terms of their publishers, which this page does not summarize.
 
@@ -410,6 +414,18 @@ Each line becomes a range from the branch (`14.1`) to the first fixed build, for
 A NetScaler version is a branch and a build (`14.1-73.32`); it is ordered with its own order ([citrix-version.ts](../src/utils/citrix-version.ts)), because the generic encoding keeps only the 73 of 73.32, and a bound written as a branch plus a bare build (`14.1` up to `56.73`, how the CVE record gives it) reads as 14.1.0 up to 56.73.0 and flags every later build. The CVE-record (CNA) ranges of NetScaler are therefore not stored.
 
 Other Citrix bulletins (Workspace app, StoreFront, XenServer, SD-WAN, Session Recording) word their versions differently and are not read.
+
+## Wordfence (WordPress)
+
+[wordfence-fetcher.ts](../src/worker/wordfence-fetcher.ts) · `pnpm import:wordfence` · daily 17:00 UTC · needs `WORDFENCE_API_KEY`
+
+The [Wordfence Intelligence](https://www.wordfence.com/threat-intel/) vulnerability data feed (v3, production): WordPress core, plugins and themes, about 45,000 records, 42,000 of them with a CVE. It is the only source heretix-api reads for WordPress software: NVD's CPEs rarely name a plugin, and the CVE records name one by its display name ("WPvivid — Backup, Migration & Staging"), not by the slug a site has it under.
+
+- **API key.** Free, from a wordfence.com account (Account → Integrations); set it as `WORDFENCE_API_KEY`. The terms forbid sharing a key, so heretix-api ships none, and without one the job fails and says so. A refused key (401, 403) is reported as such and not retried.
+- **Names.** heretix's own ecosystem `WordPress` (no OSV ecosystem or registered PURL type exists), with the package named after the kind of software and its wordpress.org slug, which is also its directory on a site: `core:wordpress`, `plugin:<slug>`, `theme:<slug>`. heretix-cli writes them as `pkg:wordpress/plugin/<slug>@<version>`. The rows are vendor-advisory rows under the vendor `wordpress`, and a search with `ecosystem=WordPress` reads those rows and nothing else.
+- **Versions.** Each affected range is a row: `[*, 0.9.138)` has no start and ends before 0.9.138, `*-3.3` includes 3.3. A record that fixed several branches (WordPress core: 4.1.34, 4.2.31, ...) gives each range the lowest fix past its own end. A range open at both ends with no fix matches every version. A range with a bound heretix cannot order (`44.0 (17-08-2023)`, `5.8 beta 1`, `1.0f`: about 120 of 53,000) is left out rather than kept open at that end; the run logs how many.
+- **Snapshot.** The whole feed is read on every run (about 180 MB of JSON, held in memory at once: the job is heavy), so a record Wordfence removes is pruned after three runs without it.
+- Severity and CVSS are Wordfence's; when NVD rates the same CVE, NVD's rating is the master's, as for every vendor advisory.
 
 ## Microsoft (Windows Server)
 

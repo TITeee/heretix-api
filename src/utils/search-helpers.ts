@@ -537,6 +537,8 @@ export function cnaVersionWhere(versionInt: bigint | null, version: string | und
 // Normalize ecosystem names from heretix-cli internal names to OSV ecosystem names
 const ECOSYSTEM_ALIASES: Record<string, string> = {
   'composer': 'Packagist',
+  // heretix's own ecosystem (utils/wordpress.ts), matched by its exact name everywhere else.
+  'wordpress': 'WordPress',
 };
 
 export function normalizeEcosystem(eco: string | undefined): string | undefined {

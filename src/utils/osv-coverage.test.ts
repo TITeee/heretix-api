@@ -3,7 +3,7 @@ import { ecosystemsWithoutData, expectsOsvData } from './osv-coverage.js';
 
 describe('expectsOsvData', () => {
   it('is true for the ecosystems OSV answers', () => {
-    for (const eco of ['npm', 'PyPI', 'Go', 'Alpine:v3.24', 'Debian:13', 'Ubuntu:24.04:LTS', 'AlmaLinux:9', 'Rocky Linux:9', 'composer']) {
+    for (const eco of ['npm', 'PyPI', 'Go', 'Alpine:v3.24', 'Debian:13', 'Ubuntu:24.04:LTS', 'AlmaLinux:9', 'Rocky Linux:9', 'composer', 'WordPress', 'wordpress']) {
       expect(expectsOsvData(eco), eco).toBe(true);
     }
   });
